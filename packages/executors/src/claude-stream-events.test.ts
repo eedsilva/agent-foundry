@@ -90,6 +90,109 @@ describe('createClaudeStreamMapper', () => {
     ]);
   });
 
+  it('carries an unambiguous, greppable marker for a #565 sandbox boundary denial, distinct from an ordinary tool failure', () => {
+    // Real payload captured from the live `claude` CLI (docs/adr/0071,
+    // "Review round" point 4) — not synthesized. A Bash tool call whose
+    // command hit the sandbox's OS-level EPERM, and a Read tool call
+    // outside the working directory hitting the permission-ask denial, feed
+    // through the actual production mapper. AC4 ("cada bloqueio gera evento
+    // de auditoria") needs this event to be identifiable as a *boundary*
+    // denial in StepEventRepository, not just any `ok: false` tool_end —
+    // that shape is identical for a typo'd command or a dropped network
+    // connection. These two substrings are what makes it identifiable.
+    const mapLine = createClaudeStreamMapper();
+    mapLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_01SoTn7CMSGZ4EoSKKRpy6B1',
+              name: 'Bash',
+              input: {
+                command:
+                  "node -e \"console.log(require('fs').readFileSync('/tmp/fw-audit/data/README.md','utf8'))\"",
+              },
+            },
+          ],
+        },
+      }),
+    );
+    const bashDenial = mapLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_01SoTn7CMSGZ4EoSKKRpy6B1',
+              is_error: true,
+              content:
+                "Exit code 1\nnode:fs:440\n    return binding.readFileUtf8(path, stringToFlags(options.flag));\n                   ^\n\nError: EPERM: operation not permitted, open '/tmp/fw-audit/data/README.md'\n    at Object.readFileSync (node:fs:440:20)\n\nNode.js v22.22.3",
+            },
+          ],
+        },
+      }),
+    );
+    expect(bashDenial).toEqual([
+      {
+        type: 'tool_end',
+        toolName: 'Bash',
+        summary: 'Bash failed',
+        ok: false,
+        detail: expect.stringContaining('EPERM: operation not permitted'),
+      },
+    ]);
+
+    mapLine(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_01Cq6WxsZSAzmVa2QxXAx3aY',
+              name: 'Read',
+              input: { file_path: '/tmp/fw-audit/data/README.md' },
+            },
+          ],
+        },
+      }),
+    );
+    const readDenial = mapLine(
+      JSON.stringify({
+        type: 'user',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_01Cq6WxsZSAzmVa2QxXAx3aY',
+              is_error: true,
+              content:
+                "Claude requested permissions to read from /tmp/fw-audit/data/README.md, but you haven't granted it yet.",
+            },
+          ],
+        },
+      }),
+    );
+    expect(readDenial).toEqual([
+      {
+        type: 'tool_end',
+        toolName: 'Read',
+        summary: 'Read failed',
+        ok: false,
+        detail: expect.stringContaining('requested permissions to read from'),
+      },
+    ]);
+
+    // An ordinary command failure — the thing AC4's audit event must stay
+    // distinguishable from — carries neither marker.
+    const ordinaryFailureDetail = 'Exit code 127\nzsh: command not found: pnmp\n';
+    expect(ordinaryFailureDetail).not.toContain('EPERM: operation not permitted');
+    expect(ordinaryFailureDetail).not.toContain('requested permissions to read from');
+  });
+
   it('emits an error event for a terminal error result', () => {
     const mapLine = createClaudeStreamMapper();
     const events = mapLine(

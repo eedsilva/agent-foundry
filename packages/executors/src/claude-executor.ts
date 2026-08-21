@@ -37,8 +37,14 @@ function claudeJsonSchema(schema: AgentExecutionRequest['outputSchema']): string
  * (below) says nothing about these, since none of them live under it.
  * `~/.claude/.credentials.json` matters specifically because it's this same
  * `claude` CLI's own credential store (Linux/WSL2 — Keychain on macOS isn't
- * a file this sandbox layer can reach). Not exhaustive; extend when a new
- * credential-shaped file needs covering.
+ * a file this sandbox layer can reach).
+ *
+ * This is a named deny list, not an allowlist: everything else under
+ * `$HOME` outside `filesystem.denyRead` (e.g. `~/.kube`, `~/.gnupg`,
+ * `~/Documents`) stays readable by design (docs/adr/0071 already rejected
+ * `denyRead: ["/"]` — it breaks the toolchain). Extend this list when a new
+ * credential-shaped file needs covering; don't read its presence as "host
+ * secrets are covered."
  */
 const DENIED_CREDENTIAL_FILES = [
   '~/.ssh',
@@ -47,6 +53,12 @@ const DENIED_CREDENTIAL_FILES = [
   '~/.netrc',
   '~/.docker/config.json',
   '~/.npmrc',
+  // git — the toolchain this repo's own MUTATING_BASH_ALLOWLIST relies on
+  // most.
+  '~/.git-credentials',
+  // gh — holds the GitHub token in plaintext (mode 0600, same host user the
+  // sandbox runs as).
+  '~/.config/gh/hosts.yml',
 ];
 
 /**

@@ -165,6 +165,8 @@ describe('CLI executor contracts', () => {
         expect.arrayContaining([
           { path: '~/.ssh', mode: 'deny' },
           { path: '~/.claude/.credentials.json', mode: 'deny' },
+          { path: '~/.git-credentials', mode: 'deny' },
+          { path: '~/.config/gh/hosts.yml', mode: 'deny' },
         ]),
       );
       // #565 is a filesystem-boundary fix, not a network policy change.

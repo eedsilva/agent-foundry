@@ -269,6 +269,89 @@ reproduction, not accepted or dismissed on argument alone:
    No regression; this ADR's original claim holds, now with evidence instead
    of inference.
 
+## Second review round
+
+A second pass on the fixed version raised two further points. Both checked
+against reproduction again, not accepted on argument:
+
+- **Two credential files still missing: `~/.config/gh/hosts.yml` (the
+  `gh` CLI's plaintext GitHub token, mode `0600`, same host user the
+  sandbox runs as) and `~/.git-credentials`.** Confirmed as a real gap —
+  `git` is the toolchain entry `MUTATING_BASH_ALLOWLIST` depends on most,
+  and `gh`-style credential storage is exactly the shape the rest of
+  `DENIED_CREDENTIAL_FILES` already covers. Both added.
+- **Which entry actually produced each `EPERM` — is `~` in
+  `credentials.files` actually expanding, or is a `~`-form entry a silent
+  no-op the same way an unresolved symlink was?** A fair question given
+  #3's bug was exactly a silent, non-erroring mismatch — the earlier "it
+  returned EPERM" evidence didn't by itself rule out that some *other* deny
+  entry (e.g. `denyRead: [tmpdir()]`) was what actually matched. Re-verified
+  with an isolated reproduction designed to make this unambiguous:
+  `denyRead` pointed only at an empty, unrelated directory (nothing under
+  `$HOME` or the OS temp root), and `credentials.files` carried a single
+  `~/<bait-dir>/settings.json` entry. Two independent signals confirmed the
+  tilde form resolved correctly: (1) Claude Code's own system context, which
+  the model reads and quotes back, showed the *fully expanded* absolute
+  path merged into its resolved `denyOnly` list — direct evidence from the
+  CLI's own policy resolution, not inferred from behavior; (2) with the
+  bash/node escape framing that worked in the first round, the same read
+  attempt against a `credentials.files`-only entry (no overlapping
+  `denyRead`) failed the same way. Also observed, worth recording:
+  `credentials.files`-listed paths triggered the model's own self-refusal
+  (reading its exposed sandbox policy and declining before even calling a
+  tool) far more reliably than a plain `filesystem.denyRead` entry did —
+  Claude Code appears to flag credential-labeled paths more assertively to
+  the model itself. That's a second, independent layer above the OS
+  boundary, not a replacement for it; the `credentials.files` deny still
+  fires at the OS level regardless of whether the model tries.
+- **The ADR's list is a named deny list, not an allowlist.** Made explicit
+  in the code comment and here: everything under `$HOME` outside
+  `filesystem.denyRead` and `DENIED_CREDENTIAL_FILES` — `~/.kube`,
+  `~/.gnupg`, `~/Documents`, anything not named — stays readable. This is
+  the same, already-accepted tradeoff as rejecting `denyRead: ["/"]`
+  (broad denial breaks the toolchain); it is a known ceiling, not an
+  oversight, and is recorded here so nobody who extends this list later
+  mistakes it for exhaustive coverage.
+- **AC4's "smallest marker," with the real payload.** Captured a real
+  `claude` CLI run against the live sandbox and fed the actual `tool_use`/
+  `tool_result` pair through the real `createClaudeStreamMapper` — not a
+  synthesized example. A Bash-tool OS-sandbox `EPERM` produces:
+
+  ```json
+  {
+    "type": "tool_end",
+    "toolName": "Bash",
+    "summary": "Bash failed",
+    "ok": false,
+    "detail": "Exit code 1\nnode:fs:440\n...\nError: EPERM: operation not permitted, open '/tmp/fw-audit/data/README.md'\n..."
+  }
+  ```
+
+  and a Read-tool permission-ask denial (the pre-existing, non-sandbox
+  boundary — outside-cwd reads via the Read tool, covered before #565)
+  produces:
+
+  ```json
+  {
+    "type": "tool_end",
+    "toolName": "Read",
+    "summary": "Read failed",
+    "ok": false,
+    "detail": "Claude requested permissions to read from /tmp/fw-audit/data/README.md, but you haven't granted it yet."
+  }
+  ```
+
+  Both `detail` strings carry a substring an ordinary tool failure (a
+  typo'd command, a dropped network connection) does not: `"EPERM:
+  operation not permitted"` for the OS-sandbox path, `"requested
+  permissions to read from"` for the permission-ask path. Pinned as a
+  regression test in `claude-stream-events.test.ts` using this exact
+  captured payload, per the request: an assertion, zero production code —
+  `persistStreamEvent` already stores this `detail` text verbatim in
+  `StepEventRepository`, so a query filtering on either substring is a real,
+  working way to count boundary denials per run today, without extending
+  `RunAuditExport`.
+
 ## Consequences
 
 - **Positive:** a model-invoked Bash tool call — including through any of
