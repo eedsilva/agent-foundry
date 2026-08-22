@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { validateStandardPrd } from './standard-prd.js';
+
+const normativeTemplate = readFileSync(
+  new URL('../../../docs/PRD_STANDARD.md', import.meta.url),
+  'utf8',
+).match(/```md\n([\s\S]+?)\n```/)?.[1];
 
 const sections = [
   'Problem and objective / Problema e objetivo\n\nOrganize personal tasks with a measurable weekly completion view.',
@@ -37,6 +43,16 @@ function prd(
   ].join('\n');
 }
 
+function completedNormativeTemplate(): string {
+  if (!normativeTemplate) throw new Error('PRD Standard template is required for this fixture.');
+  return normativeTemplate
+    .replace(
+      'Interface language: <BCP 47 tag, for example pt-BR or en-US>',
+      'Interface language: pt-BR',
+    )
+    .replace(/<[^>]+>/g, 'concrete product behavior');
+}
+
 describe('validateStandardPrd', () => {
   it('returns a versioned canonical representation without model execution', () => {
     const result = validateStandardPrd(prd());
@@ -49,6 +65,10 @@ describe('validateStandardPrd', () => {
         identity: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
     });
+  });
+
+  it('validates the completed normative Standard PRD template', () => {
+    expect(validateStandardPrd(completedNormativeTemplate())).toMatchObject({ ok: true });
   });
 
   it('keeps identity when required sections are reordered', () => {
@@ -145,6 +165,54 @@ describe('validateStandardPrd', () => {
 
   it('permits lowercase None', () => {
     expect(validateStandardPrd(prd({ 13: 'none' }))).toMatchObject({ ok: true });
+  });
+
+  it('rejects sections outside the template, including identifiers they define', () => {
+    expect(validateStandardPrd(prd())).toMatchObject({ ok: true });
+    const result = validateStandardPrd(
+      `${prd({
+        11: section(11).content.replace('NFR-001', 'NFR-001, FR-002'),
+      })}\n\n## 14. Unsupported extension\n\n- **FR-002**: This must not satisfy an acceptance criterion.`,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'unknown-section', path: 'sections.14' }),
+      ]),
+    });
+  });
+
+  it('rejects content before section 1 and non-canonical section numbers', () => {
+    expect(validateStandardPrd(prd())).toMatchObject({ ok: true });
+    const unexpectedContent = validateStandardPrd(
+      prd().replace('## 1.', 'Unscoped product prose\n\n## 1.'),
+    );
+    const leadingZero = validateStandardPrd(prd().replace('## 1.', '## 01.'));
+
+    expect(unexpectedContent).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'unexpected-content' })]),
+    });
+    expect(leadingZero).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid-section-number' })]),
+    });
+  });
+
+  it('ignores template headings inside a fenced code block', () => {
+    expect(
+      validateStandardPrd(prd({ 12: `None\n\n\`\`\`md\n${normativeTemplate}\n\`\`\`` })),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('measures maximum length before whitespace normalization', () => {
+    const result = validateStandardPrd(`${prd()}\n${' '.repeat(50_001)}`);
+
+    expect(result).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'max-length' })]),
+    });
   });
 
   it('delimits indented acceptance criteria by their next definition', () => {

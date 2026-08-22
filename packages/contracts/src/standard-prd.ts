@@ -44,9 +44,10 @@ export type StandardPrdValidationResult =
  * deliberately downstream concerns (#602 and #601 respectively).
  */
 export function validateStandardPrd(markdown: string): StandardPrdValidationResult {
-  const document = normalizeDocument(markdown);
+  const source = markdown.replace(/\r\n?/g, '\n');
+  const document = normalizeDocument(source);
   const issues: StandardPrdIssue[] = [];
-  if (document.length > 50_000) {
+  if (source.length > 50_000) {
     issues.push({
       code: 'max-length',
       path: 'document',
@@ -62,9 +63,16 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
   }
 
   const lines = document.split('\n');
-  const title = requiredValue(lines, /^# PRD —\s+(.+)$/, 'title', 'PRD title is required.', issues);
+  const headerLines = stripFencedCode(document).split('\n');
+  const title = requiredValue(
+    headerLines,
+    /^# PRD —\s+(.+)$/,
+    'title',
+    'PRD title is required.',
+    issues,
+  );
   const standard = requiredValue(
-    lines,
+    headerLines,
     /^PRD Standard:\s*(.+)$/,
     'standard',
     'PRD Standard: 1 is required.',
@@ -78,7 +86,7 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
     });
   }
   const language = requiredValue(
-    lines,
+    headerLines,
     /^Interface language:\s*(.+)$/,
     'interfaceLanguage',
     'Interface language is required.',
@@ -203,6 +211,8 @@ function canonicalLanguage(
 function parseSections(lines: string[], issues: StandardPrdIssue[]): Map<number, Section> {
   const sections = new Map<number, Section>();
   let current: { number: number; heading: string; lines: string[] } | undefined;
+  let fence: '`' | '~' | undefined;
+  let sawSection = false;
   const finish = () => {
     if (!current) return;
     if (sections.has(current.number)) {
@@ -219,10 +229,48 @@ function parseSections(lines: string[], issues: StandardPrdIssue[]): Map<number,
     }
   };
   for (const line of lines) {
-    const match = /^## (\d+)\.\s+(.+)$/.exec(line);
+    const delimiter = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (delimiter?.[1]![0] === fence) fence = undefined;
+      if (current) current.lines.push(line);
+      continue;
+    }
+    if (delimiter) {
+      fence = delimiter[1]![0] as '`' | '~';
+      if (current) current.lines.push(line);
+      continue;
+    }
+
+    const match = /^## ([1-9]\d*)\.\s+(.+)$/.exec(line);
+    const nonCanonicalNumber = /^## \d+\.\s+(.+)$/.exec(line);
     if (match) {
       finish();
-      current = { number: Number(match[1]), heading: match[2]!, lines: [] };
+      sawSection = true;
+      const number = Number(match[1]);
+      if (number > REQUIRED_SECTIONS.length) {
+        issues.push({
+          code: 'unknown-section',
+          path: `sections.${number}`,
+          message: `Section ${number} is not part of PRD Standard 1.`,
+        });
+        current = undefined;
+      } else {
+        current = { number, heading: match[2]!, lines: [] };
+      }
+    } else if (nonCanonicalNumber) {
+      finish();
+      issues.push({
+        code: 'invalid-section-number',
+        path: 'document',
+        message: 'Section numbers must not contain leading zeroes.',
+      });
+      current = undefined;
+    } else if (!sawSection && line.trim() && !isPreambleLine(line)) {
+      issues.push({
+        code: 'unexpected-content',
+        path: 'document',
+        message: 'Only the title and header fields may appear before section 1.',
+      });
     } else if (current) {
       current.lines.push(line);
     }
@@ -231,10 +279,14 @@ function parseSections(lines: string[], issues: StandardPrdIssue[]): Map<number,
   return sections;
 }
 
+function isPreambleLine(line: string): boolean {
+  return /^(?:# PRD —|PRD Standard:|Interface language:)/.test(line);
+}
+
 function validateIdentifiers(sections: Map<number, Section>, issues: StandardPrdIssue[]): void {
   const identifiers = new Map<string, string>();
   for (const [number, section] of sections) {
-    for (const match of section.content.matchAll(IDENTIFIER_DEFINITION)) {
+    for (const match of stripFencedCode(section.content).matchAll(IDENTIFIER_DEFINITION)) {
       const identifier = match[1]!;
       if (identifiers.has(identifier)) {
         issues.push({
@@ -253,7 +305,7 @@ function validateIdentifiers(sections: Map<number, Section>, issues: StandardPrd
     [10, 'NFR'],
     [11, 'AC'],
   ] as const) {
-    const content = sections.get(section)?.content ?? '';
+    const content = stripFencedCode(sections.get(section)?.content ?? '');
     if (
       ![...content.matchAll(IDENTIFIER_DEFINITION)].some((match) =>
         match[1]?.startsWith(`${prefix}-`),
@@ -267,7 +319,7 @@ function validateIdentifiers(sections: Map<number, Section>, issues: StandardPrd
     }
   }
 
-  const acceptanceCriteria = sections.get(11)?.content ?? '';
+  const acceptanceCriteria = stripFencedCode(sections.get(11)?.content ?? '');
   const criteria = [...acceptanceCriteria.matchAll(ACCEPTANCE_CRITERION)];
   for (const [index, match] of criteria.entries()) {
     const criterion = match[1]!;
@@ -321,6 +373,25 @@ function validateIdentifiers(sections: Map<number, Section>, issues: StandardPrd
       });
     }
   }
+}
+
+function stripFencedCode(content: string): string {
+  let fence: '`' | '~' | undefined;
+  return content
+    .split('\n')
+    .flatMap((line) => {
+      const delimiter = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        if (delimiter?.[1]![0] === fence) fence = undefined;
+        return [];
+      }
+      if (delimiter) {
+        fence = delimiter[1]![0] as '`' | '~';
+        return [];
+      }
+      return [line];
+    })
+    .join('\n');
 }
 
 type Section = { heading: string; content: string };
