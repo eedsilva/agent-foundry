@@ -67,6 +67,17 @@ describe('validateStandardPrd', () => {
     });
   });
 
+  it('preserves every non-empty line of a valid document in its canonical markdown', () => {
+    const source = prd();
+    const result = validateStandardPrd(source);
+
+    if (!result.ok) throw new Error('fixture must be valid');
+    const canonicalLines = new Set(result.prd.canonicalMarkdown.split('\n'));
+    for (const line of source.split('\n').filter((line) => line.trim())) {
+      expect(canonicalLines).toContain(line);
+    }
+  });
+
   it('validates the completed normative Standard PRD template', () => {
     expect(validateStandardPrd(completedNormativeTemplate())).toMatchObject({ ok: true });
   });
@@ -198,6 +209,25 @@ describe('validateStandardPrd', () => {
       ok: false,
       issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid-section-number' })]),
     });
+  });
+
+  it.each([
+    ['backtick', '```', '```'],
+    ['tilde', '~~~', '~~~'],
+    ['indented backtick', '  ```', '  ```'],
+  ])('rejects a %s fence before section 1 exactly once', (_name, open, close) => {
+    const original = prd();
+    const withFence = original.replace(
+      '## 1.',
+      `${open}\n## 14. Cost model\n\nThe customer pays monthly.\n${close}\n\n## 1.`,
+    );
+    const valid = validateStandardPrd(original);
+    const invalid = validateStandardPrd(withFence);
+
+    expect(valid).toMatchObject({ ok: true });
+    expect(invalid).toMatchObject({ ok: false });
+    if (invalid.ok) return;
+    expect(invalid.issues.filter((issue) => issue.code === 'unexpected-content')).toHaveLength(1);
   });
 
   it('ignores template headings inside a fenced code block', () => {

@@ -213,6 +213,7 @@ function parseSections(lines: string[], issues: StandardPrdIssue[]): Map<number,
   let current: { number: number; heading: string; lines: string[] } | undefined;
   let fence: '`' | '~' | undefined;
   let sawSection = false;
+  let reportedUnexpectedContent = false;
   const finish = () => {
     if (!current) return;
     if (sections.has(current.number)) {
@@ -229,6 +230,25 @@ function parseSections(lines: string[], issues: StandardPrdIssue[]): Map<number,
     }
   };
   for (const line of lines) {
+    const match = /^## ([1-9]\d*)\.\s+(.+)$/.exec(line);
+    const nonCanonicalNumber = /^## \d+\.\s+(.+)$/.exec(line);
+    if (
+      !sawSection &&
+      !nonCanonicalNumber &&
+      !(match?.[1] === '1') &&
+      line.trim() &&
+      !isPreambleLine(line)
+    ) {
+      if (!reportedUnexpectedContent) {
+        issues.push({
+          code: 'unexpected-content',
+          path: 'document',
+          message: 'Only the title and header fields may appear before section 1.',
+        });
+        reportedUnexpectedContent = true;
+      }
+      continue;
+    }
     const delimiter = /^\s*(`{3,}|~{3,})/.exec(line);
     if (fence) {
       if (delimiter?.[1]![0] === fence) fence = undefined;
@@ -241,8 +261,6 @@ function parseSections(lines: string[], issues: StandardPrdIssue[]): Map<number,
       continue;
     }
 
-    const match = /^## ([1-9]\d*)\.\s+(.+)$/.exec(line);
-    const nonCanonicalNumber = /^## \d+\.\s+(.+)$/.exec(line);
     if (match) {
       finish();
       sawSection = true;
@@ -265,12 +283,6 @@ function parseSections(lines: string[], issues: StandardPrdIssue[]): Map<number,
         message: 'Section numbers must not contain leading zeroes.',
       });
       current = undefined;
-    } else if (!sawSection && line.trim() && !isPreambleLine(line)) {
-      issues.push({
-        code: 'unexpected-content',
-        path: 'document',
-        message: 'Only the title and header fields may appear before section 1.',
-      });
     } else if (current) {
       current.lines.push(line);
     }
