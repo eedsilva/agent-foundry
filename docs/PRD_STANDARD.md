@@ -10,8 +10,9 @@ This standard defines the only PRD shape Agent Foundry accepts for a new Generat
 - Section headings and requirement identifiers are stable so validation and evidence can reference them.
 - `FR-NNN`, `BR-NNN`, `NFR-NNN`, and `AC-NNN` identifiers are unique and never renumbered inside a PRD Revision.
 - Every acceptance criterion names the requirements it verifies and describes an observable result.
-- All required sections must exist. Use `Not applicable` with a reason instead of deleting a section.
-- Approval is blocked while `Open decisions` contains an item or the document contains `TBD` or `TODO`.
+- All required sections must exist. Use `Not applicable` or `Não aplicável` with a reason instead of deleting a section.
+- Approval is blocked while `Open decisions` contains an item or the document contains `TBD` or `TODO`. Both markers are matched in uppercase only, so the Portuguese word `todo` and the English word `todo` in product text are not markers.
+- Fixed tokens are accepted in both content languages, ignoring case: `None`, `Nenhuma`, and `Nenhum` mean no item; `Not applicable` and `Não aplicável` mean a section does not apply and require a reason.
 - The PRD describes product behavior, not framework choices, SQL tables, columns, migrations, or implementation tasks.
 - Approval creates an immutable PRD Revision. A requirement change creates a new revision and planning lineage; a repair that restores the existing contract does not.
 - The approved document is stored as `PRD.md` at the Standalone Repository root and as a hash-addressed Agent Foundry artifact.
@@ -103,7 +104,7 @@ Interface language: <BCP 47 tag, for example pt-BR or en-US>
 
 ## 12. Assumptions / Premissas
 
-- <Explicit non-blocking assumption accepted by the operator, or `None`>
+- <Explicit non-blocking assumption accepted by the operator, or `None` / `Nenhuma`>
 
 ## 13. Open decisions / Decisões em aberto
 
