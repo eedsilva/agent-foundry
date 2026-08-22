@@ -41,7 +41,6 @@ import type {
   WorkflowRun,
   VisualEdit,
 } from '@agent-foundry/contracts';
-import { CONTROL_SESSION_CSRF_COOKIE, CONTROL_SESSION_CSRF_HEADER } from '@agent-foundry/contracts';
 
 export type ProjectDetail = ProjectDetailResponse;
 
@@ -54,6 +53,8 @@ export type KnowledgeFileUpload = {
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const CONTROL_SESSION_CSRF_COOKIE = 'af_csrf';
+const CONTROL_SESSION_CSRF_HEADER = 'x-csrf-token';
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init);
