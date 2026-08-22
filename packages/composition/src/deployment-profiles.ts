@@ -1,4 +1,4 @@
-export type DeploymentProfile = 'development' | 'real-local-trusted' | 'mock-production';
+export type DeploymentProfile = 'development' | 'real-local-trusted';
 
 export interface DeploymentProfileSpec {
   name: DeploymentProfile;
@@ -22,13 +22,6 @@ const PROFILES: Record<DeploymentProfile, DeploymentProfileSpec> = {
     apiHost: '127.0.0.1',
     allowRemoteExecution: false,
     description: 'Trusted local environment with real CLI execution on loopback only',
-  },
-  'mock-production': {
-    name: 'mock-production',
-    executorMode: 'mock',
-    apiHost: '0.0.0.0', // binds all interfaces
-    allowRemoteExecution: false,
-    description: 'Production-ready with mock execution mode (safe for public hosts)',
   },
 };
 

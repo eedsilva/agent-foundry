@@ -83,7 +83,7 @@ export function useProjectRun(id: string, latestOperationRunId: string | undefin
 
   useEffect(() => {
     if (projectTerminal) return;
-    const source = new EventSource(eventStreamUrl(id));
+    const source = new EventSource(eventStreamUrl(id), { withCredentials: true });
     source.onopen = () => setLive(true);
     source.onmessage = (message) => {
       try {

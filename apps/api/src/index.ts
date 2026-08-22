@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { config as loadDotEnv } from 'dotenv';
 import { createRuntime, loadRuntimeConfig, startTelemetry } from '@agent-foundry/composition';
-import { buildApp } from './app.js';
+import { buildAuthenticatedApp } from './authenticated-app.js';
 import { startPreviewReaper } from './preview-reaper.js';
 import { startArtifactReaper } from './artifact-reaper.js';
 import { startEnvironmentReaper } from './environment-reaper.js';
@@ -39,13 +39,7 @@ console.log(
   `[info] API: ${runtime.config.executorMode} mode on ${runtime.config.apiHost}:${runtime.config.apiPort}`,
 );
 
-if (runtime.config.executorMode === 'real' && runtime.config.allowUnsafeRemoteRealExecution) {
-  console.warn(
-    '[warn] SECURITY: real CLI execution is exposed on a non-loopback host with an explicit unsafe override',
-  );
-}
-
-const app = await buildApp(runtime);
+const { app, bootstrapUrl } = await buildAuthenticatedApp(runtime);
 startPreviewReaper(runtime.previewService, runtime.config.previewReapIntervalMs, app.log, app);
 startArtifactReaper(runtime.artifacts, runtime.config.artifactReapIntervalMs, app.log, app, (now) =>
   sweepUnreferencedBlobs(runtime, runtime.config.blobGcGraceMs, now),
@@ -90,3 +84,4 @@ process.once('SIGINT', () => void shutdown('SIGINT'));
 process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 await app.listen({ host: runtime.config.apiHost, port: runtime.config.apiPort });
+console.log(`[info] Open once to authenticate: ${bootstrapUrl.toString()}`);

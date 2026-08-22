@@ -10,6 +10,7 @@ import type {
 import {
   branchFromVersion,
   compareVersions,
+  createProject,
   discardDraft,
   getActivePreviewSession,
   getArtifactBlobUrl,
@@ -55,6 +56,31 @@ const knowledgeFile: KnowledgeFile = {
   createdAt: '2026-07-21T12:00:00.000Z',
   updatedAt: '2026-07-21T12:00:00.000Z',
 };
+
+describe('Control Session client', () => {
+  it('sends browser cookies and the CSRF cookie on mutations', async () => {
+    vi.stubGlobal('document', { cookie: 'af_csrf=csrf-token; preference=compact' });
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse({ project: { id: 'project-1' } }));
+
+    await createProject({ name: 'Project', prd: 'Valid PRD', workflowId: 'default' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:4000/projects',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': 'application/json',
+          'x-csrf-token': 'csrf-token',
+        },
+      }),
+    );
+    fetchMock.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});
 
 describe('knowledge file API client', () => {
   it('uploads a knowledge file with its exact request body', async () => {

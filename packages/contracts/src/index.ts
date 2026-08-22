@@ -32,3 +32,4 @@ export * from './validation-campaign.js';
 export * from './validation-preflight.js';
 export * from './validation-evidence.js';
 export * from './ui-quality-rubric.js';
+export * from './control-session.js';

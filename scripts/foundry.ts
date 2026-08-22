@@ -4,6 +4,8 @@
 // preview in the browser when the run completes.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
@@ -15,6 +17,11 @@ import {
   pendingApprovals,
   statusKind,
 } from './lib/foundry.mjs';
+import {
+  CONTROL_SESSION_COOKIE,
+  CONTROL_SESSION_CSRF_HEADER,
+  CONTROL_SESSION_INSTALLATION_HEADER,
+} from '@agent-foundry/contracts';
 
 const HELP = `Uso: npm run foundry -- "o que você quer construir" [opções]
 
@@ -31,6 +38,7 @@ if (args.help || !args.prompt) {
 }
 
 let devStack: ChildProcess | undefined;
+let controlSessionHeaders: Record<string, string> = {};
 // One shared interface for every gate: a fresh createInterface per prompt would
 // let the first one swallow all buffered stdin and starve later prompts. Lines
 // are buffered from the start so piped answers (`printf 'a\na\n' | ...`) reach
@@ -76,7 +84,7 @@ async function shutdown(code: number): Promise<never> {
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${args.apiUrl}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
+    headers: { 'content-type': 'application/json', ...controlSessionHeaders, ...init?.headers },
   });
   if (!response.ok) {
     throw new Error(
@@ -84,6 +92,25 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
   return (await response.json()) as T;
+}
+
+async function authenticateTerminal(): Promise<void> {
+  const dataDir = resolve(process.env.DATA_DIR ?? '.data');
+  const installationSecret = (
+    await readFile(resolve(dataDir, 'installation-secret'), 'utf8')
+  ).trim();
+  const response = await fetch(`${args.apiUrl}/auth/terminal-bootstrap`, {
+    method: 'POST',
+    headers: { [CONTROL_SESSION_INSTALLATION_HEADER]: installationSecret },
+  });
+  if (!response.ok) {
+    throw new Error(`Control Session bootstrap -> ${response.status}: ${await response.text()}`);
+  }
+  const tokens = (await response.json()) as { sessionToken: string; csrfToken: string };
+  controlSessionHeaders = {
+    cookie: `${CONTROL_SESSION_COOKIE}=${tokens.sessionToken}`,
+    [CONTROL_SESSION_CSRF_HEADER]: tokens.csrfToken,
+  };
 }
 
 async function isReady(): Promise<boolean> {
@@ -138,7 +165,7 @@ function streamEvents(projectId: string): () => void {
         const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
         const response = await fetch(`${args.apiUrl}/projects/${projectId}/events/stream${query}`, {
           signal: controller.signal,
-          headers: { accept: 'text/event-stream' },
+          headers: { accept: 'text/event-stream', ...controlSessionHeaders },
         });
         if (!response.ok || !response.body) throw new Error(`stream -> ${response.status}`);
         let buffered = '';
@@ -235,6 +262,7 @@ function openInBrowser(url: string): void {
 
 async function main(): Promise<void> {
   await ensureStack();
+  await authenticateTerminal();
 
   const name = args.name ?? defaultProjectName(args.prompt);
   const prd = normalizePrd(args.prompt);

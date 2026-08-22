@@ -303,6 +303,7 @@ imutáveis por revisão e incluem hash SHA-256; o índice só aponta para revis�
 | Método | Rota                            | Uso                                                  |
 | ------ | ------------------------------- | ---------------------------------------------------- |
 | `GET`  | `/health`                       | saúde básica                                         |
+| `GET`  | `/auth/bootstrap`               | bootstrap browser de uso único                       |
 | `GET`  | `/runtime`                      | catálogo e health das CLIs                           |
 | `GET`  | `/workflows`                    | workflows disponíveis                                |
 | `GET`  | `/projects`                     | projetos recentes                                    |
@@ -312,19 +313,9 @@ imutáveis por revisão e incluem hash SHA-256; o índice só aponta para revis�
 | `GET`  | `/projects/:id/events/stream`   | timeline de eventos via SSE (cursor/`Last-Event-ID`) |
 | `POST` | `/projects/:id/retry`           | reenfileira projeto com falha                        |
 
-Exemplo:
-
-```bash
-curl -X POST http://localhost:4000/projects \
-  -H 'content-type: application/json' \
-  -d @- <<'JSON'
-{
-  "name": "Issue Radar",
-  "workflowId": "web-app-v1",
-  "prd": "Crie uma aplicação web para registrar issues, filtrar por prioridade e status, persistir dados e cobrir os fluxos principais com testes."
-}
-JSON
-```
+`/health`, `/ready` e os endpoints de bootstrap são as únicas rotas sem cookie de Control Session.
+O startup imprime a URL de bootstrap browser uma vez; `npm run foundry` autentica o cliente de
+terminal usando o installation secret local sem imprimi-lo.
 
 ## Comandos
 
@@ -359,7 +350,8 @@ Este MVP ainda não é uma plataforma multi-tenant segura nem um scheduler distr
 - Não há recuperação automática de leases órfãos na pasta `processing` após crash abrupto.
 - O verifier executa scripts do código gerado. Isso exige isolamento forte antes de aceitar usuários não confiáveis.
 - As permissões das CLIs continuam fazendo parte da fronteira de segurança. Prompt e sandbox de fornecedor não são uma prisão perfeita.
-- Não há autenticação, autorização, rate limit, quota por usuário nem armazenamento de segredos.
+- Não há autorização multiusuário, quota por usuário nem isolamento multi-tenant. A Control Session
+  autentica o único operador local; não transforma o control plane em serviço remoto.
 - O router melhora com feedback, mas não prova que o modelo escolhido é globalmente ótimo.
 - Um reviewer baseado em LLM pode aprovar código ruim. Checks determinísticos e testes continuam obrigatórios.
 - Assinatura não significa capacidade ilimitada. Rate limits e políticas do fornecedor ainda se aplicam.
@@ -417,4 +409,4 @@ See [`planning/APPLY.md`](planning/APPLY.md), [`docs/PRODUCT_CONTRACT.md`](docs/
 
 ## Real-execution network guard
 
-The API now defaults to `127.0.0.1`. When `EXECUTOR_MODE=real`, binding to a non-loopback host fails closed. `ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true` bypasses that check but does not add a sandbox, authentication, egress control, or secret isolation. Until Safe Runtime Foundation is complete, real execution is supported only for a trusted local operator.
+The control plane binds only to loopback. Any non-loopback `API_HOST` fails closed in mock and real modes, with no override. Startup creates a process-lifetime authenticated Control Session through a one-use bootstrap URL; mutating requests also require CSRF protection.
