@@ -36,6 +36,48 @@ test('detecta deep import e dependência ausente', async () => {
   assert.ok(result.errors.some((error) => error.includes('não declara')));
 });
 
+async function contractsFixture(index, files = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'af-contracts-'));
+  await mkdir(join(root, 'apps'), { recursive: true });
+  await mkdir(join(root, 'packages/contracts/src'), { recursive: true });
+  await writeFile(
+    join(root, 'packages/contracts/package.json'),
+    JSON.stringify({ name: '@agent-foundry/contracts' }),
+  );
+  await writeFile(join(root, 'packages/contracts/src/index.ts'), index);
+  for (const [path, source] of Object.entries(files))
+    await writeFile(join(root, 'packages/contracts/src', path), source);
+  return root;
+}
+
+test('rejeita built-ins Node em todas as formas alcançáveis pelo entrypoint browser', async () => {
+  for (const source of [
+    "import { createHash } from 'node:crypto';",
+    "import { createHash } from 'crypto';",
+    "const { createHash } = await import('crypto');",
+    "import 'crypto';",
+  ]) {
+    const result = await inspectArchitecture(
+      await contractsFixture("export * from './node-only.js';", { 'node-only.ts': source }),
+    );
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.errors.some((error) =>
+        error.includes(
+          `packages/contracts/src/node-only.ts importa built-in Node no entrypoint browser: ${source.includes('node:') ? 'node:crypto' : 'crypto'}`,
+        ),
+      ),
+    );
+  }
+});
+
+test('aceita fixture limpa para o entrypoint browser', async () => {
+  const result = await inspectArchitecture(
+    await contractsFixture('export const browserSafe = true;'),
+  );
+  assert.equal(result.ok, true, result.errors.join('\n'));
+});
+
 test('platform is a declared leaf workspace', async () => {
   const result = await inspectArchitecture(root);
   assert.equal(result.ok, true, result.errors.join('\n'));

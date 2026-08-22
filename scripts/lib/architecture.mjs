@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { extname, join, relative, resolve } from 'node:path';
+import { builtinModules } from 'node:module';
+import { dirname, extname, join, relative, resolve } from 'node:path';
 
 export const ALLOWED_INTERNAL_DEPENDENCIES = new Map([
   ['@agent-foundry/contracts', new Set()],
@@ -81,8 +82,32 @@ export async function inspectArchitecture(rootDir, allowed = ALLOWED_INTERNAL_DE
     }
   }
 
+  if (byName.has('@agent-foundry/contracts'))
+    await inspectBrowserEntryPoint(rootDir, 'packages/contracts/src/index.ts', errors);
   detectGraphCycles(graph, errors);
   return { ok: errors.length === 0, errors, graph, packages };
+}
+
+async function inspectBrowserEntryPoint(rootDir, entryPoint, errors) {
+  const seen = new Set();
+  async function inspect(file) {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const source = await readFile(file, 'utf8');
+    for (const specifier of importSpecifiers(source)) {
+      if (isNodeBuiltin(specifier))
+        errors.push(
+          `${relative(rootDir, file)} importa built-in Node no entrypoint browser: ${specifier}`,
+        );
+      if (specifier.startsWith('.'))
+        await inspect(resolve(dirname(file), specifier.replace(/\.js$/, '.ts')));
+    }
+  }
+  await inspect(resolve(rootDir, entryPoint));
+}
+
+function isNodeBuiltin(specifier) {
+  return specifier.startsWith('node:') || builtinModules.includes(specifier.split('/')[0]);
 }
 
 async function loadWorkspaces(rootDir) {
