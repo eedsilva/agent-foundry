@@ -179,7 +179,9 @@ describe('CLI executor contracts', () => {
       ...request({ model: 'gpt-5.6-luna' }),
       reasoningEffort: 'high',
     } as AgentExecutionRequest & { reasoningEffort: 'high' };
-    const invocation = await new InspectableCodexExecutor(1_000_000).inspect(luna);
+    const invocation = await new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(
+      luna,
+    );
     try {
       expect(invocation.args).toEqual(
         expect.arrayContaining(['-c', 'model_reasoning_effort=high']),
@@ -199,9 +201,9 @@ describe('CLI executor contracts', () => {
         ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
       } as AgentExecutionRequest & { reasoningEffort?: string };
 
-      await expect(new InspectableCodexExecutor(1_000_000).inspect(luna)).rejects.toThrow(
-        /Luna.*high/i,
-      );
+      await expect(
+        new InspectableCodexExecutor(1_000_000, TEST_WORKSPACE_ROOT).inspect(luna),
+      ).rejects.toThrow(/Luna.*high/i);
     },
   );
 
