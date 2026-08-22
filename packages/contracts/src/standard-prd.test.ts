@@ -78,6 +78,20 @@ describe('validateStandardPrd', () => {
     }
   });
 
+  it('preserves fenced normative-template content in canonical markdown', () => {
+    const source = completedNormativeTemplate().replace(
+      '\n## 13. Open decisions / Decisões em aberto',
+      '\n\n```md\n### Literal subheading\n  - Indented detail\n## 14. Literal example\n```\n\n## 13. Open decisions / Decisões em aberto',
+    );
+    const result = validateStandardPrd(source);
+
+    if (!result.ok) throw new Error('fixture must be valid');
+    const canonicalLines = new Set(result.prd.canonicalMarkdown.split('\n'));
+    for (const line of source.split('\n').filter((line) => line.trim())) {
+      expect(canonicalLines).toContain(line);
+    }
+  });
+
   it('validates the completed normative Standard PRD template', () => {
     expect(validateStandardPrd(completedNormativeTemplate())).toMatchObject({ ok: true });
   });
