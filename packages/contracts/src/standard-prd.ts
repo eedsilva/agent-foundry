@@ -19,6 +19,8 @@ const REQUIRED_SECTIONS = [
 const IDENTIFIER_PATTERN = /^(?:FR|BR|NFR|AC)-\d{3}$/;
 const IDENTIFIER_DEFINITION = /^\s*-\s+\*\*((?:FR|BR|NFR|AC)-\d{3})\*\*\s*(?::|—)/gm;
 const ACCEPTANCE_CRITERION = /^\s*-\s+\*\*(AC-\d{3})\*\*\s+—\s+Verifies:\s*(.+)$/gm;
+const NOT_APPLICABLE = /^(?:Not applicable|Não aplicável)\s*$/;
+const NO_OPEN_DECISIONS = new Set(['None', 'Nenhuma', 'Nenhum']);
 
 export type StandardPrdIssue = {
   code: string;
@@ -51,7 +53,7 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
       message: 'PRD must not exceed 50,000 characters.',
     });
   }
-  if (/\b(?:TBD|TODO)\b/i.test(document)) {
+  if (/\b(?:TBD|TODO)\b/.test(document)) {
     issues.push({
       code: 'open-placeholder',
       path: 'document',
@@ -109,7 +111,7 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
         path,
         message: `Section ${index + 1} must not be empty.`,
       });
-    } else if (/^Not applicable\s*$/i.test(section.content)) {
+    } else if (NOT_APPLICABLE.test(section.content)) {
       issues.push({
         code: 'not-applicable-reason',
         path,
@@ -119,7 +121,7 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
   }
 
   const openDecisions = sections.get(13)?.content;
-  if (openDecisions && openDecisions.toLowerCase() !== 'none') {
+  if (openDecisions && !NO_OPEN_DECISIONS.has(openDecisions)) {
     issues.push({
       code: 'open-decisions',
       path: 'sections.13',
@@ -251,7 +253,12 @@ function validateIdentifiers(sections: Map<number, Section>, issues: StandardPrd
     [10, 'NFR'],
     [11, 'AC'],
   ] as const) {
-    if (![...identifiers.keys()].some((identifier) => identifier.startsWith(`${prefix}-`))) {
+    const content = sections.get(section)?.content ?? '';
+    if (
+      ![...content.matchAll(IDENTIFIER_DEFINITION)].some((match) =>
+        match[1]?.startsWith(`${prefix}-`),
+      )
+    ) {
       issues.push({
         code: 'missing-identifier',
         path: `sections.${section}`,
@@ -261,7 +268,8 @@ function validateIdentifiers(sections: Map<number, Section>, issues: StandardPrd
   }
 
   const acceptanceCriteria = sections.get(11)?.content ?? '';
-  for (const match of acceptanceCriteria.matchAll(ACCEPTANCE_CRITERION)) {
+  const criteria = [...acceptanceCriteria.matchAll(ACCEPTANCE_CRITERION)];
+  for (const [index, match] of criteria.entries()) {
     const criterion = match[1]!;
     const references = match[2]!
       .split(',')
@@ -288,8 +296,7 @@ function validateIdentifiers(sections: Map<number, Section>, issues: StandardPrd
       }
     }
     const start = match.index! + match[0].length;
-    const next = acceptanceCriteria.indexOf('\n- **AC-', start);
-    const body = acceptanceCriteria.slice(start, next < 0 ? undefined : next);
+    const body = acceptanceCriteria.slice(start, criteria[index + 1]?.index);
     for (const keyword of ['Given', 'When', 'Then']) {
       if (!new RegExp(`^\\s*-\\s*${keyword}\\s+\\S`, 'm').test(body)) {
         issues.push({

@@ -121,4 +121,66 @@ describe('validateStandardPrd', () => {
       ]),
     });
   });
+
+  it('permits Portuguese standard tokens and lowercase ordinary words', () => {
+    const result = validateStandardPrd(
+      prd({
+        3: `${section(3).content}\n\n- O todo usuário vê apenas suas tarefas.`,
+        12: 'Não aplicável porque esta primeira versão não integra serviços externos.',
+        13: 'Nenhuma',
+      }),
+    );
+
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it('rejects bare Portuguese Not applicable', () => {
+    const result = validateStandardPrd(prd({ 12: 'Não aplicável' }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([expect.objectContaining({ code: 'not-applicable-reason' })]),
+    });
+  });
+
+  it('delimits indented acceptance criteria by their next definition', () => {
+    const result = validateStandardPrd(
+      prd({
+        11: `  - **AC-001** — Verifies: FR-001, BR-001, NFR-001
+    - Given an authenticated owner
+    - When the owner creates a task
+  - **AC-002** — Verifies: FR-001
+    - Given an authenticated owner
+    - When the owner archives a task
+    - Then the task is removed from the active list.`,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'missing-observable-acceptance',
+          path: 'acceptance.AC-001',
+          message: expect.stringContaining('Then'),
+        }),
+      ]),
+    });
+  });
+
+  it('requires identifiers in their required section', () => {
+    const result = validateStandardPrd(
+      prd({
+        6: 'The owner can create a task.',
+        8: `${section(8).content}\n- **FR-001**: Defined in the wrong section.`,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'missing-identifier', path: 'sections.6' }),
+      ]),
+    });
+  });
 });
