@@ -78,8 +78,9 @@ import { registerControlSession, type ControlSession } from './control-session.j
 
 interface BuildAppOptions {
   loggerStream?: { write(message: string): void };
-  /** Test-only clock override for the blob route rate limiter. */
+  /** Test-only clock override for in-memory rate limiters. */
   now?: () => number;
+  /** Low-level test hook. Production and end-to-end startup use buildAuthenticatedApp. */
   controlSession?: ControlSession;
 }
 
@@ -139,6 +140,7 @@ export async function buildApp(
       app,
       options.controlSession,
       allowedOrigins[0] ?? runtime.config.webOrigin,
+      options.now,
     );
   }
 

@@ -6,8 +6,10 @@ import {
   CONTROL_SESSION_CSRF_HEADER,
   CONTROL_SESSION_INSTALLATION_HEADER,
 } from '@agent-foundry/contracts';
+import { createFixedWindowRateLimiter } from './rate-limit.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const CONTROL_SESSION_REQUESTS_PER_MINUTE = 300;
 
 export interface ControlSession {
   readonly bootstrapToken: string;
@@ -56,7 +58,13 @@ export function registerControlSession(
   app: FastifyInstance,
   session: ControlSession,
   webOrigin: string,
+  now?: () => number,
 ): void {
+  const rateLimiter = createFixedWindowRateLimiter(
+    CONTROL_SESSION_REQUESTS_PER_MINUTE,
+    60_000,
+    now,
+  );
   app.get('/auth/bootstrap', (request, reply) => {
     const token = (request.query as { token?: string }).token;
     const established = session.bootstrap(token);
@@ -96,6 +104,10 @@ export function registerControlSession(
       request.url.startsWith('/preview/')
     ) {
       done();
+      return;
+    }
+    if (!rateLimiter.allow(request.ip)) {
+      void reply.status(429).send({ error: 'RateLimited', message: 'Too many requests.' });
       return;
     }
     const csrf = request.headers[CONTROL_SESSION_CSRF_HEADER];

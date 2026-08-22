@@ -1,5 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fchmodSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+} from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
@@ -311,25 +319,39 @@ function loadOrCreateBlobSigningSecret(dataDir: string): string {
 
 export function loadOrCreateInstallationSecret(dataDir: string): string {
   const path = resolve(dataDir, 'installation-secret');
-  let secret: string;
   try {
-    if (!lstatSync(path).isFile()) throw new Error('Installation secret must be a regular file.');
-    chmodSync(path, 0o600);
-    secret = readFileSync(path, 'utf8').trim();
+    return readInstallationSecret(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     const candidate = randomBytes(32).toString('hex');
-    secret = createTextFileExclusiveSync(path, candidate, 0o600)
-      ? candidate
-      : readFileSync(path, 'utf8').trim();
+    createTextFileExclusiveSync(path, candidate, 0o600);
+    return readInstallationSecret(path);
   }
-  if (!/^[a-f0-9]{64}$/.test(secret)) {
-    throw new Error('Installation secret is invalid; refusing to reset it silently.');
+}
+
+function readInstallationSecret(path: string): string {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = fstatSync(fd);
+    if (!before.isFile()) throw new Error('Installation secret must be a regular file.');
+    const previousMode = before.mode & 0o777;
+    if (previousMode !== 0o600) {
+      console.warn(
+        `[warn] Installation secret permissions were ${previousMode.toString(8).padStart(4, '0')}; repaired to 0600.`,
+      );
+      fchmodSync(fd, 0o600);
+    }
+    const secret = readFileSync(fd, 'utf8').trim();
+    if (!/^[a-f0-9]{64}$/.test(secret)) {
+      throw new Error('Installation secret is invalid; refusing to reset it silently.');
+    }
+    if ((fstatSync(fd).mode & 0o777) !== 0o600) {
+      throw new Error('Installation secret permissions must be 0600.');
+    }
+    return secret;
+  } finally {
+    closeSync(fd);
   }
-  if ((statSync(path).mode & 0o777) !== 0o600) {
-    throw new Error('Installation secret permissions must be 0600.');
-  }
-  return secret;
 }
 
 function findRepoRoot(start: string): string {

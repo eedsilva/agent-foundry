@@ -15,8 +15,13 @@ import type {
   RouterDecisionLogEntry,
   TaskProfile,
 } from '@agent-foundry/contracts';
-import { BrowserVerificationReportSchema } from '@agent-foundry/contracts';
-import { buildApp } from '../src/app.js';
+import {
+  BrowserVerificationReportSchema,
+  CONTROL_SESSION_COOKIE,
+  CONTROL_SESSION_CSRF_COOKIE,
+  CONTROL_SESSION_CSRF_HEADER,
+} from '@agent-foundry/contracts';
+import { buildAuthenticatedApp } from '../src/authenticated-app.js';
 import { reserveEphemeralPort, waitForHttp } from './support.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -216,6 +221,9 @@ async function enableAdvancedMode(page: Page) {
 let runtime: Runtime;
 let apiClose: () => Promise<void>;
 let apiBaseUrl: string;
+let apiCookie = '';
+let apiCsrf = '';
+let browserCookies: { name: string; value: string; httpOnly: boolean }[] = [];
 let webProcess: ChildProcess;
 let webBaseUrl: string;
 const dirs: string[] = [];
@@ -280,7 +288,7 @@ test.beforeAll(async () => {
       WORKFLOWS_DIR: workflowsDir,
       POLICIES_DIR: policiesDir,
       EXECUTOR_MODE: 'real',
-      API_HOST: '127.0.0.1',
+      API_HOST: 'localhost',
       API_PORT: String(apiPort),
       WORKER_ID: 'golden-e2e-worker',
       WEB_ORIGIN: webBaseUrl,
@@ -291,9 +299,36 @@ test.beforeAll(async () => {
     // This fixture deliberately avoids Docker-backed real-mode dependencies.
     { previewInstaller: null, generatedProjectRuntime: null },
   );
-  const app = await buildApp(runtime);
-  apiBaseUrl = await app.listen({ host: '127.0.0.1', port: apiPort });
+  const { app, bootstrapUrl } = await buildAuthenticatedApp(runtime);
+  app.post('/__control_session_probe__', async () => ({ ok: true }));
+  await app.listen({ host: 'localhost', port: apiPort });
+  apiBaseUrl = `http://localhost:${apiPort}`;
   apiClose = () => app.close();
+
+  const mutation = { method: 'POST' } satisfies RequestInit;
+  expect((await fetch(`${apiBaseUrl}/__control_session_probe__`, mutation)).status).toBe(401);
+
+  const bootstrap = await fetch(bootstrapUrl, { redirect: 'manual' });
+  expect(bootstrap.status).toBe(302);
+  const cookiePairs = bootstrap.headers
+    .getSetCookie()
+    .map((line) => line.split(';')[0] ?? '')
+    .filter(Boolean);
+  apiCookie = cookiePairs.join('; ');
+  apiCsrf =
+    cookiePairs
+      .find((pair) => pair.startsWith(`${CONTROL_SESSION_CSRF_COOKIE}=`))
+      ?.slice(CONTROL_SESSION_CSRF_COOKIE.length + 1) ?? '';
+  browserCookies = cookiePairs.map((pair) => {
+    const separator = pair.indexOf('=');
+    const name = pair.slice(0, separator);
+    return {
+      name,
+      value: pair.slice(separator + 1),
+      httpOnly: name === CONTROL_SESSION_COOKIE,
+    };
+  });
+  expect((await apiFetch('/__control_session_probe__', mutation)).status).toBe(200);
 
   webProcess = spawn('npx', ['next', 'dev', '-p', String(webPort)], {
     cwd: resolve(REPO_ROOT, 'apps/web'),
@@ -303,6 +338,12 @@ test.beforeAll(async () => {
   await waitForHttp(webBaseUrl, 60_000);
 });
 
+test.beforeEach(async ({ context }) => {
+  await context.addCookies(
+    browserCookies.map((cookie) => ({ ...cookie, url: apiBaseUrl, sameSite: 'Lax' })),
+  );
+});
+
 test.afterAll(async () => {
   webProcess.kill();
   process.env.PATH = originalPath;
@@ -310,7 +351,7 @@ test.afterAll(async () => {
 });
 
 async function createProject(policyId?: string): Promise<string> {
-  const response = await fetch(`${apiBaseUrl}/projects`, {
+  const response = await apiFetch('/projects', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -323,6 +364,13 @@ async function createProject(policyId?: string): Promise<string> {
   expect(response.status).toBe(202);
   const { project } = (await response.json()) as { project: { id: string } };
   return project.id;
+}
+
+function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set('cookie', apiCookie);
+  headers.set(CONTROL_SESSION_CSRF_HEADER, apiCsrf);
+  return fetch(`${apiBaseUrl}${path}`, { ...init, headers });
 }
 
 async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
@@ -477,9 +525,9 @@ async function seedRouterDecisions(projectId: string, runId: string): Promise<vo
 }
 
 async function getRun(projectId: string): Promise<{ id: string; status: string }> {
-  const response = await fetch(`${apiBaseUrl}/projects/${projectId}`);
+  const response = await apiFetch(`/projects/${projectId}`);
   const { project } = (await response.json()) as { project: { currentRunId: string } };
-  const runResponse = await fetch(`${apiBaseUrl}/runs/${project.currentRunId}`);
+  const runResponse = await apiFetch(`/runs/${project.currentRunId}`);
   const { run } = (await runResponse.json()) as { run: { id: string; status: string } };
   return run;
 }
@@ -1306,7 +1354,7 @@ test('router dashboard shows decisions and filters, an experiment can be registe
   const run = await getRun(projectId);
   await seedRouterDecisions(projectId, run.id);
 
-  const dashboardResponse = await fetch(`${apiBaseUrl}/router/dashboard`);
+  const dashboardResponse = await apiFetch('/router/dashboard');
   expect(dashboardResponse.ok).toBe(true);
   const dashboard = (await dashboardResponse.json()) as {
     facets: { taskKinds: string[]; workflowIds: string[] };
@@ -1353,7 +1401,7 @@ test('router dashboard shows decisions and filters, an experiment can be registe
   await expect
     .poll(
       async () => {
-        const experimentsResponse = await fetch(`${apiBaseUrl}/experiments`);
+        const experimentsResponse = await apiFetch('/experiments');
         const { experiments } = (await experimentsResponse.json()) as {
           experiments: {
             hypothesis: string;
@@ -1366,7 +1414,7 @@ test('router dashboard shows decisions and filters, an experiment can be registe
     )
     .toMatchObject({ threshold: 0.65, minSamples: 12 });
 
-  const exportResponse = await fetch(`${apiBaseUrl}/router/export`);
+  const exportResponse = await apiFetch('/router/export');
   expect(exportResponse.ok).toBe(true);
   const { rows } = (await exportResponse.json()) as { rows: Record<string, unknown>[] };
   expect(rows.length).toBeGreaterThan(0);
@@ -1399,12 +1447,12 @@ test('regression gate passes an unchanged report and fails one missing a baselin
 
   const missingOneCase = { ...baseline, runs: baseline.runs.slice(1) };
   const [passResponse, failResponse] = await Promise.all([
-    fetch(`${apiBaseUrl}/router/regression-gate`, {
+    apiFetch('/router/regression-gate', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ fresh: baseline }),
     }),
-    fetch(`${apiBaseUrl}/router/regression-gate`, {
+    apiFetch('/router/regression-gate', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ fresh: missingOneCase }),
