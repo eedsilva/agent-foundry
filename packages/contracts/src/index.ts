@@ -8,7 +8,6 @@ export * from './policy.js';
 export * from './plan.js';
 export * from './schema-plan.js';
 export * from './schema-plan-sql.js';
-export * from './standard-prd.js';
 export * from './workflow.js';
 export * from './project.js';
 export * from './conversation.js';
