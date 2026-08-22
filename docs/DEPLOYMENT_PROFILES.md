@@ -19,10 +19,9 @@ Local development with mock CLI execution (no real commands run). Safe for share
 ```bash
 EXECUTOR_MODE=mock
 API_HOST=127.0.0.1
-ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=false
 ```
 
-### real-local-trusted ✓ (MAX BEFORE v0.4.5)
+### real-local-trusted
 
 **Executor Mode:** real  
 **API Host:** 127.0.0.1 (loopback only)  
@@ -39,42 +38,20 @@ Trusted local environment with real CLI execution. Restricts API to loopback int
 ```bash
 EXECUTOR_MODE=real
 API_HOST=127.0.0.1
-ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=false
 ```
 
-### mock-production
+## Control Plane Security Model
 
-**Executor Mode:** mock  
-**API Host:** 0.0.0.0 (all interfaces)  
-**Remote Execution:** ❌ disabled
+**Default:** API binds to loopback (`127.0.0.1`) in every execution mode.
 
-Production-ready deployment with mock CLI execution. Safe for public-facing deployments since all execution is simulated.
-
-**Use case:** Production, shared hosting, untrusted networks, public demo.
-
-**Security:** Execution is mocked (no real commands). Public access is safe.
-
-**Configuration:**
-
-```bash
-EXECUTOR_MODE=mock
-API_HOST=0.0.0.0
-ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=false
-```
-
-## Real Mode Security Model
-
-**Default:** API binds to loopback (127.0.0.1) when `EXECUTOR_MODE=real`.
-
-**Remote Host Binding Rejected:** If you set `API_HOST=0.0.0.0` or any non-loopback IP with `EXECUTOR_MODE=real`, startup fails:
+**Remote Host Binding Rejected:** Any non-loopback `API_HOST` fails startup:
 
 ```
-Error: Refusing to expose real CLI execution on a non-loopback API host.
-Keep API_HOST on 127.0.0.1/localhost or explicitly set ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true
-after accepting the host-level risk.
+Error: Refusing to expose the Agent Foundry control plane on a non-loopback API host.
+Keep API_HOST on 127.0.0.1, localhost, or ::1.
 ```
 
-**Override (⚠️ unsafe):** Set `ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true` to bind real mode to non-loopback hosts. This exposes real command execution to untrusted network. Startup logs a security warning.
+No remote-binding override exists. The Control Session authenticates browser requests but does not make remote exposure supported.
 
 ## Deployment Profile Detection
 
@@ -86,16 +63,6 @@ On startup, the runtime detects your deployment profile from environment variabl
 ```
 
 If your configuration matches a known profile, the name is logged. If it's a custom combination, logged as "custom".
-
-## Startup Warnings
-
-**Real mode with remote override:**
-
-```
-SECURITY WARNING: real CLI execution is exposed on a non-loopback host with an explicit unsafe override.
-```
-
-This warning appears every startup as a reminder that the environment is configured with reduced safety.
 
 ## Changing Profiles
 

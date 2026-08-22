@@ -24,7 +24,9 @@ export function useAgentStream(activeOperationRunId: string | undefined) {
 
   useEffect(() => {
     if (!activeOperationRunId) return;
-    const source = new EventSource(runEventsStreamUrl(activeOperationRunId));
+    const source = new EventSource(runEventsStreamUrl(activeOperationRunId), {
+      withCredentials: true,
+    });
     source.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data) as AgentStreamEvent;

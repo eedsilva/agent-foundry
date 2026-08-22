@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
@@ -37,7 +37,6 @@ const ConfigSchema = z
     DATABASE_URL: z.string().min(1).optional(),
     RUN_WORKER_INLINE: booleanFromEnv,
     AUTO_INSTALL_DEPENDENCIES: booleanFromEnv,
-    ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: booleanFromEnv,
     // How many plan tasks a for-each-task node may run at once, each in its
     // own git worktree (#520). The default is 1 because the constraint is the
     // agent account, not the machine: one ChatGPT login means one shared
@@ -134,7 +133,6 @@ export interface RuntimeConfig {
   databaseUrl?: string;
   runWorkerInline: boolean;
   autoInstallDependencies: boolean;
-  allowUnsafeRemoteRealExecution: boolean;
   maxParallelTasks: number;
   agentTimeoutMs: number;
   supabaseProvisioningTimeoutMs: number;
@@ -195,20 +193,23 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     throw new Error('PERSISTENCE_MODE=postgres requires DATABASE_URL');
   }
   const rootDir = findRepoRoot(env.REPO_ROOT ?? env.INIT_CWD ?? process.cwd());
-  if (
-    parsed.EXECUTOR_MODE === 'real' &&
-    !isLoopbackHost(parsed.API_HOST) &&
-    !parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION
-  ) {
+  if (!isLoopbackHost(parsed.API_HOST)) {
     throw new Error(
-      'Refusing to expose real CLI execution on a non-loopback API host. Keep API_HOST on 127.0.0.1/localhost or explicitly set ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true after accepting the host-level risk.',
+      'Refusing to expose the Agent Foundry control plane on a non-loopback API host. Keep API_HOST on 127.0.0.1, localhost, or ::1.',
     );
   }
-  const profileSpec = getDeploymentProfile(
-    parsed.EXECUTOR_MODE,
-    parsed.API_HOST,
-    parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,
-  );
+  for (const origin of parsed.WEB_ORIGIN.split(',').map((value) => value.trim())) {
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      throw new Error(`WEB_ORIGIN must contain valid loopback HTTP origins: ${origin}`);
+    }
+    if (!['http:', 'https:'].includes(url.protocol) || !isLoopbackHost(url.hostname)) {
+      throw new Error(`Refusing a non-loopback WEB_ORIGIN: ${origin}`);
+    }
+  }
+  const profileSpec = getDeploymentProfile(parsed.EXECUTOR_MODE, parsed.API_HOST, false);
   const deploymentProfile = profileSpec?.name ?? 'custom';
   const dataDir = resolve(rootDir, parsed.DATA_DIR);
   const blobSigningSecret =
@@ -235,7 +236,6 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     ...(parsed.DATABASE_URL ? { databaseUrl: parsed.DATABASE_URL } : {}),
     runWorkerInline: parsed.RUN_WORKER_INLINE,
     autoInstallDependencies: parsed.AUTO_INSTALL_DEPENDENCIES,
-    allowUnsafeRemoteRealExecution: parsed.ALLOW_UNSAFE_REMOTE_REAL_EXECUTION,
     maxParallelTasks: parsed.MAX_PARALLEL_TASKS,
     agentTimeoutMs: parsed.AGENT_TIMEOUT_MS,
     supabaseProvisioningTimeoutMs: parsed.SUPABASE_PROVISIONING_TIMEOUT_MS,
@@ -307,6 +307,29 @@ function loadOrCreateBlobSigningSecret(dataDir: string): string {
   const secret = randomBytes(32).toString('hex');
   const created = createTextFileExclusiveSync(path, secret, 0o600);
   return created ? secret : readFileSync(path, 'utf8').trim();
+}
+
+export function loadOrCreateInstallationSecret(dataDir: string): string {
+  const path = resolve(dataDir, 'installation-secret');
+  let secret: string;
+  try {
+    if (!lstatSync(path).isFile()) throw new Error('Installation secret must be a regular file.');
+    chmodSync(path, 0o600);
+    secret = readFileSync(path, 'utf8').trim();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const candidate = randomBytes(32).toString('hex');
+    secret = createTextFileExclusiveSync(path, candidate, 0o600)
+      ? candidate
+      : readFileSync(path, 'utf8').trim();
+  }
+  if (!/^[a-f0-9]{64}$/.test(secret)) {
+    throw new Error('Installation secret is invalid; refusing to reset it silently.');
+  }
+  if ((statSync(path).mode & 0o777) !== 0o600) {
+    throw new Error('Installation secret permissions must be 0600.');
+  }
+  return secret;
 }
 
 function findRepoRoot(start: string): string {

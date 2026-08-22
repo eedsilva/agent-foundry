@@ -21,11 +21,11 @@ See `packages/composition/src/risk-register.ts` for the authoritative register.
 ### RISK-001: Exposed Secrets in Environment Configuration
 
 **Owner:** DevOps  
-**Probability:** High | **Impact:** Critical
+**Probability:** Low | **Impact:** Critical
 
-**Trigger:** Real mode execution with API host ≠ loopback AND ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true
+**Trigger:** Attempt to configure the control plane on a non-loopback API host
 
-**Mitigation:** API binds to loopback by default. Real mode throws on non-loopback unless override set. Override requires explicit env var.
+**Mitigation:** Startup rejects non-loopback API hosts in every execution mode. No remote-binding override exists.
 
 **Contingency:** Rotate all exposed credentials. Audit API access logs.
 

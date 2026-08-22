@@ -121,7 +121,7 @@ Texto e data blocks de mensagens e o nome opcional de attachments passam pelo re
 
 Attachments persistem somente metadata: kind, nome opcional, MIME bare `type/subtype` sem parâmetros, SHA-256, tamanho e access scope do projeto. Não existe upload nem armazenamento de blob neste slice (#43). MIME, hash e tamanho são declarações do cliente; não provam conteúdo seguro.
 
-Referências de attachment, run e artifact são verificadas contra o projeto da rota. Isso impede ligações cross-project acidentais ou forjadas dentro do aggregate, mas não autentica o caller e não implementa autorização multi-tenant. Qualquer cliente com acesso à API local ainda pode escolher um project id conhecido. Mantenha a API em loopback/rede privada até existir autenticação e autorização reais.
+Referências de attachment, run e artifact são verificadas contra o projeto da rota. Isso impede ligações cross-project acidentais ou forjadas dentro do aggregate. A Control Session autentica o único operador local, mas não implementa autorização multi-tenant: um cliente autenticado ainda pode escolher um project id conhecido. O control plane permanece estritamente em loopback.
 
 Uma idempotency key de operação é project-scoped. Retry com o mesmo input devolve o record original; reuso com input diferente falha com `409`, evitando que uma chave seja reinterpretada silenciosamente.
 
