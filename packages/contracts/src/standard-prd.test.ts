@@ -127,20 +127,24 @@ describe('validateStandardPrd', () => {
       prd({
         3: `${section(3).content}\n\n- O todo usuário vê apenas suas tarefas.`,
         12: 'Não aplicável porque esta primeira versão não integra serviços externos.',
-        13: 'Nenhuma',
+        13: 'nenhuma',
       }),
     );
 
     expect(result).toMatchObject({ ok: true });
   });
 
-  it('rejects bare Portuguese Not applicable', () => {
-    const result = validateStandardPrd(prd({ 12: 'Não aplicável' }));
+  it('rejects lowercase bare Not applicable', () => {
+    const result = validateStandardPrd(prd({ 12: 'not applicable' }));
 
     expect(result).toMatchObject({
       ok: false,
       issues: expect.arrayContaining([expect.objectContaining({ code: 'not-applicable-reason' })]),
     });
+  });
+
+  it('permits lowercase None', () => {
+    expect(validateStandardPrd(prd({ 13: 'none' }))).toMatchObject({ ok: true });
   });
 
   it('delimits indented acceptance criteria by their next definition', () => {

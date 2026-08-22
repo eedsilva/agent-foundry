@@ -19,8 +19,8 @@ const REQUIRED_SECTIONS = [
 const IDENTIFIER_PATTERN = /^(?:FR|BR|NFR|AC)-\d{3}$/;
 const IDENTIFIER_DEFINITION = /^\s*-\s+\*\*((?:FR|BR|NFR|AC)-\d{3})\*\*\s*(?::|—)/gm;
 const ACCEPTANCE_CRITERION = /^\s*-\s+\*\*(AC-\d{3})\*\*\s+—\s+Verifies:\s*(.+)$/gm;
-const NOT_APPLICABLE = /^(?:Not applicable|Não aplicável)\s*$/;
-const NO_OPEN_DECISIONS = new Set(['None', 'Nenhuma', 'Nenhum']);
+const NOT_APPLICABLE = new Set(['not applicable', 'não aplicável']);
+const NO_OPEN_DECISIONS = new Set(['none', 'nenhuma', 'nenhum']);
 
 export type StandardPrdIssue = {
   code: string;
@@ -111,7 +111,7 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
         path,
         message: `Section ${index + 1} must not be empty.`,
       });
-    } else if (NOT_APPLICABLE.test(section.content)) {
+    } else if (NOT_APPLICABLE.has(section.content.trim().toLowerCase())) {
       issues.push({
         code: 'not-applicable-reason',
         path,
@@ -121,7 +121,7 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
   }
 
   const openDecisions = sections.get(13)?.content;
-  if (openDecisions && !NO_OPEN_DECISIONS.has(openDecisions)) {
+  if (openDecisions && !NO_OPEN_DECISIONS.has(openDecisions.trim().toLowerCase())) {
     issues.push({
       code: 'open-decisions',
       path: 'sections.13',
