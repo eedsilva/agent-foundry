@@ -127,7 +127,7 @@ describe('fake provider CLIs', () => {
   }
 
   it('reports a healthy version for both fake CLIs', async () => {
-    const codex = new CodexCliExecutor(1_000_000);
+    const codex = new CodexCliExecutor(1_000_000, tmpdir());
     const claude = new ClaudeCliExecutor(1_000_000, tmpdir());
     await expect(codex.health()).resolves.toMatchObject({ available: true, provider: 'codex' });
     await expect(claude.health()).resolves.toMatchObject({ available: true, provider: 'claude' });
@@ -142,7 +142,7 @@ describe('fake provider CLIs', () => {
       { stepId: 'plan', taskKind: 'planning', role: 'planner', mutationAllowed: false },
       TASK_GRAPH_ARTIFACT_JSON_SCHEMA,
     );
-    const executor = new CodexCliExecutor(1_000_000);
+    const executor = new CodexCliExecutor(1_000_000, tmpdir());
 
     const result = await executor.execute(
       request({
@@ -221,7 +221,7 @@ describe('fake provider CLIs', () => {
       { stepId: 'review', taskKind: 'code-review', role: 'code-reviewer', mutationAllowed: false },
       { $id: 'agent-artifact' },
     );
-    const executor = new CodexCliExecutor(1_000_000);
+    const executor = new CodexCliExecutor(1_000_000, tmpdir());
 
     const result = await executor.execute(
       request({
@@ -247,7 +247,7 @@ describe('fake provider CLIs', () => {
   // JSON Schema:" to stdin; Claude carries it through --json-schema. Both
   // fake provider shims must recognize this same bare judge prompt.
   it.each([
-    ['codex', () => new CodexCliExecutor(1_000_000)],
+    ['codex', () => new CodexCliExecutor(1_000_000, tmpdir())],
     ['claude', () => new ClaudeCliExecutor(1_000_000, tmpdir())],
   ] as const)(
     'answers the UI-quality judge prompt with all rubric criteria through fake %s',
@@ -282,7 +282,7 @@ describe('fake provider CLIs', () => {
   );
 
   it.each([
-    ['codex', () => new CodexCliExecutor(1_000_000)],
+    ['codex', () => new CodexCliExecutor(1_000_000, tmpdir())],
     ['claude', () => new ClaudeCliExecutor(1_000_000, tmpdir())],
   ] as const)(
     'keeps missing REQUEST.md strict for ordinary schemas through fake %s',

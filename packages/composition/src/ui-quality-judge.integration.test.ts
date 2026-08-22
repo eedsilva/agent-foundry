@@ -139,7 +139,7 @@ class UiQualityJudgeExecutor implements AgentExecutor {
 class RealFakeCliJudgeExecutor implements AgentExecutor {
   readonly provider = 'mock';
   private readonly delegate = new MockAgentExecutor();
-  private readonly judge = new CodexCliExecutor(1_000_000);
+  private readonly judge = new CodexCliExecutor(1_000_000, tmpdir());
   readonly servedScores: Array<{ stepId: string; overallScore: number }> = [];
 
   /** Scripted `overallScore` for every call after the first, last one repeating
