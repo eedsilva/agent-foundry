@@ -156,7 +156,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       throw new ValidationError('Environment identity must name the same project as the request.');
     }
     const resolved = resolveTarget(
-      identity ? { projectId: input.projectId, environmentId: identity.environmentId } : input.projectId,
+      identity
+        ? { projectId: input.projectId, environmentId: identity.environmentId }
+        : input.projectId,
     );
     const key = targetKey(resolved);
     const inFlight = this.#initializations.get(key);

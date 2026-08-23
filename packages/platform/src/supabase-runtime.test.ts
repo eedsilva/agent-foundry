@@ -2264,10 +2264,7 @@ describe('callers address one environment, not one project (#617)', () => {
     expect(accepted.identity).toEqual(ACCEPTED);
     // The compose project name is what the container runtime keys on, and it
     // reaches the CLI as config.toml's project_id — same name, same stack.
-    expect(projectIdsAtStart).toEqual([
-      candidate.composeProjectName,
-      accepted.composeProjectName,
-    ]);
+    expect(projectIdsAtStart).toEqual([candidate.composeProjectName, accepted.composeProjectName]);
 
     // Par negativo: bringing the second one up left the first one's record
     // intact on disk — not overwritten, not erased.

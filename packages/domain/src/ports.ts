@@ -695,8 +695,16 @@ export interface GeneratedProjectRuntime {
    * Unreadable or schema-invalid metadata is skipped, not thrown.
    */
   listEnvironments(): Promise<AppEnvironment[]>;
-  previewMigration(input: { projectId: string; environmentId?: string; migrationPath: string }): Promise<MigrationPreview>;
-  backupMigration(input: { projectId: string; environmentId?: string; backupPath: string }): Promise<MigrationBackup>;
+  previewMigration(input: {
+    projectId: string;
+    environmentId?: string;
+    migrationPath: string;
+  }): Promise<MigrationPreview>;
+  backupMigration(input: {
+    projectId: string;
+    environmentId?: string;
+    backupPath: string;
+  }): Promise<MigrationBackup>;
   migrate(input: {
     projectId: string;
     /** Addresses one environment; absent means the legacy root (#617). */
@@ -726,8 +734,16 @@ export interface GeneratedProjectRuntime {
    * approved policy by name. Constraints and indexes are out of scope.
    * Read-only. Extra tables the plan does not name are not a failure.
    */
-  verifySchema(input: { projectId: string; environmentId?: string; tables: SchemaTable[] }): Promise<SchemaVerification>;
-  seed(input: { projectId: string; environmentId?: string; seedPath: string }): Promise<AppEnvironment>;
+  verifySchema(input: {
+    projectId: string;
+    environmentId?: string;
+    tables: SchemaTable[];
+  }): Promise<SchemaVerification>;
+  seed(input: {
+    projectId: string;
+    environmentId?: string;
+    seedPath: string;
+  }): Promise<AppEnvironment>;
   health(target: EnvironmentTarget): Promise<AppEnvironment>;
   reset(input: {
     projectId: string;
