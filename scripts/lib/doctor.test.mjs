@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -50,9 +51,14 @@ test('prints ready provider probes as contract-shaped JSON without raw authentic
     'status',
     'version',
   ]);
+  assert.match(output.sourceRevision, /^[0-9a-f]{40}$/);
   assert.doesNotMatch(result.stdout, /private@example\.test|private-org|Logged in using ChatGPT/);
   assert.deepEqual(
-    output.checks.slice(3).map(({ message }) => message),
+    output.checks
+      .filter(({ name }) =>
+        ['harness manifest', 'workflow directory', 'model catalog'].includes(name),
+      )
+      .map(({ message }) => message),
     ['harness/manifest.json', 'workflows', 'models/catalog.yaml'],
   );
   assert.equal(result.stdout.includes(fixture.root), false);
@@ -77,6 +83,28 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
       },
     })),
   );
+  assertNoModelInvocation(fixture);
+});
+
+test('blocks a missing Docker daemon without invoking a model', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  await rm(join(fixture.bin, 'docker'));
+
+  const result = runDoctor(fixture, ['--json']);
+  assert.equal(result.status, 1);
+  assert.equal(JSON.parse(result.stdout).checks.find(({ name }) => name === 'docker').ok, false);
+  assertNoModelInvocation(fixture);
+});
+
+test('reuses a green preflight only for the same source revision', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  assert.equal(runDoctor(fixture, ['--json']).status, 0);
+  await writeFile(join(fixture.root, 'provider-fixtures.json'), '{}\n');
+
+  assert.equal(runDoctor(fixture, ['--json']).status, 0, 'same revision reuses cache');
+  await writeFile(join(fixture.root, 'git-revision'), `${'b'.repeat(40)}\n`);
+  assert.equal(runDoctor(fixture, ['--json']).status, 1, 'changed revision reruns checks');
+  assertNoModelInvocation(fixture);
 });
 
 test('fails real mode when srt (the sandbox wrapper #637 spawns instead of codex) is missing, even with Codex itself ready', async (t) => {
@@ -128,6 +156,7 @@ test('classifies providers with absent sessions as unauthenticated', async (t) =
     ['unauthenticated', 'unauthenticated'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /secret@test|private-user|Not logged in/);
+  assertNoModelInvocation(fixture);
 });
 
 test('reports individual incompatible capabilities when required flags disappear', async (t) => {
@@ -286,7 +315,11 @@ test('redacts existing and missing filesystem paths from JSON checks', async (t)
   assert.equal(result.status, 1);
   const output = JSON.parse(result.stdout);
   assert.deepEqual(
-    output.checks.slice(3).map(({ message }) => message),
+    output.checks
+      .filter(({ name }) =>
+        ['harness manifest', 'workflow directory', 'model catalog'].includes(name),
+      )
+      .map(({ message }) => message),
     ['harness/manifest.json', 'workflows', 'missing: models/catalog.yaml'],
   );
   assert.equal(result.stdout.includes(fixture.root), false);
@@ -366,7 +399,22 @@ async function createFixture(t, providers) {
   const bin = join(root, 'bin');
   await mkdir(bin);
   await symlink(process.execPath, join(bin, 'node'));
-  await symlink('/usr/bin/git', join(bin, 'git'));
+  await writeFile(join(root, 'git-revision'), `${'a'.repeat(40)}\n`);
+  await writeFile(
+    join(bin, 'git'),
+    "#!/usr/bin/env node\nimport { readFileSync } from 'node:fs';\nconst args = process.argv.slice(2).join(' ');\nif (args === '--version') process.stdout.write('git version 2.50.1\\n');\nelse if (args === 'rev-parse HEAD') process.stdout.write(readFileSync('git-revision', 'utf8'));\nelse process.exitCode = 1;\n",
+  );
+  await chmod(join(bin, 'git'), 0o755);
+  await writeFile(
+    join(bin, 'docker'),
+    "#!/usr/bin/env node\nif (process.argv.slice(2).join(' ') === 'info --format {{.ServerVersion}}') process.stdout.write('27.0.0\\n');\nelse process.exitCode = 1;\n",
+  );
+  await chmod(join(bin, 'docker'), 0o755);
+  await writeFile(
+    join(bin, 'fdesetup'),
+    "#!/usr/bin/env node\nif (process.argv[2] === 'status') process.stdout.write('FileVault is On.\\n');\nelse process.exitCode = 1;\n",
+  );
+  await chmod(join(bin, 'fdesetup'), 0o755);
   // Present by default so every existing fixture exercises the ready path;
   // tests for the missing-wrapper case (#637) remove it after createFixture,
   // the same pattern the missing-catalog-file test below already uses.
@@ -383,14 +431,20 @@ async function createFixture(t, providers) {
   // Read from cwd, not an env var: the doctor scopes the probe env to the same
   // spawn allowlist execution uses, so nothing bespoke survives into the child.
   const fakeCli = `#!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 const provider = basename(process.argv[1]);
 const args = process.argv.slice(2);
 const fixtures = JSON.parse(readFileSync('provider-fixtures.json', 'utf8'));
 const fixture = fixtures[provider];
 let command;
-if (args[0] === '--version') command = 'version';
+if (
+  (provider === 'codex' && args[0] === 'exec' && args[1] !== '--help') ||
+  (provider === 'claude' && args[0] === '--print')
+) {
+  appendFileSync('model-invocations', args.join(' ') + '\\n');
+  process.exit(98);
+} else if (args[0] === '--version') command = 'version';
 else if (provider === 'codex' && args.join(' ') === 'exec --help') command = 'help';
 else if (provider === 'codex' && args.join(' ') === 'login status') command = 'auth';
 else if (provider === 'claude' && args.join(' ') === '--help') command = 'help';
@@ -426,6 +480,7 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
     ...process.env,
     PATH: `${fixture.bin}:/usr/bin:/bin`,
     EXECUTOR_MODE: 'real',
+    DATA_DIR: '.data',
     ...extraEnv,
   };
   // An explicit `undefined` withholds a variable the runner's own env may carry.
@@ -439,4 +494,8 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function assertNoModelInvocation(fixture) {
+  assert.equal(existsSync(join(fixture.root, 'model-invocations')), false);
 }

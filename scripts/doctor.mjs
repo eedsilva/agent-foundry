@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 // The same list packages/executors/src/safe-environment.ts imports. The doctor
 // must probe under the env a real execution gets, or it reports ready for a CLI
 // that is unauthenticated the moment the orchestrator actually spawns it. Read
 // as data, not code: the doctor has to work on an unbuilt tree.
 import safeEnvAllowlist from '../packages/executors/src/safe-env-allowlist.json' with { type: 'json' };
+import { fileVaultCheck, storageChecks } from './lib/environment-preflight.mjs';
 
 const root = process.cwd();
 const env = { ...readDotEnv(resolve(root, '.env')), ...process.env };
@@ -14,104 +15,136 @@ const probeEnv = Object.fromEntries(
 );
 const executorMode = env.EXECUTOR_MODE ?? 'mock';
 const realMode = executorMode === 'real';
-const checks = [
-  commandCheck('node', ['--version'], true, { minimumVersion: '22.0.0' }),
-  commandCheck('git', ['--version'], true),
-  // `CodexCliExecutor` spawns `srt` (@anthropic-ai/sandbox-runtime), not
-  // `codex`, as the real process in real mode (#637, docs/adr/0081) — the
-  // `codex` probe below says nothing about whether the wrapper it actually
-  // runs through is installed. Only required in real mode, same as the
-  // provider probes: `srt` is never spawned in mock mode.
-  commandCheck('srt', ['--version'], realMode),
-  fileCheck(
-    'harness manifest',
-    resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
-    true,
-    root,
-  ),
-  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root),
-  fileCheck(
-    'model catalog',
-    resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
-    true,
-    root,
-  ),
-];
-const probes = await Promise.all([
-  providerProbe({
-    provider: 'codex',
-    label: 'Codex',
-    versionArgs: ['--version'],
-    helpArgs: ['exec', '--help'],
-    authArgs: ['login', 'status'],
-    flags: {
-      nonInteractive: [
-        '--json',
-        '--ephemeral',
-        '--color',
-        '--output-last-message',
-        '--skip-git-repo-check',
-      ],
-      modelSelection: ['--model'],
-      sandbox: ['--sandbox'],
-    },
-    authenticationStatus(result) {
-      const output = combinedOutput(result).trim();
-      if (/^Not logged in\.?$/i.test(output)) return false;
-      if (result.status === 0 && /^Logged in(?: using (?:ChatGPT|an API key))?\.?$/i.test(output)) {
-        return true;
-      }
-      return null;
-    },
-  }),
-  providerProbe({
-    provider: 'claude',
-    label: 'Claude',
-    versionArgs: ['--version'],
-    helpArgs: ['--help'],
-    authArgs: ['auth', 'status'],
-    flags: {
-      nonInteractive: [
-        '--print',
-        '--verbose',
-        '--output-format',
-        '--no-session-persistence',
-        '--prompt-suggestions',
-        '--json-schema',
-      ],
-      modelSelection: ['--model'],
-      sandbox: ['--safe-mode', '--permission-mode'],
-    },
-    authenticationStatus(result) {
-      try {
-        const { loggedIn } = JSON.parse(result.stdout ?? '');
-        if (loggedIn === false) return false;
-        if (loggedIn === true && result.status === 0) return true;
-        return null;
-      } catch {
-        return null;
-      }
-    },
-  }),
-]);
-
-const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'ready') : [];
-const failures = [...checks.filter((check) => check.required && !check.ok), ...providerFailures];
-
-if (process.argv.slice(2).includes('--json')) {
-  console.log(JSON.stringify({ executorMode, checks: jsonChecks(checks), probes }, null, 2));
+const dataDirectory = resolve(root, env.DATA_DIR ?? '.data');
+const sourceRevision = sourceRevisionCheck();
+const cached = sourceRevision.revision ? readPreflightCache(sourceRevision.revision) : undefined;
+if (cached) {
+  print(cached);
 } else {
+  const checks = [
+    commandCheck('node', ['--version'], true, { minimumVersion: '22.0.0' }),
+    commandCheck('git', ['--version'], true),
+    sourceRevision,
+    // `CodexCliExecutor` spawns `srt` (@anthropic-ai/sandbox-runtime), not
+    // `codex`, as the real process in real mode (#637, docs/adr/0081) — the
+    // `codex` probe below says nothing about whether the wrapper it actually
+    // runs through is installed. Only required in real mode, same as the
+    // provider probes: `srt` is never spawned in mock mode.
+    commandCheck('srt', ['--version'], realMode),
+    fileCheck(
+      'harness manifest',
+      resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
+      true,
+      root,
+    ),
+    fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root),
+    fileCheck(
+      'model catalog',
+      resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
+      true,
+      root,
+    ),
+    commandCheck('docker', ['info', '--format', '{{.ServerVersion}}'], realMode, {
+      missingMessage: 'start Docker Desktop and retry',
+    }),
+    ...storageChecks({ root, dataDirectory }),
+    fileVaultCheck(process.platform, run),
+  ];
+  const probes = await Promise.all([
+    providerProbe({
+      provider: 'codex',
+      label: 'Codex',
+      versionArgs: ['--version'],
+      helpArgs: ['exec', '--help'],
+      authArgs: ['login', 'status'],
+      flags: {
+        nonInteractive: [
+          '--json',
+          '--ephemeral',
+          '--color',
+          '--output-last-message',
+          '--skip-git-repo-check',
+        ],
+        modelSelection: ['--model'],
+        sandbox: ['--sandbox'],
+      },
+      authenticationStatus(result) {
+        const output = combinedOutput(result).trim();
+        if (/^Not logged in\.?$/i.test(output)) return false;
+        if (
+          result.status === 0 &&
+          /^Logged in(?: using (?:ChatGPT|an API key))?\.?$/i.test(output)
+        ) {
+          return true;
+        }
+        return null;
+      },
+    }),
+    providerProbe({
+      provider: 'claude',
+      label: 'Claude',
+      versionArgs: ['--version'],
+      helpArgs: ['--help'],
+      authArgs: ['auth', 'status'],
+      flags: {
+        nonInteractive: [
+          '--print',
+          '--verbose',
+          '--output-format',
+          '--no-session-persistence',
+          '--prompt-suggestions',
+          '--json-schema',
+        ],
+        modelSelection: ['--model'],
+        sandbox: ['--safe-mode', '--permission-mode'],
+      },
+      authenticationStatus(result) {
+        try {
+          const { loggedIn } = JSON.parse(result.stdout ?? '');
+          if (loggedIn === false) return false;
+          if (loggedIn === true && result.status === 0) return true;
+          return null;
+        } catch {
+          return null;
+        }
+      },
+    }),
+  ]);
+
+  const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'ready') : [];
+  const failures = [...checks.filter((check) => check.required && !check.ok), ...providerFailures];
+  const report = {
+    schemaVersion: 1,
+    sourceRevision: sourceRevision.revision,
+    executorMode,
+    checks,
+    probes,
+  };
+  if (failures.length === 0 && sourceRevision.revision) writePreflightCache(report);
+  print(report);
+  if (failures.length > 0) process.exitCode = 1;
+}
+
+function print(report) {
+  if (process.argv.slice(2).includes('--json')) {
+    console.log(JSON.stringify({ ...report, checks: jsonChecks(report.checks) }, null, 2));
+    return;
+  }
   console.log(`Agent Foundry doctor · executor mode: ${executorMode}\n`);
-  for (const check of checks) {
+  for (const check of report.checks) {
     const icon = check.ok ? '✓' : check.required ? '✗' : '·';
     console.log(`${icon} ${check.name.padEnd(20)} ${check.message}`);
   }
-  for (const probe of probes) {
+  for (const probe of report.probes) {
     const required = realMode;
     const icon = probe.status === 'ready' ? '✓' : required ? '✗' : '·';
     console.log(`${icon} ${probe.provider.padEnd(20)} ${probe.message}`);
   }
 
+  const failures = [
+    ...report.checks.filter((check) => check.required && !check.ok),
+    ...(realMode ? report.probes.filter((probe) => probe.status !== 'ready') : []),
+  ];
   if (failures.length > 0) {
     console.error(`\n${failures.length} required check(s) failed.`);
   } else {
@@ -120,8 +153,6 @@ if (process.argv.slice(2).includes('--json')) {
     );
   }
 }
-
-if (failures.length > 0) process.exitCode = 1;
 
 async function providerProbe(definition) {
   const versionResult = run(definition.provider, definition.versionArgs);
@@ -218,7 +249,9 @@ function commandCheck(command, args, required, options = {}) {
       name: command,
       ok: false,
       required,
-      message: required ? 'missing or not executable' : 'not installed; acceptable in mock mode',
+      message:
+        options.missingMessage ??
+        (required ? 'missing or not executable' : 'not installed; acceptable in mock mode'),
     };
   }
 
@@ -245,6 +278,48 @@ function commandCheck(command, args, required, options = {}) {
   }
 
   return { name: command, ok: true, required, message: output || 'available' };
+}
+
+function sourceRevisionCheck() {
+  const result = run('git', ['rev-parse', 'HEAD']);
+  const revision = combinedOutput(result).trim();
+  if (result.status === 0 && /^[0-9a-f]{40}$/.test(revision)) {
+    return { name: 'source revision', ok: true, required: true, message: revision, revision };
+  }
+  return {
+    name: 'source revision',
+    ok: false,
+    required: true,
+    message: 'could not read the current Git revision; commit or repair the checkout and retry',
+  };
+}
+
+function cachePath(revision) {
+  return join(dataDirectory, 'environment-preflight', `preflight-${revision}.json`);
+}
+
+function readPreflightCache(revision) {
+  try {
+    const report = JSON.parse(readFileSync(cachePath(revision), 'utf8'));
+    if (
+      report.schemaVersion === 1 &&
+      report.sourceRevision === revision &&
+      report.executorMode === executorMode
+    ) {
+      return report;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function writePreflightCache(report) {
+  const directory = join(dataDirectory, 'environment-preflight');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileSync(cachePath(report.sourceRevision), `${JSON.stringify(report, null, 2)}\n`, {
+    mode: 0o600,
+  });
 }
 
 function extractVersion(output) {

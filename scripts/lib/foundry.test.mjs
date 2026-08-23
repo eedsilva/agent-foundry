@@ -1,5 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import {
   defaultProjectName,
   formatEvent,
@@ -132,4 +136,22 @@ describe('statusKind', () => {
     assert.equal(statusKind('queued'), 'active');
     assert.equal(statusKind('paused'), 'active');
   });
+});
+
+it('stops before booting the stack when environment preflight fails', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-foundry-preflight-'));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const result = spawnSync(
+    process.execPath,
+    ['--import', 'tsx', 'scripts/foundry.ts', 'app de receitas'],
+    {
+      cwd: resolve('.'),
+      encoding: 'utf8',
+      env: { ...process.env, DATA_DIR: dataDir, EXECUTOR_MODE: 'real', PATH: '/usr/bin:/bin' },
+    },
+  );
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout + result.stderr, /Preflight falhou/);
+  assert.doesNotMatch(result.stdout + result.stderr, /subindo o stack/);
 });
