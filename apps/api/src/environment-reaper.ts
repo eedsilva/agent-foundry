@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { AppEnvironment, EnvironmentTarget } from '@agent-foundry/contracts';
 import type {
   GeneratedProjectRuntime,
   PreviewLifecycleLock,
@@ -20,6 +21,30 @@ export interface EnvironmentReaperLogger {
 }
 
 export type EnvironmentReaperSchedule = IntervalSweepSchedule;
+
+function environmentTarget(environment: AppEnvironment): EnvironmentTarget {
+  return environment.identity
+    ? { projectId: environment.projectId, environmentId: environment.identity.environmentId }
+    : environment.projectId;
+}
+
+function describeTarget(target: EnvironmentTarget): string {
+  return typeof target === 'string' ? target : `${target.projectId}/${target.environmentId}`;
+}
+
+/** Project, environment, and the version the environment is bound to — the
+ * three the reaper must be able to name (#617). A record without identity
+ * reports the environment and version as unknown; nothing infers a class. */
+function environmentTelemetry(environment: AppEnvironment): Record<string, unknown> {
+  const identity = environment.identity;
+  return {
+    projectId: environment.projectId,
+    environmentId: identity?.environmentId ?? null,
+    environmentClass: identity?.class ?? null,
+    projectVersionId:
+      identity && identity.class !== 'manual-preview' ? identity.projectVersionId : null,
+  };
+}
 
 /** Stops every idle environment. Returns how many were stopped. */
 export async function sweepIdleEnvironments(
@@ -57,12 +82,16 @@ export async function sweepIdleEnvironments(
       }
       if ((await deps.runs.listNonTerminal(environment.projectId)).length > 0) return;
 
+      // Address the exact environment, never the project: a project may hold a
+      // candidate and an accepted stack at once, and stopping by project id
+      // stops whichever one the legacy root happens to resolve to (#617).
+      const target = environmentTarget(environment);
       try {
-        await deps.environments.stop(environment.projectId);
+        await deps.environments.stop(target);
         stopped += 1;
-        logger.info({ projectId: environment.projectId }, 'Stopped idle environment');
+        logger.info(environmentTelemetry(environment), 'Stopped idle environment');
       } catch (error) {
-        logger.error(error, `Failed to stop idle environment for ${environment.projectId}`);
+        logger.error(error, `Failed to stop idle environment for ${describeTarget(target)}`);
       }
     });
   }

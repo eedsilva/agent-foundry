@@ -2225,3 +2225,122 @@ describe('explicit environment identity (#616)', () => {
     await expect(runtime.inspect('project-a')).rejects.toThrow();
   });
 });
+
+describe('callers address one environment, not one project (#617)', () => {
+  const CANDIDATE = {
+    class: 'candidate',
+    projectId: 'project-a',
+    environmentId: 'candidate-7f3a',
+    runCandidateId: 'run-candidate-42',
+    projectVersionId: 'version-19',
+  } as const;
+
+  const ACCEPTED = {
+    class: 'accepted',
+    projectId: 'project-a',
+    environmentId: 'accepted-0b21',
+    projectVersionId: 'version-20',
+  } as const;
+
+  const environmentMetadata = (projectId: string, environmentId: string) =>
+    join(dataDir, 'projects', projectId, 'environments', environmentId, 'environment.json');
+
+  async function hostPorts(workdir: string): Promise<number[]> {
+    const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
+    return HOST_PORT_FIELDS.map(([section, key]) => configPort(config, section, key));
+  }
+
+  it('gives two classes of one project separate directory, compose project, network and volume', async () => {
+    const { runtime } = fixture();
+
+    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    expect(candidate.workdir).not.toBe(accepted.workdir);
+    expect(candidate.composeProjectName).not.toBe(accepted.composeProjectName);
+    expect(candidate.network).not.toBe(accepted.network);
+    expect(candidate.volumes).not.toEqual(accepted.volumes);
+    expect(candidate.identity).toEqual(CANDIDATE);
+    expect(accepted.identity).toEqual(ACCEPTED);
+    // The compose project name is what the container runtime keys on, and it
+    // reaches the CLI as config.toml's project_id — same name, same stack.
+    expect(projectIdsAtStart).toEqual([
+      candidate.composeProjectName,
+      accepted.composeProjectName,
+    ]);
+
+    // Par negativo: bringing the second one up left the first one's record
+    // intact on disk — not overwritten, not erased.
+    const persistedCandidate = JSON.parse(
+      await readFile(environmentMetadata('project-a', CANDIDATE.environmentId), 'utf8'),
+    );
+    expect(persistedCandidate.identity).toEqual(CANDIDATE);
+    expect(persistedCandidate.workdir).toBe(candidate.workdir);
+    expect(
+      JSON.parse(await readFile(environmentMetadata('project-a', ACCEPTED.environmentId), 'utf8'))
+        .identity,
+    ).toEqual(ACCEPTED);
+  });
+
+  it('allocates ports against every environment root, not just the legacy one', async () => {
+    const { runtime } = fixture();
+
+    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+    const legacy = await runtime.initialize({ projectId: 'project-b' });
+
+    const blocks = await Promise.all(
+      [candidate, accepted, legacy].map((environment) => hostPorts(environment.workdir)),
+    );
+    // Par negativo: a stack outside projects/<id>/environment is invisible to
+    // a scan of that root alone, and invisible means the next environment is
+    // handed a port block already in use.
+    const allocated = blocks.flat();
+    expect(new Set(allocated).size).toBe(allocated.length);
+  });
+
+  it('stops exactly the environment it was given', async () => {
+    const { runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    const stopped = await runtime.stop({
+      projectId: 'project-a',
+      environmentId: CANDIDATE.environmentId,
+    });
+
+    expect(stopped.identity).toEqual(CANDIDATE);
+    expect(stopped.health.state).toBe('stopped');
+    // Par negativo: the sibling is still running, in the artifact a later
+    // process reads, not only in the return value.
+    const sibling = await runtime.inspect({
+      projectId: 'project-a',
+      environmentId: ACCEPTED.environmentId,
+    });
+    expect(sibling?.identity).toEqual(ACCEPTED);
+    expect(sibling?.health.state).not.toBe('stopped');
+    expect(
+      JSON.parse(await readFile(environmentMetadata('project-a', ACCEPTED.environmentId), 'utf8'))
+        .health.state,
+    ).not.toBe('stopped');
+  });
+
+  it('lists legacy and explicit environments together', async () => {
+    const { runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    await runtime.initialize({ projectId: 'project-b' });
+
+    const environments = await runtime.listEnvironments();
+
+    expect(
+      environments.map((environment) => environment.identity?.environmentId ?? null).sort(),
+    ).toEqual([CANDIDATE.environmentId, null].sort());
+  });
+
+  it('refuses an identity that names another project', async () => {
+    const { runtime } = fixture();
+    await expect(
+      runtime.initialize({ projectId: 'project-b', identity: CANDIDATE }),
+    ).rejects.toThrow(/same project/);
+  });
+});

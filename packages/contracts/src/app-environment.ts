@@ -166,3 +166,13 @@ export const AppEnvironmentSchema = z
     }
   });
 export type AppEnvironment = z.infer<typeof AppEnvironmentSchema>;
+
+/**
+ * How a caller addresses one environment. A bare project id is the legacy
+ * address ADR 0080 replaces: it names the single pre-#617 environment root and
+ * stays valid because "remove legacy compatibility" is out of scope for #617.
+ * The object form names the exact environment, which is what lets two classes
+ * of the same project coexist without sharing a directory, compose project,
+ * network, or volume.
+ */
+export type EnvironmentTarget = string | { projectId: string; environmentId: string };
