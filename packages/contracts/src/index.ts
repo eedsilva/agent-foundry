@@ -1,5 +1,6 @@
 export * from './primitives.js';
 export * from './agent.js';
+export * from './application-envelope.js';
 export * from './benchmark.js';
 export * from './experiment.js';
 export * from './model.js';
