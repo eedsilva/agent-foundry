@@ -25,6 +25,9 @@ const SUPPORTED_CAPABILITIES = new Set([
   'dashboard-count',
   'archive',
   'soft-delete',
+  'physical-delete',
+  'interface-language',
+  'backend-api-pagination',
   'idempotency-key',
   'stale-version-rejection',
   'audit-instants',
@@ -131,45 +134,46 @@ export function validateSupportedApplicationEnvelope(
   let domainEntities = 0;
 
   for (const requirement of requirements) {
+    const capability = requirement.capability.trim().toLowerCase();
     if (!REQUIREMENT_ID.test(requirement.id)) {
       questions.push({
         code: 'ambiguous-capability',
         requirementId: requirement.id,
-        capability: requirement.capability,
-        message: `Capability ${requirement.capability} needs a valid PRD requirement identifier.`,
+        capability,
+        message: `Capability ${capability} needs a valid PRD requirement identifier.`,
       });
       continue;
     }
-    if (requirement.capability === 'domain-entity') {
+    if (capability === 'domain-entity') {
       domainEntities += 1;
       if (domainEntities > MAX_DOMAIN_ENTITIES) {
         rejections.push({
           code: 'domain-entity-limit',
           requirementId: requirement.id,
-          capability: requirement.capability,
+          capability,
           message: `Supported Application Envelope v1 allows at most ${MAX_DOMAIN_ENTITIES} domain entities per PRD Revision.`,
         });
       }
       continue;
     }
-    const unsupported =
-      UNSUPPORTED_CAPABILITIES[requirement.capability as keyof typeof UNSUPPORTED_CAPABILITIES];
-    if (unsupported !== undefined) {
+    if (Object.hasOwn(UNSUPPORTED_CAPABILITIES, capability)) {
+      const unsupported =
+        UNSUPPORTED_CAPABILITIES[capability as keyof typeof UNSUPPORTED_CAPABILITIES];
       rejections.push({
         code: 'unsupported-capability',
         requirementId: requirement.id,
-        capability: requirement.capability,
-        message: `Supported Application Envelope v1 does not support ${requirement.capability}.`,
+        capability,
+        message: `Supported Application Envelope v1 does not support ${capability}.`,
         ...unsupported,
       });
       continue;
     }
-    if (!SUPPORTED_CAPABILITIES.has(requirement.capability)) {
+    if (!SUPPORTED_CAPABILITIES.has(capability)) {
       questions.push({
         code: 'ambiguous-capability',
         requirementId: requirement.id,
-        capability: requirement.capability,
-        message: `Capability ${requirement.capability} is not classified by Supported Application Envelope v1.`,
+        capability,
+        message: `Capability ${capability} is not classified by Supported Application Envelope v1.`,
       });
     }
   }

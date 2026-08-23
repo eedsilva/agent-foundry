@@ -334,13 +334,8 @@ npm run models:list:agy # modelos disponíveis no AGY
 
 ## Docker
 
-O Compose roda em modo mock por padrão:
-
-```bash
-docker compose up --build
-```
-
-Isso é intencional. O contêiner não instala nem recebe silenciosamente suas credenciais das CLIs. Para modo real, execute o worker no host autenticado ou construa uma imagem dedicada e trate credenciais como segredo operacional. Não monte sua pasta pessoal inteira no contêiner.
+O Compose fornece apenas serviços locais de suporte, como Postgres e MinIO opcional. API,
+worker e web são iniciados pelos comandos `npm run dev` e `npm run dev:inline`.
 
 ## Limitações honestas
 

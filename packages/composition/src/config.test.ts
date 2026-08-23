@@ -20,6 +20,18 @@ it('loads the shipped environment example', () => {
 });
 
 describe('runtime exposure policy', () => {
+  it('keeps versioned compose and environment API hosts on loopback', () => {
+    const files = [resolve(root, '.env.example'), resolve(root, 'docker-compose.yml')];
+    const apiHosts = files.flatMap((file) =>
+      [...readFileSync(file, 'utf8').matchAll(/API_HOST\s*[:=]\s*["']?([^\s"'#]+)/g)]
+        .map((match) => match[1])
+        .filter((host): host is string => host !== undefined),
+    );
+
+    expect(apiHosts).toContain('127.0.0.1');
+    expect(apiHosts.every((host) => isLoopbackHost(host))).toBe(true);
+  });
+
   it('binds to loopback by default', () => {
     const config = loadRuntimeConfig(base);
     expect(config.apiHost).toBe('127.0.0.1');

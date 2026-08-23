@@ -294,13 +294,9 @@ npm run dev
 
 API, worker e web em processos separados. Um crash de agente não derruba necessariamente a interface.
 
-### Docker mock
+### Docker
 
-```bash
-docker compose up --build
-```
-
-Usa volume para dados e não injeta credenciais de CLI.
+O Compose fornece apenas serviços locais de suporte, como Postgres e MinIO opcional.
 
 ## Preview
 
@@ -1063,11 +1059,11 @@ O bucket não precisa ser pré-criado manualmente para esse teste: o harness cri
 
 ### MinIO local (quickstart, fallback neutro)
 
-MinIO não depende de conta hospedada e é a stack que os testes automatizados deste repo sobem (via `testcontainers`, ver abaixo) — use-o para dev/CI sem Supabase, ou como referência de qualquer outro endpoint S3-compatível. `docker-compose.yml` traz um serviço `minio` comentado, junto com os envs `S3_*` correspondentes nos serviços `api`/`worker` e o volume `minio_data`. Para usar:
+MinIO não depende de conta hospedada e é a stack que os testes automatizados deste repo sobem (via `testcontainers`, ver abaixo) — use-o para dev/CI sem Supabase, ou como referência de qualquer outro endpoint S3-compatível. `docker-compose.yml` traz um serviço `minio` comentado e o volume `minio_data`. Para usar:
 
-1. Descomente o bloco `minio:` e o volume `minio_data:` no fim do arquivo, e os blocos `S3_*`/`BLOB_STORE_MODE: s3` em `api` e `worker` (mantenha os dois em sincronia).
-2. Suba com `docker compose up minio api worker`. O MinIO expõe a API em `:9000` e o console web em `:9001`; as credenciais padrão (`minioadmin`/`minioadmin`) servem só para desenvolvimento — troque antes de expor a instância.
-3. Crie o bucket configurado (`S3_BUCKET`, padrão `agent-foundry`) antes do primeiro start — pelo console web em `:9001` ou via `mc mb local/agent-foundry`. A API não cria buckets; sem esse passo o primeiro write de artifact falha com `NoSuchBucket`. Feito isso, a API passa a usar `S3BlobStore` a partir do próximo start.
+1. Descomente o bloco `minio:` e o volume `minio_data:` no fim do arquivo.
+2. Suba com `docker compose up minio`. O MinIO expõe a API em `:9000` e o console web em `:9001`; as credenciais padrão (`minioadmin`/`minioadmin`) servem só para desenvolvimento — troque antes de expor a instância.
+3. Crie o bucket configurado (`S3_BUCKET`, padrão `agent-foundry`) antes de iniciar a aplicação — pelo console web em `:9001` ou via `mc mb local/agent-foundry`. A API não cria buckets; sem esse passo o primeiro write de artifact falha com `NoSuchBucket`.
 
 Para testes automatizados, `packages/persistence/src/blob/s3-testing.ts` sobe um container MinIO efêmero via `testcontainers` (mesma política skip-sem-Docker/throw-em-CI dos demais harnesses de container deste repo) — não é usado em produção, só pelos testes de `s3-blob-store.test.ts`.
 

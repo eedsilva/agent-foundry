@@ -66,6 +66,9 @@ export function registerControlSession(
     now,
   );
   app.get('/auth/bootstrap', (request, reply) => {
+    if (!rateLimiter.allow(request.ip)) {
+      return reply.status(429).send({ error: 'RateLimited', message: 'Too many requests.' });
+    }
     const token = (request.query as { token?: string }).token;
     const established = session.bootstrap(token);
     if (!established) {
@@ -80,6 +83,9 @@ export function registerControlSession(
   });
 
   app.post('/auth/terminal-bootstrap', (request, reply) => {
+    if (!rateLimiter.allow(request.ip)) {
+      return reply.status(429).send({ error: 'RateLimited', message: 'Too many requests.' });
+    }
     const presented = request.headers[CONTROL_SESSION_INSTALLATION_HEADER];
     const established = session.bootstrapInstallation(
       Array.isArray(presented) ? presented[0] : presented,
@@ -104,10 +110,6 @@ export function registerControlSession(
       request.url.startsWith('/preview/')
     ) {
       done();
-      return;
-    }
-    if (!rateLimiter.allow(request.ip)) {
-      void reply.status(429).send({ error: 'RateLimited', message: 'Too many requests.' });
       return;
     }
     const csrf = request.headers[CONTROL_SESSION_CSRF_HEADER];
