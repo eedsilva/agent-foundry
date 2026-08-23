@@ -2161,3 +2161,67 @@ describe('verifySchema (#481)', () => {
     );
   });
 });
+
+describe('explicit environment identity (#616)', () => {
+  const IDENTITY = {
+    class: 'candidate',
+    projectId: 'project-a',
+    environmentId: 'candidate-7f3a',
+    runCandidateId: 'run-candidate-42',
+    projectVersionId: 'version-19',
+  } as const;
+
+  const metadataPath = (projectId: string) =>
+    join(dataDir, 'projects', projectId, 'environment', 'environment.json');
+
+  it('keeps a persisted identity in the file every lifecycle write rewrites', async () => {
+    const { runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    await writeFile(
+      metadataPath('project-a'),
+      `${JSON.stringify({ ...initialized, identity: IDENTITY }, null, 2)}\n`,
+    );
+
+    const inspected = await runtime.inspect('project-a');
+    const stopped = await runtime.stop('project-a');
+    const restarted = await runtime.initialize({ projectId: 'project-a' });
+
+    expect(inspected?.identity).toEqual(IDENTITY);
+    expect(stopped.identity).toEqual(IDENTITY);
+    expect(restarted.identity).toEqual(IDENTITY);
+    // The artifact, not the return value: what a later process actually reads.
+    expect(JSON.parse(await readFile(metadataPath('project-a'), 'utf8')).identity).toEqual(
+      IDENTITY,
+    );
+  });
+
+  it('reads and rewrites a record written before identity existed without inventing one', async () => {
+    const { runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    expect(initialized.identity).toBeUndefined();
+    expect(JSON.parse(await readFile(metadataPath('project-a'), 'utf8')).identity).toBeUndefined();
+
+    const stopped = await runtime.stop('project-a');
+
+    // Absent means unknown. A stack labelled accepted is one Local Acceptance
+    // would treat as the promoted Local Supabase Stack (ADR 0080).
+    expect(stopped.identity).toBeUndefined();
+    expect(JSON.parse(await readFile(metadataPath('project-a'), 'utf8')).identity).toBeUndefined();
+    expect(await readFile(metadataPath('project-a'), 'utf8')).not.toContain('accepted');
+  });
+
+  it('refuses a record whose identity names another project', async () => {
+    const { runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    await writeFile(
+      metadataPath('project-a'),
+      `${JSON.stringify(
+        { ...initialized, identity: { ...IDENTITY, projectId: 'project-b' } },
+        null,
+        2,
+      )}\n`,
+    );
+
+    await expect(runtime.inspect('project-a')).rejects.toThrow();
+  });
+});

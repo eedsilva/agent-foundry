@@ -81,6 +81,58 @@ export interface SchemaVerification {
   missingPolicies: string[];
 }
 
+/**
+ * ADR 0080 gives a project up to three environment classes that must never be
+ * confused: the Candidate Supabase Stack a Run Candidate owns, the Local
+ * Supabase Stack that Local Acceptance promotes, and the deliberately
+ * non-promotable Manual Preview Stack of an Externally Modified Project.
+ */
+export const EnvironmentClassSchema = z.enum(['candidate', 'accepted', 'manual-preview']);
+export type EnvironmentClass = z.infer<typeof EnvironmentClassSchema>;
+
+/**
+ * Explicit environment identity: project, environment, and the source version
+ * the environment is bound to. The binding is per class on purpose — ADR 0080
+ * requires an accepted or candidate environment to name the exact commit
+ * (through its ProjectVersion ledger entry, which carries it) so recovery
+ * "never starts an application with a mismatched commit and environment", while
+ * a Manual Preview Stack has no ledger entry at all and is instead "recreated
+ * when the migration digest changes". A single opaque version field would
+ * accept either binding on either class; the union cannot.
+ */
+export const EnvironmentIdentitySchema = z.discriminatedUnion('class', [
+  z
+    .object({
+      class: z.literal('candidate'),
+      projectId: PathSegmentSchema,
+      environmentId: PathSegmentSchema,
+      /** The Run Candidate this stack belongs to; its Task Agent worktrees share it. */
+      runCandidateId: PathSegmentSchema,
+      /** ProjectVersion.id of the candidate commit. */
+      projectVersionId: PathSegmentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      class: z.literal('accepted'),
+      projectId: PathSegmentSchema,
+      environmentId: PathSegmentSchema,
+      /** ProjectVersion.id of the Promotion Commit. */
+      projectVersionId: PathSegmentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      class: z.literal('manual-preview'),
+      projectId: PathSegmentSchema,
+      environmentId: PathSegmentSchema,
+      /** Digest of the modified source's migrations; a change recreates the stack. */
+      migrationDigest: Sha256Schema,
+    })
+    .strict(),
+]);
+export type EnvironmentIdentity = z.infer<typeof EnvironmentIdentitySchema>;
+
 export const AppEnvironmentSchema = z
   .object({
     projectId: PathSegmentSchema,
@@ -96,6 +148,21 @@ export const AppEnvironmentSchema = z
     }),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
+    /** Optional during the expand phase (#616): records written before explicit
+     * identity existed carry none, and nothing may infer a class for them —
+     * a stack labelled `accepted` is one Local Acceptance later treats as the
+     * promoted Local Supabase Stack. Writers that know the identity persist it;
+     * #617 migrates the callers that can determine it. */
+    identity: EnvironmentIdentitySchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.identity && value.identity.projectId !== value.projectId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['identity', 'projectId'],
+        message: 'Environment identity must name the same project as the record.',
+      });
+    }
+  });
 export type AppEnvironment = z.infer<typeof AppEnvironmentSchema>;

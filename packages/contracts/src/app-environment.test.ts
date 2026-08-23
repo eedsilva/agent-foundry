@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AppEnvironmentSchema,
+  EnvironmentIdentitySchema,
   MigrationApprovalSchema,
   MigrationBackupSchema,
   MigrationPreviewSchema,
@@ -140,6 +141,96 @@ describe('migration review schemas', () => {
         migrationChecksum: 'c'.repeat(64),
         backup,
         extra: true,
+      }),
+    ).toThrow();
+  });
+});
+
+const CANDIDATE_IDENTITY = {
+  class: 'candidate',
+  projectId: 'project-1',
+  environmentId: 'candidate-7f3a',
+  runCandidateId: 'run-candidate-42',
+  projectVersionId: 'version-19',
+} as const;
+
+const ACCEPTED_IDENTITY = {
+  class: 'accepted',
+  projectId: 'project-1',
+  environmentId: 'accepted-project-1',
+  projectVersionId: 'version-20',
+} as const;
+
+const MANUAL_PREVIEW_IDENTITY = {
+  class: 'manual-preview',
+  projectId: 'project-1',
+  environmentId: 'manual-preview-8c11',
+  migrationDigest: 'a'.repeat(64),
+} as const;
+
+describe('EnvironmentIdentitySchema (#616)', () => {
+  it('round-trips the three environment classes through persistence', () => {
+    for (const identity of [CANDIDATE_IDENTITY, ACCEPTED_IDENTITY, MANUAL_PREVIEW_IDENTITY]) {
+      const persisted = JSON.parse(JSON.stringify(EnvironmentIdentitySchema.parse(identity)));
+      expect(EnvironmentIdentitySchema.parse(persisted)).toEqual(identity);
+    }
+  });
+
+  it('rejects a version binding that does not belong to the class', () => {
+    // An accepted or candidate stack binds the exact commit through its
+    // ProjectVersion entry; only a Manual Preview Stack binds a migration digest.
+    expect(() =>
+      EnvironmentIdentitySchema.parse({
+        ...ACCEPTED_IDENTITY,
+        projectVersionId: undefined,
+        migrationDigest: 'a'.repeat(64),
+      }),
+    ).toThrow();
+    expect(() =>
+      EnvironmentIdentitySchema.parse({
+        ...MANUAL_PREVIEW_IDENTITY,
+        migrationDigest: undefined,
+        projectVersionId: 'version-20',
+      }),
+    ).toThrow();
+    expect(() =>
+      EnvironmentIdentitySchema.parse({ ...ACCEPTED_IDENTITY, runCandidateId: 'run-candidate-42' }),
+    ).toThrow();
+  });
+
+  it('requires a candidate stack to name its Run Candidate', () => {
+    const { runCandidateId, ...withoutRunCandidate } = CANDIDATE_IDENTITY;
+    expect(runCandidateId).toBe('run-candidate-42');
+    expect(() => EnvironmentIdentitySchema.parse(withoutRunCandidate)).toThrow();
+  });
+
+  it('rejects an unknown class instead of accepting an ambiguous one', () => {
+    expect(() =>
+      EnvironmentIdentitySchema.parse({ ...ACCEPTED_IDENTITY, class: 'local' }),
+    ).toThrow();
+  });
+});
+
+describe('AppEnvironmentSchema identity (#616)', () => {
+  it('carries each identity through a persistence round trip', () => {
+    for (const identity of [CANDIDATE_IDENTITY, ACCEPTED_IDENTITY, MANUAL_PREVIEW_IDENTITY]) {
+      const parsed = AppEnvironmentSchema.parse({ ...ENVIRONMENT, identity });
+      const persisted = JSON.parse(JSON.stringify(parsed));
+      expect(AppEnvironmentSchema.parse(persisted).identity).toEqual(identity);
+    }
+  });
+
+  it('still reads a record written before identity existed', () => {
+    const legacy = AppEnvironmentSchema.parse(ENVIRONMENT);
+    expect(legacy.identity).toBeUndefined();
+    expect(AppEnvironmentSchema.parse(JSON.parse(JSON.stringify(legacy))).identity).toBeUndefined();
+  });
+
+  it('rejects an identity that names another project', () => {
+    expect(() =>
+      AppEnvironmentSchema.parse({
+        ...ENVIRONMENT,
+        identity: { ...ACCEPTED_IDENTITY, projectId: 'project-2' },
       }),
     ).toThrow();
   });
