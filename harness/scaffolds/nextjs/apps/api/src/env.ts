@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import type { RuntimeEnv } from './runtime-env.js';
 
 // The API tier's configuration contract. Read once, at boot, so a missing or
 // blank value fails immediately and says what to do about it — rather than
@@ -25,11 +26,11 @@ if (!Number.isInteger(apiPort)) {
   throw new Error(`API_PORT must be a port number, got "${process.env.API_PORT}".`);
 }
 
-export const env = {
+export const env: RuntimeEnv & { apiPort: number } = {
   apiPort,
   // The pair every request-scoped Supabase client is built from (ADR 0038).
   // The service-role key is deliberately not read here: it belongs to the
   // admin, cron and webhook paths, which resolve it where they use it.
-  supabaseUrl: required('NEXT_PUBLIC_SUPABASE_URL'),
-  supabaseAnonKey: required('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+  NEXT_PUBLIC_SUPABASE_URL: required('NEXT_PUBLIC_SUPABASE_URL'),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: required('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
 };

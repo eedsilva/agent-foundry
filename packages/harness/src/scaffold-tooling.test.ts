@@ -28,7 +28,7 @@ describe('generated Next.js scaffold tooling', () => {
       'lint:fix': 'eslint . --fix',
       format: 'prettier --write .',
       'format:check': 'prettier --check .',
-      test: 'node --test',
+      test: 'pnpm --filter api test',
     });
   });
 
@@ -91,12 +91,15 @@ describe('generated Next.js scaffold tooling', () => {
         JSON.stringify({
           private: true,
           type: 'module',
-          scripts: Object.fromEntries(
-            ['lint', 'lint:fix', 'format', 'format:check', 'test'].map((name) => [
-              name,
-              packageJson.scripts[name],
-            ]),
-          ),
+          scripts: {
+            ...Object.fromEntries(
+              ['lint', 'lint:fix', 'format', 'format:check'].map((name) => [
+                name,
+                packageJson.scripts[name],
+              ]),
+            ),
+            test: 'node --test',
+          },
         }),
       );
       await mkdir(bin, { recursive: true });

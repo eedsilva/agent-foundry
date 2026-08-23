@@ -3,7 +3,7 @@
 A pnpm workspace with two tiers and its own local Supabase stack:
 
 - `apps/web` — Next.js. Renders, signs users in, and calls the API tier. It never queries the database.
-- `apps/api` — Fastify. The only tier that talks to Supabase, with the caller's access token, so row level security still applies.
+- `apps/api` — Hono. The only tier that talks to Supabase, with the caller's access token, so row level security still applies. `server.ts` runs it through the Node adapter; `worker.ts` is the Cloudflare Worker entry point.
 - `supabase/` — this project's own stack: `config.toml`, forward-only `migrations/`, and `seed.sql`.
 
 ## Running it
@@ -11,7 +11,8 @@ A pnpm workspace with two tiers and its own local Supabase stack:
 ```sh
 pnpm install
 pnpm db:start   # starts Supabase, applies migrations and seed, writes .env
-pnpm dev        # web on :3000, api on :3001
+pnpm dev        # web on :3000, api on :3001 through the Node adapter
+pnpm worker:dev # the same API through Wrangler's local Worker runtime
 pnpm smoke      # asserts the database and both tiers answer
 pnpm db:stop    # stops the stack; data survives
 ```
