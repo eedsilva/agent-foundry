@@ -23,7 +23,6 @@ describe('runtime exposure policy', () => {
   it('binds to loopback by default', () => {
     const config = loadRuntimeConfig(base);
     expect(config.apiHost).toBe('127.0.0.1');
-    expect(config.allowUnsafeRemoteRealExecution).toBe(false);
     expect(config.allowLocalBrowserRedirects).toBe(false);
   });
 
@@ -37,22 +36,32 @@ describe('runtime exposure policy', () => {
   it('refuses real executors on a non-loopback host', () => {
     expect(() =>
       loadRuntimeConfig({ ...base, EXECUTOR_MODE: 'real', API_HOST: '0.0.0.0' }),
-    ).toThrow(/Refusing to expose real CLI execution/);
+    ).toThrow(/non-loopback API host/);
   });
 
-  it('requires an explicit unsafe override for remote real execution', () => {
-    const config = loadRuntimeConfig({
-      ...base,
-      EXECUTOR_MODE: 'real',
-      API_HOST: '0.0.0.0',
-      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
-    });
-    expect(config.allowUnsafeRemoteRealExecution).toBe(true);
+  it('does not allow an override for remote real execution', () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...base,
+        EXECUTOR_MODE: 'real',
+        API_HOST: '0.0.0.0',
+        ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
+      }),
+    ).toThrow(/non-loopback API host/);
   });
 
-  it('permits mock mode on a container-facing host', () => {
-    expect(loadRuntimeConfig({ ...base, EXECUTOR_MODE: 'mock', API_HOST: '0.0.0.0' }).apiHost).toBe(
-      '0.0.0.0',
+  it('refuses mock mode on a container-facing host too', () => {
+    expect(() =>
+      loadRuntimeConfig({ ...base, EXECUTOR_MODE: 'mock', API_HOST: '0.0.0.0' }),
+    ).toThrow(/non-loopback API host/);
+  });
+
+  it('accepts only loopback web origins', () => {
+    expect(loadRuntimeConfig({ ...base, WEB_ORIGIN: 'http://localhost:3000' }).webOrigin).toBe(
+      'http://localhost:3000',
+    );
+    expect(() => loadRuntimeConfig({ ...base, WEB_ORIGIN: 'https://builder.example.com' })).toThrow(
+      /non-loopback WEB_ORIGIN/,
     );
   });
 });
@@ -259,7 +268,7 @@ describe('Loopback Binding Validation', () => {
     expect(config.apiHost).toBe('::1');
   });
 
-  it('rejects real mode on non-loopback without override', () => {
+  it('rejects real mode on non-loopback', () => {
     expect(() => {
       loadRuntimeConfig({
         ...base,
@@ -267,7 +276,7 @@ describe('Loopback Binding Validation', () => {
         API_HOST: '0.0.0.0',
         ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
       });
-    }).toThrow('Refusing to expose real CLI execution on a non-loopback API host');
+    }).toThrow('Refusing to expose the Agent Foundry control plane on a non-loopback API host');
   });
 
   it('rejects real mode on non-loopback IP without override', () => {
@@ -278,30 +287,28 @@ describe('Loopback Binding Validation', () => {
         API_HOST: '192.168.1.100',
         ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
       });
-    }).toThrow('Refusing to expose real CLI execution on a non-loopback API host');
+    }).toThrow('Refusing to expose the Agent Foundry control plane on a non-loopback API host');
   });
 
-  it('allows real mode on non-loopback with explicit override', () => {
-    const config = loadRuntimeConfig({
-      ...base,
-      EXECUTOR_MODE: 'real',
-      API_HOST: '0.0.0.0',
-      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
-    });
-    expect(config.executorMode).toBe('real');
-    expect(config.apiHost).toBe('0.0.0.0');
-    expect(config.allowUnsafeRemoteRealExecution).toBe(true);
+  it('rejects real mode on non-loopback with the legacy override', () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...base,
+        EXECUTOR_MODE: 'real',
+        API_HOST: '0.0.0.0',
+        ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
+      }),
+    ).toThrow(/non-loopback API host/);
   });
 
-  it('accepts mock mode on any host', () => {
-    const config = loadRuntimeConfig({
-      ...base,
-      EXECUTOR_MODE: 'mock',
-      API_HOST: '0.0.0.0',
-      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
-    });
-    expect(config.executorMode).toBe('mock');
-    expect(config.apiHost).toBe('0.0.0.0');
+  it('rejects mock mode on non-loopback', () => {
+    expect(() =>
+      loadRuntimeConfig({
+        ...base,
+        EXECUTOR_MODE: 'mock',
+        API_HOST: '0.0.0.0',
+      }),
+    ).toThrow(/non-loopback API host/);
   });
 
   it('computes deployment profile correctly', () => {
@@ -312,16 +319,6 @@ describe('Loopback Binding Validation', () => {
       ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'false',
     });
     expect(config.deploymentProfile).toBe('real-local-trusted');
-  });
-
-  it("marks custom configuration when profile doesn't match", () => {
-    const config = loadRuntimeConfig({
-      ...base,
-      EXECUTOR_MODE: 'real',
-      API_HOST: '192.168.1.100',
-      ALLOW_UNSAFE_REMOTE_REAL_EXECUTION: 'true',
-    });
-    expect(config.deploymentProfile).toBe('custom');
   });
 
   it('leaves the real TODO validation campaign opt-in and unselected by default', () => {

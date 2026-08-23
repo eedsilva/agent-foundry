@@ -53,21 +53,45 @@ export type KnowledgeFileUpload = {
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+const CONTROL_SESSION_CSRF_COOKIE = 'af_csrf';
+const CONTROL_SESSION_CSRF_HEADER = 'x-csrf-token';
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      ...(init?.headers ?? {}),
-    },
-    cache: 'no-store',
-  });
+  const response = await apiFetch(path, init);
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
     throw new Error(body?.message ?? `API request failed with ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const browser = typeof document !== 'undefined';
+  const headers = {
+    ...(init?.body ? { 'content-type': 'application/json' } : {}),
+    ...(init?.headers ?? {}),
+  } as Record<string, string>;
+  const method = (init?.method ?? 'GET').toUpperCase();
+  if (browser && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const csrfToken = readCookie(document.cookie, CONTROL_SESSION_CSRF_COOKIE);
+    if (csrfToken) headers[CONTROL_SESSION_CSRF_HEADER] = csrfToken;
+  }
+  return fetch(`${API_URL}${path}`, {
+    ...init,
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    cache: 'no-store',
+    ...(browser ? { credentials: 'include' } : {}),
+  });
+}
+
+function readCookie(header: string, name: string): string | undefined {
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator >= 0 && part.slice(0, separator).trim() === name) {
+      return part.slice(separator + 1).trim();
+    }
+  }
+  return undefined;
 }
 
 export async function createProject(input: {
@@ -240,7 +264,7 @@ export async function cancelRun(runId: string): Promise<WorkflowRun> {
 export async function resumeRun(
   runId: string,
 ): Promise<{ run?: WorkflowRun; blocked?: ResumeBlockedResponse }> {
-  const response = await fetch(`${API_URL}/runs/${encodeURIComponent(runId)}/resume`, {
+  const response = await apiFetch(`/runs/${encodeURIComponent(runId)}/resume`, {
     method: 'POST',
     cache: 'no-store',
   });
@@ -279,8 +303,8 @@ export async function decideApproval(
   requestId: string,
   input: DecideApprovalRequest,
 ): Promise<{ result?: DecideApprovalResponse; conflict?: ApprovalConflictResponse }> {
-  const response = await fetch(
-    `${API_URL}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(requestId)}/decide`,
+  const response = await apiFetch(
+    `/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(requestId)}/decide`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

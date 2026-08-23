@@ -18,14 +18,13 @@ export const INITIAL_RISKS: Risk[] = [
     id: 'risk-001',
     title: 'Exposed secrets in environment configuration',
     owner: 'DevOps',
-    trigger:
-      'Real mode execution with API host != loopback AND ALLOW_UNSAFE_REMOTE_REAL_EXECUTION=true',
-    probability: 'high',
+    trigger: 'Attempt to configure the control plane on a non-loopback API host',
+    probability: 'low',
     impact: 'critical',
     mitigation:
-      'API binds to loopback (127.0.0.1) by default. Real mode throws on non-loopback unless override set. Override requires explicit env var.',
+      'Startup rejects non-loopback API hosts in every execution mode. No remote-binding override exists.',
     contingency: 'Rotate all exposed credentials immediately. Audit who accessed the API.',
-    status: 'active',
+    status: 'mitigated',
   },
   {
     id: 'risk-002',

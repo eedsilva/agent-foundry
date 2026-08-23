@@ -74,11 +74,14 @@ import { registerPreviewProxy } from './preview-proxy.js';
 import { createFixedWindowRateLimiter } from './rate-limit.js';
 import { registerRequestTracing } from './request-tracing.js';
 import { wildcardParam } from './request-util.js';
+import { registerControlSession, type ControlSession } from './control-session.js';
 
 interface BuildAppOptions {
   loggerStream?: { write(message: string): void };
-  /** Test-only clock override for the blob route rate limiter. */
+  /** Test-only clock override for in-memory rate limiters. */
   now?: () => number;
+  /** Low-level test hook. Production and end-to-end startup use buildAuthenticatedApp. */
+  controlSession?: ControlSession;
 }
 
 interface LoggableRequest {
@@ -129,7 +132,17 @@ export async function buildApp(
   await app.register(cors, {
     origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials: true,
   });
+
+  if (options.controlSession) {
+    registerControlSession(
+      app,
+      options.controlSession,
+      allowedOrigins[0] ?? runtime.config.webOrigin,
+      options.now,
+    );
+  }
 
   // Telemetry off (no OTLP endpoint) => these hooks are never registered =>
   // zero per-request span/WeakMap cost on the inert path. See
@@ -1074,6 +1087,9 @@ async function streamSse<T, Cursor extends string | number>(
     'cache-control': 'no-cache',
     connection: 'keep-alive',
     ...(origin && allowedOrigins.includes(origin) ? { 'access-control-allow-origin': origin } : {}),
+    ...(origin && allowedOrigins.includes(origin)
+      ? { 'access-control-allow-credentials': 'true' }
+      : {}),
   });
   raw.write(': connected\n\n');
 

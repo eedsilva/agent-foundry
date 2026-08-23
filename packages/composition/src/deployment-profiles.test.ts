@@ -20,13 +20,6 @@ describe('Deployment Profiles', () => {
       expect(profile?.apiHost).toBe('127.0.0.1');
     });
 
-    it('detects mock-production profile', () => {
-      const profile = getDeploymentProfile('mock', '0.0.0.0', false);
-      expect(profile).toBeDefined();
-      expect(profile?.name).toBe('mock-production');
-      expect(profile?.apiHost).toBe('0.0.0.0');
-    });
-
     it('returns null for unknown configuration', () => {
       const profile = getDeploymentProfile('real', '0.0.0.0', false);
       expect(profile).toBeNull(); // real mode on 0.0.0.0 without override is not a known profile
@@ -41,12 +34,8 @@ describe('Deployment Profiles', () => {
   describe('listDeploymentProfiles', () => {
     it('lists all available profiles', () => {
       const profiles = listDeploymentProfiles();
-      expect(profiles).toHaveLength(3);
-      expect(profiles.map((p) => p.name)).toEqual([
-        'development',
-        'real-local-trusted',
-        'mock-production',
-      ]);
+      expect(profiles).toHaveLength(2);
+      expect(profiles.map((p) => p.name)).toEqual(['development', 'real-local-trusted']);
     });
 
     it('includes required fields in each profile', () => {
@@ -69,19 +58,10 @@ describe('Deployment Profiles', () => {
       expect(realProfile?.allowRemoteExecution).toBe(false);
     });
 
-    it('mock mode allows remote execution in production', () => {
-      const prodProfile = listDeploymentProfiles().find((p) => p.name === 'mock-production');
-      expect(prodProfile).toBeDefined();
-      expect(prodProfile?.apiHost).toBe('0.0.0.0');
-      expect(prodProfile?.executorMode).toBe('mock');
-    });
-
-    it('no profile before v0.4.5 allows real mode on non-loopback', () => {
+    it('no profile allows non-loopback binding', () => {
       const profiles = listDeploymentProfiles();
       profiles.forEach((profile) => {
-        if (profile.executorMode === 'real') {
-          expect(profile.apiHost).toBe('127.0.0.1');
-        }
+        expect(profile.apiHost).toBe('127.0.0.1');
       });
     });
   });
