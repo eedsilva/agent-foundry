@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/app.test.ts",
     "worker:dev": "wrangler dev --config wrangler.jsonc --env-file ../../.env",
-    "worker:deploy": "wrangler deploy --config wrangler.jsonc"
+    "worker:deploy": "node scripts/deploy-worker.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

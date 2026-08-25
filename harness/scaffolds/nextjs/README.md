@@ -21,6 +21,8 @@ pnpm db:stop    # stops the stack; data survives
 
 `pnpm dev` runs `scripts/dev.mjs`, which loads that root `.env` into the process before starting both tiers. `next dev` alone would never see it — it runs with `apps/web` as its working directory, and `@next/env` only reads `.env*` from there.
 
+`pnpm worker:dev` loads the same `.env` through Wrangler. `pnpm worker:deploy` passes the two public Supabase bindings with `--var` and stops before upload if either is missing; export production values first when deploying outside the local stack.
+
 Requires Docker and the [Supabase CLI](https://supabase.com/docs/guides/cli).
 
 ## Database

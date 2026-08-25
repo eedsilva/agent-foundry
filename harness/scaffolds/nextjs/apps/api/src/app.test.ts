@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { app, createNodeHandler } from './app.js';
+import { createNodeHandler } from './app.js';
 import worker from './worker.js';
 
 const runtimeEnv = {
@@ -19,6 +19,9 @@ test('Node and Worker expose identical health contracts', async () => {
   assert.deepEqual(await nodeResponse.json(), { status: 'ok' });
 });
 
-test('the shared app is the Worker entry point', () => {
-  assert.equal(worker, app);
+test('Worker rejects missing bindings before the health route', async () => {
+  const response = await worker.fetch(new Request('http://localhost/health'), {});
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: 'Worker runtime is not configured.' });
 });

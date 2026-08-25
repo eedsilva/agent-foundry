@@ -21,6 +21,8 @@ process.loadEnvFile(envPath);
 // the API tier falls back to the same port for the same reason.
 const API_BASE = `http://127.0.0.1:${process.env.API_PORT || 3001}`;
 const API_URL = `${API_BASE}/health`;
+const WORKER_BASE = 'http://127.0.0.1:8787';
+const WORKER_URL = `${WORKER_BASE}/health`;
 const WEB_URL = 'http://127.0.0.1:3000/sign-in';
 const TIMEOUT_MS = 180_000;
 
@@ -117,20 +119,35 @@ async function checkAuthPath() {
   );
 }
 
+async function checkWorkerPath() {
+  const response = await fetch(`${WORKER_BASE}/items`);
+  if (response.status !== 401) {
+    throw new Error(
+      `smoke: Worker /items without a token answered HTTP ${response.status}, expected 401.`,
+    );
+  }
+  console.log('smoke: Worker auth path ok — /items without a token returns 401');
+}
+
 const dev = spawn('pnpm', ['dev'], { stdio: 'inherit', detached: true });
+const worker = spawn('pnpm', ['worker:dev'], { stdio: 'inherit', detached: true });
 
 let devExit = null;
 dev.on('exit', (code, signal) => {
   devExit = `pnpm dev exited (code ${code}, signal ${signal})`;
 });
+let workerExit = null;
+worker.on('exit', (code, signal) => {
+  workerExit = `pnpm worker:dev exited (code ${code}, signal ${signal})`;
+});
 
-async function waitFor(label, url, accepts) {
+async function waitFor(label, url, accepts, exitReason) {
   const deadline = Date.now() + TIMEOUT_MS;
   let last = 'no response yet';
   while (Date.now() < deadline) {
     // ponytail: only catches a dev server that exits. A watch-mode crash keeps
     // the process alive and still burns the full timeout.
-    if (devExit) throw new Error(`smoke: ${label} unreachable — ${devExit}`);
+    if (exitReason()) throw new Error(`smoke: ${label} unreachable — ${exitReason()}`);
     try {
       const response = await fetch(url);
       const body = await response.text();
@@ -153,10 +170,26 @@ try {
   // boots, and the database check needs neither tier to be up.
   await Promise.all([
     checkDatabase(),
-    waitFor('api', API_URL, (body) => JSON.parse(body).status === 'ok').then(checkAuthPath),
-    waitFor('web', WEB_URL, (body) => body.includes('Sign in')),
+    waitFor(
+      'api',
+      API_URL,
+      (body) => JSON.parse(body).status === 'ok',
+      () => devExit,
+    ).then(checkAuthPath),
+    waitFor(
+      'worker',
+      WORKER_URL,
+      (body) => JSON.parse(body).status === 'ok',
+      () => workerExit,
+    ).then(checkWorkerPath),
+    waitFor(
+      'web',
+      WEB_URL,
+      (body) => body.includes('Sign in'),
+      () => devExit,
+    ),
   ]);
-  console.log('smoke: database, both tiers, and the auth path ok');
+  console.log('smoke: database, Node, Worker, web, and both auth paths ok');
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
@@ -166,6 +199,11 @@ try {
   // ports and this process alive.
   try {
     process.kill(-dev.pid, 'SIGTERM');
+  } catch {
+    // already gone
+  }
+  try {
+    process.kill(-worker.pid, 'SIGTERM');
   } catch {
     // already gone
   }

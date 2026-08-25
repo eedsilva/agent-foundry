@@ -206,7 +206,7 @@ jobs:
         run: pnpm build
         working-directory: ${{ runner.temp }}/scaffold
       - name: Run scaffold quality gates
-        run: pnpm format:check && pnpm lint && pnpm test
+        run: pnpm format:check && pnpm lint && pnpm test && pnpm --filter api test
         working-directory: ${{ runner.temp }}/scaffold
       - name: Assert the database and both tiers answer
         run: pnpm smoke

@@ -28,7 +28,7 @@ describe('generated Next.js scaffold tooling', () => {
       'lint:fix': 'eslint . --fix',
       format: 'prettier --write .',
       'format:check': 'prettier --check .',
-      test: 'pnpm --filter api test',
+      test: 'node --test',
     });
   });
 
@@ -41,6 +41,7 @@ describe('generated Next.js scaffold tooling', () => {
     // processes or memory — that is what makes the recursive build agree with
     // building a package on its own.
     expect(packageJson.scripts.build).toContain('pnpm --recursive --workspace-concurrency=1 build');
+    expect(packageJson.scripts.build).toContain('node scripts/check-http-framework.mjs');
     expect(packageJson.scripts.build).toContain('node scripts/check-route-handlers.mjs');
     expect(packageJson.scripts.build).toContain('node scripts/check-build-output.mjs');
   });
