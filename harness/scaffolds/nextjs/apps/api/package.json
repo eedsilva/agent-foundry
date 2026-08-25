@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/app.test.ts",
+    "test": "tsx --test src/app.contract.ts",
     "worker:dev": "wrangler dev --config wrangler.jsonc --env-file ../../.env",
     "worker:deploy": "node scripts/deploy-worker.mjs"
   },

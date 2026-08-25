@@ -50,7 +50,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'README.md',
       'apps/api/package.json',
       'apps/api/scripts/deploy-worker.mjs',
-      'apps/api/src/app.test.ts',
+      'apps/api/src/app.contract.ts',
       'apps/api/src/app.ts',
       'apps/api/src/database.types.ts',
       'apps/api/src/env.ts',
