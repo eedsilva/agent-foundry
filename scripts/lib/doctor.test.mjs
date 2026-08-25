@@ -88,6 +88,8 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
 
 test('blocks a missing Docker daemon without invoking a model', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
+  assert.equal(runDoctor(fixture, ['--json']).status, 0);
+  await rm(join(fixture.root, '.data'), { recursive: true, force: true });
   await rm(join(fixture.bin, 'docker'));
 
   const result = runDoctor(fixture, ['--json']);
@@ -478,7 +480,7 @@ else process.exit(response.status ?? 0);
 function runDoctor(fixture, args = [], extraEnv = {}) {
   const env = {
     ...process.env,
-    PATH: `${fixture.bin}:/usr/bin:/bin`,
+    PATH: fixture.bin,
     EXECUTOR_MODE: 'real',
     DATA_DIR: '.data',
     ...extraEnv,
