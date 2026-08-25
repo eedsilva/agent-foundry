@@ -8,7 +8,7 @@ const runtimeEnv = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-key',
 } as const;
 
-test('Node and Worker expose the same health contract', async () => {
+test('Node and Worker expose identical health contracts', async () => {
   const request = new Request('http://localhost/health');
   const nodeResponse = await createNodeHandler(runtimeEnv)(request);
   const workerResponse = await worker.fetch(new Request(request), runtimeEnv);

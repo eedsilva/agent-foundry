@@ -39,7 +39,7 @@ pnpm db:types   # writes apps/api/src/database.types.ts
 
 Sign-in and sign-up are server actions in `apps/web/app/actions.ts`; the session lives in cookies and the browser never talks to Supabase or the API tier directly. Pages forward the session's access token to `apps/api`, whose authenticated scope (`apps/api/src/server.ts`) rejects requests without a valid token and builds a per-request Supabase client from the anon key plus that token (`apps/api/src/supabase.ts`) — so row level security evaluates as the caller, and a forgotten authorization check returns an empty result instead of another account's rows (ADR 0038).
 
-The service-role key bypasses RLS and is allowed only under `apps/api/src/admin/`, `apps/api/src/jobs/`, and `apps/api/src/webhooks/`. `pnpm build` fails if `SUPABASE_SERVICE_ROLE_KEY` is referenced anywhere else in `apps/` (`scripts/check-service-role.mjs`).
+The service-role key bypasses RLS and is never available to the generated runtime. `pnpm build` fails if `SUPABASE_SERVICE_ROLE_KEY` is referenced anywhere under `apps/` (`scripts/check-service-role.mjs`). Local database scripts outside `apps/` may use it for setup and smoke checks.
 
 `browser-tests/cross-tenant-denial.json` is the declarative browser assertion (ADR 0020) that proves the boundary and persistence end to end: sign in as `owner@example.com`, see that account's two items, create `Browser-created item` through the web tier, and assert the other account's row never renders. `pnpm smoke` proves the same boundary over HTTP.
 
