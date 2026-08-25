@@ -43,6 +43,7 @@ async function setup() {
     loggerStream: { write: () => undefined },
   });
   app.post('/__mutation_probe__', async () => ({ ok: true }));
+  app.get('/__authorized_probe__', async () => ({ ok: true }));
   return { app, controlSession, dataDir, installationSecret };
 }
 
@@ -193,12 +194,49 @@ describe('Control Session', () => {
     await restartedApp.close();
   });
 
-  it('rate-limits repeated authorization attempts', async () => {
+  it('does not rate-limit repeated authorization attempts on common routes', async () => {
+    const { app, controlSession } = await setup();
+    const bootstrap = await app.inject({
+      method: 'GET',
+      url: `/auth/bootstrap?token=${controlSession.bootstrapToken}`,
+    });
+    const sessionCookies = cookies(bootstrap).header;
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: '/__authorized_probe__',
+            headers: { cookie: sessionCookies },
+          })
+        ).statusCode,
+      ).toBe(200);
+    }
+    await app.close();
+  });
+
+  it('rate-limits invalid terminal bootstrap attempts', async () => {
     const { app } = await setup();
     for (let attempt = 0; attempt < 300; attempt += 1) {
-      expect((await app.inject({ method: 'GET', url: '/runtime' })).statusCode).toBe(401);
+      expect(
+        (
+          await app.inject({
+            method: 'POST',
+            url: '/auth/terminal-bootstrap',
+            headers: { [CONTROL_SESSION_INSTALLATION_HEADER]: 'wrong-secret' },
+          })
+        ).statusCode,
+      ).toBe(401);
     }
-    expect((await app.inject({ method: 'GET', url: '/runtime' })).statusCode).toBe(429);
+    expect(
+      (
+        await app.inject({
+          method: 'POST',
+          url: '/auth/terminal-bootstrap',
+          headers: { [CONTROL_SESSION_INSTALLATION_HEADER]: 'wrong-secret' },
+        })
+      ).statusCode,
+    ).toBe(429);
     await app.close();
   });
 

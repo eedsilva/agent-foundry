@@ -6,6 +6,64 @@ import {
 
 const requirement = (id: string, capability: string) => ({ id, capability });
 
+// Supported Application Envelope v1, Identity and access, Data and behavior,
+// Excluded capabilities, and Technical boundaries (docs/SUPPORTED_APPLICATION_ENVELOPE.md).
+const DOCUMENT_UNSUPPORTED_CAPABILITIES = [
+  'public-business-data',
+  'unauthenticated-api',
+  'storage',
+  'file-upload',
+  'media-processing',
+  'virus-scanning',
+  'realtime',
+  'presence',
+  'push-updates',
+  'collaboration',
+  'cron',
+  'queues',
+  'long-running-jobs',
+  'webhooks',
+  'edge-functions',
+  'third-party-integration',
+  'outbound-email',
+  'sms',
+  'payments',
+  'maps',
+  'analytics',
+  'external-identity-provider',
+  'mobile',
+  'desktop',
+  'extension',
+  'api-only',
+  'non-web',
+  'password-reset',
+  'application-administrator',
+  'custom-role',
+  'organization',
+  'team',
+  'shared-workspace',
+  'invitation',
+  'tenant-membership',
+  'polymorphic-model',
+  'recursive-model',
+  'graph-model',
+  'organization-shared-model',
+  'cross-tenant-model',
+  'runtime-language-switching',
+  'translation-catalog',
+  'public-business-route',
+  'public-api-operation',
+  'public-cloud-signup',
+  'generated-administrator-credential',
+  'custom-session-timebox',
+  'inactivity-expiry',
+  'single-session-enforcement',
+  'browser-direct-supabase',
+  'browser-direct-backend-api',
+  'service-role-key',
+  'database-view',
+] as const;
+
 describe('validateSupportedApplicationEnvelope (#601)', () => {
   it('approves supported capabilities and excludes join tables and Auth metadata from the entity limit', () => {
     const result = validateSupportedApplicationEnvelope([
@@ -38,14 +96,20 @@ describe('validateSupportedApplicationEnvelope (#601)', () => {
     });
   });
 
+  it('keeps the unsupported matrix equal to the normative document', () => {
+    expect(Object.keys(UNSUPPORTED_CAPABILITIES).sort()).toEqual(
+      [...DOCUMENT_UNSUPPORTED_CAPABILITIES].sort(),
+    );
+  });
+
   it('rejects every enumerated unsupported capability without inventing alternatives', () => {
     const result = validateSupportedApplicationEnvelope(
-      Object.keys(UNSUPPORTED_CAPABILITIES).map((capability, index) =>
+      [...DOCUMENT_UNSUPPORTED_CAPABILITIES].map((capability, index) =>
         requirement(`FR-${String(index + 1).padStart(3, '0')}`, capability),
       ),
     );
 
-    expect(result.rejections).toHaveLength(Object.keys(UNSUPPORTED_CAPABILITIES).length);
+    expect(result.rejections).toHaveLength(DOCUMENT_UNSUPPORTED_CAPABILITIES.length);
     expect(result.questions).toEqual([]);
     expect(
       result.rejections.find((entry) => entry.capability === 'file-upload'),
@@ -71,5 +135,33 @@ describe('validateSupportedApplicationEnvelope (#601)', () => {
         },
       ],
     });
+  });
+
+  it('normalizes capability markers without inferring aliases and accepts supported behavior', () => {
+    const result = validateSupportedApplicationEnvelope([
+      requirement('FR-001', ' Realtime '),
+      requirement('FR-002', 'REALTIME'),
+      requirement('FR-003', 'constructor'),
+      requirement('FR-004', 'toString'),
+      requirement('FR-005', 'valueOf'),
+      requirement('FR-006', 'hasOwnProperty'),
+      requirement('FR-007', '__proto__'),
+      requirement('FR-008', 'physical-delete'),
+      requirement('FR-009', 'interface-language'),
+      requirement('FR-010', 'backend-api-pagination'),
+      requirement('FR-011', ' real-time '),
+    ]);
+
+    expect(result.rejections.map((entry) => entry.capability)).toEqual(['realtime', 'realtime']);
+    expect(result.questions.map((entry) => entry.capability)).toEqual([
+      'constructor',
+      'tostring',
+      'valueof',
+      'hasownproperty',
+      '__proto__',
+      'real-time',
+    ]);
+    expect(result.questions).toHaveLength(6);
+    expect(result.approved).toBe(false);
   });
 });
