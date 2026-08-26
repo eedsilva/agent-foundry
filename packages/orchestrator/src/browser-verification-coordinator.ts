@@ -15,6 +15,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   ArtifactTooLargeError,
+  BrowserInfrastructureError,
   type ArtifactBlobPutInput,
   type ArtifactStore,
   type BrowserVerificationEvidence,
@@ -58,10 +59,17 @@ export class BrowserVerificationCoordinator {
       runId: input.runId,
     });
     if (!started.url || !['running', 'unhealthy'].includes(started.session.status)) {
-      throw new Error(
+      const reason =
         started.session.error?.message ??
-          `Preview session is not available for browser verification (${started.session.status}).`,
-      );
+        `Preview session is not available for browser verification (${started.session.status}).`;
+      // The preview never came up, so verification never reached the app —
+      // the same fault #528 named, one step earlier in the same journey.
+      // Thrown as BrowserInfrastructureError rather than a bare Error because
+      // the class name is the only discriminator that survives the run
+      // boundary into automaticFailureClass: a plain Error here published a
+      // dead daemon as a defect in the generated app whenever the cause was
+      // written only in the message (#659).
+      throw new BrowserInfrastructureError(reason, started.session.error?.code ?? reason);
     }
     const session = PreviewSessionReferenceSchema.parse({
       sessionId: started.session.id,

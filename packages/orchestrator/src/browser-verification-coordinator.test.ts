@@ -8,6 +8,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   ArtifactTooLargeError,
+  BrowserInfrastructureError,
   RunCancelledError,
   type ArtifactStore,
   type BrowserVerifier,
@@ -189,6 +190,38 @@ describe('BrowserVerificationCoordinator', () => {
       'Dev server did not become healthy in time.',
     );
     expect(stopped).toEqual([]);
+  });
+
+  it('throws an infrastructure failure when the preview never came up, not a bare Error (#659)', async () => {
+    const failedSession: PreviewSession = {
+      ...runningSession(),
+      status: 'failed',
+      error: {
+        name: 'PreviewInstallError',
+        code: 'PREVIEW_INSTALL_FAILED',
+        // The cause is written only here. A bare Error would arrive at
+        // automaticFailureClass as `name: 'Error'` with no code, and the run
+        // would be published as a defect in the generated app.
+        message:
+          'docker create failed: failed to connect to the docker API at unix:///var/run/docker.sock',
+      },
+      completedAt: '2026-07-17T12:00:02.000Z',
+    };
+    const { coordinator } = setup(
+      () => Promise.reject(new Error('verifier must not run')),
+      undefined,
+      { session: failedSession, url: '' },
+    );
+
+    const error = await coordinator
+      .verify(input, new AbortController().signal)
+      .then(() => undefined)
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(BrowserInfrastructureError);
+    // The name is what survives the run boundary into the failure classifier.
+    expect((error as Error).name).toBe('BrowserInfrastructureError');
+    expect((error as BrowserInfrastructureError).diagnosis).toBe('PREVIEW_INSTALL_FAILED');
   });
 
   it('stops the preview once after successful verification', async () => {

@@ -690,6 +690,22 @@ describe('validation evidence API', () => {
         generatedProjectRuntime: null,
         executors: createValidationCampaignTestExecutorRegistry(),
         disablePreviews: true,
+        // `disablePreviews` only keeps provisioning away from the preview; the
+        // browser step still starts one through its own coordinator, and in
+        // real mode that install ran in Docker. That made this test fail on a
+        // host without a daemon for a reason it does not test — the run never
+        // reached the browser step at all (#659). Stubbing the install keeps
+        // the preview origin unserved, which is the condition the assertions
+        // below actually describe, on every host.
+        previewInstaller: {
+          install: () =>
+            Promise.resolve({
+              ok: false,
+              exitCode: 1,
+              stdout: '',
+              stderr: 'Preview install is stubbed: this test never serves the preview origin.',
+            }),
+        },
         validationPreflight: controlledValidationPreflight,
       },
     );
