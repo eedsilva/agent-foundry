@@ -3,8 +3,8 @@
 // entirely, so one forgotten check in a request-path handler becomes a silent
 // cross-tenant read (ADR 0038). Request handlers build their client from the
 // anon key plus the caller's token instead (apps/api/src/supabase.ts) — the
-// paths with no caller identity to forward (admin, cron, webhooks) are the
-// only ones allowed to read the key, and they live under ALLOWED below.
+// Generated applications have no service-role runtime path. Operational
+// scripts outside `apps/` may use the key for local database setup/checks.
 //
 // This is a textual check, not a semantic one: it catches the honest mistake
 // (reading the env var on the request path), which is the failure mode
@@ -15,7 +15,6 @@ import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const NEEDLE = 'SUPABASE_SERVICE_ROLE_KEY';
-const ALLOWED = ['apps/api/src/admin/', 'apps/api/src/jobs/', 'apps/api/src/webhooks/'];
 const SKIPPED_DIRECTORIES = new Set(['node_modules', '.next', 'dist']);
 
 const offenders = [];
@@ -29,7 +28,6 @@ function walk(directory) {
       continue;
     }
     const posixPath = relative(root, path).split(sep).join('/');
-    if (ALLOWED.some((prefix) => posixPath.startsWith(prefix))) continue;
     if (readFileSync(path, 'utf8').includes(NEEDLE)) {
       offenders.push(posixPath);
     }
@@ -42,8 +40,8 @@ if (offenders.length > 0) {
   console.error(
     `\nThe service-role key bypasses row level security. Request handlers must use\n` +
       `createRequestClient (apps/api/src/supabase.ts), which forwards the caller's\n` +
-      `token so RLS evaluates as that user. Code with no caller — admin, cron,\n` +
-      `webhooks — belongs under: ${ALLOWED.join(', ')}`,
+      `token so RLS evaluates as that user. The generated runtime has no\n` +
+      `service-role path; operational scripts live outside apps/.`,
   );
   process.exit(1);
 }

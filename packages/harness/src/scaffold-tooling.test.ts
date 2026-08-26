@@ -41,6 +41,7 @@ describe('generated Next.js scaffold tooling', () => {
     // processes or memory — that is what makes the recursive build agree with
     // building a package on its own.
     expect(packageJson.scripts.build).toContain('pnpm --recursive --workspace-concurrency=1 build');
+    expect(packageJson.scripts.build).toContain('node scripts/check-http-framework.mjs');
     expect(packageJson.scripts.build).toContain('node scripts/check-route-handlers.mjs');
     expect(packageJson.scripts.build).toContain('node scripts/check-build-output.mjs');
   });
@@ -91,12 +92,15 @@ describe('generated Next.js scaffold tooling', () => {
         JSON.stringify({
           private: true,
           type: 'module',
-          scripts: Object.fromEntries(
-            ['lint', 'lint:fix', 'format', 'format:check', 'test'].map((name) => [
-              name,
-              packageJson.scripts[name],
-            ]),
-          ),
+          scripts: {
+            ...Object.fromEntries(
+              ['lint', 'lint:fix', 'format', 'format:check'].map((name) => [
+                name,
+                packageJson.scripts[name],
+              ]),
+            ),
+            test: 'node --test',
+          },
         }),
       );
       await mkdir(bin, { recursive: true });

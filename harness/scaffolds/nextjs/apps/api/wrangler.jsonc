@@ -1,0 +1,8 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "generated-api",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-23",
+  // `worker:dev` reads these public bindings from the workspace `.env`.
+  // `worker:deploy` fails closed unless it can pass both values with `--var`.
+}

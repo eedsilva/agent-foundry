@@ -55,6 +55,24 @@ describe('check-service-role build gate', () => {
     expect(result.stderr).toContain('apps/api/src/items.ts');
   });
 
+  it('fails the build when the Node Hono entry point reads the service-role key', async () => {
+    const workspace = await workspaceWith({
+      'apps/api/src/server.ts': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
+    });
+    const result = runCheck(workspace);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('apps/api/src/server.ts');
+  });
+
+  it('fails the build when the Worker Hono entry point reads the service-role key', async () => {
+    const workspace = await workspaceWith({
+      'apps/api/src/worker.ts': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
+    });
+    const result = runCheck(workspace);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('apps/api/src/worker.ts');
+  });
+
   it('fails the build when the web tier reads the service-role key', async () => {
     const workspace = await workspaceWith({
       'apps/web/lib/db.ts': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
@@ -79,14 +97,16 @@ describe('check-service-role build gate', () => {
     expect(result.status).toBe(0);
   });
 
-  it('allows admin, cron and webhook paths, which have no caller to forward', async () => {
+  it('fails the build when unsupported service-role paths are added', async () => {
     const workspace = await workspaceWith({
       'apps/api/src/admin/rotate-keys.ts': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
       'apps/api/src/jobs/nightly.ts': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
       'apps/api/src/webhooks/stripe.ts': 'const key = process.env.SUPABASE_SERVICE_ROLE_KEY;',
     });
     const result = runCheck(workspace);
-    expect(result.stderr).toBe('');
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('apps/api/src/admin/rotate-keys.ts');
+    expect(result.stderr).toContain('apps/api/src/jobs/nightly.ts');
+    expect(result.stderr).toContain('apps/api/src/webhooks/stripe.ts');
   });
 });

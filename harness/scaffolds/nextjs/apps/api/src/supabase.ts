@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from './database.types.js';
-import { env } from './env.js';
+import type { RuntimeEnv } from './runtime-env.js';
 
 export type RequestSupabaseClient = SupabaseClient<Database>;
 
@@ -10,9 +10,16 @@ export type RequestSupabaseClient = SupabaseClient<Database>;
 // token into another caller's request. The service-role key has no place in
 // this file: it bypasses RLS, and `scripts/check-service-role.mjs` fails the
 // build if a request-path file references it.
-export function createRequestClient(accessToken: string): RequestSupabaseClient {
-  return createClient<Database>(env.supabaseUrl, env.supabaseAnonKey, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
+export function createRequestClient(
+  accessToken: string,
+  runtimeEnv: RuntimeEnv,
+): RequestSupabaseClient {
+  return createClient<Database>(
+    runtimeEnv.NEXT_PUBLIC_SUPABASE_URL,
+    runtimeEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    {
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    },
+  );
 }

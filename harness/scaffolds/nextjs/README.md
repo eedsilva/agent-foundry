@@ -3,7 +3,7 @@
 A pnpm workspace with two tiers and its own local Supabase stack:
 
 - `apps/web` — Next.js. Renders, signs users in, and calls the API tier. It never queries the database.
-- `apps/api` — Fastify. The only tier that talks to Supabase, with the caller's access token, so row level security still applies.
+- `apps/api` — Hono. The only tier that talks to Supabase, with the caller's access token, so row level security still applies. `server.ts` runs it through the Node adapter; `worker.ts` is the Cloudflare Worker entry point.
 - `supabase/` — this project's own stack: `config.toml`, forward-only `migrations/`, and `seed.sql`.
 
 ## Running it
@@ -11,7 +11,8 @@ A pnpm workspace with two tiers and its own local Supabase stack:
 ```sh
 pnpm install
 pnpm db:start   # starts Supabase, applies migrations and seed, writes .env
-pnpm dev        # web on :3000, api on :3001
+pnpm dev        # web on :3000, api on :3001 through the Node adapter
+pnpm worker:dev # the same API through Wrangler's local Worker runtime
 pnpm smoke      # asserts the database and both tiers answer
 pnpm db:stop    # stops the stack; data survives
 ```
@@ -19,6 +20,8 @@ pnpm db:stop    # stops the stack; data survives
 `pnpm db:start` copies `.env.example` to `.env` on first run and fills in the Supabase URL and keys. It also assigns this project its own Compose project name and host port block, so several generated projects can run at once.
 
 `pnpm dev` runs `scripts/dev.mjs`, which loads that root `.env` into the process before starting both tiers. `next dev` alone would never see it — it runs with `apps/web` as its working directory, and `@next/env` only reads `.env*` from there.
+
+`pnpm worker:dev` loads the same `.env` through Wrangler. `pnpm worker:deploy` passes the two public Supabase bindings with `--var` and stops before upload if either is missing; export production values first when deploying outside the local stack.
 
 Requires Docker and the [Supabase CLI](https://supabase.com/docs/guides/cli).
 
@@ -38,7 +41,7 @@ pnpm db:types   # writes apps/api/src/database.types.ts
 
 Sign-in and sign-up are server actions in `apps/web/app/actions.ts`; the session lives in cookies and the browser never talks to Supabase or the API tier directly. Pages forward the session's access token to `apps/api`, whose authenticated scope (`apps/api/src/server.ts`) rejects requests without a valid token and builds a per-request Supabase client from the anon key plus that token (`apps/api/src/supabase.ts`) — so row level security evaluates as the caller, and a forgotten authorization check returns an empty result instead of another account's rows (ADR 0038).
 
-The service-role key bypasses RLS and is allowed only under `apps/api/src/admin/`, `apps/api/src/jobs/`, and `apps/api/src/webhooks/`. `pnpm build` fails if `SUPABASE_SERVICE_ROLE_KEY` is referenced anywhere else in `apps/` (`scripts/check-service-role.mjs`).
+The service-role key bypasses RLS and is never available to the generated runtime. `pnpm build` fails if `SUPABASE_SERVICE_ROLE_KEY` is referenced anywhere under `apps/` (`scripts/check-service-role.mjs`). Local database scripts outside `apps/` may use it for setup and smoke checks.
 
 `browser-tests/cross-tenant-denial.json` is the declarative browser assertion (ADR 0020) that proves the boundary and persistence end to end: sign in as `owner@example.com`, see that account's two items, create `Browser-created item` through the web tier, and assert the other account's row never renders. `pnpm smoke` proves the same boundary over HTTP.
 
