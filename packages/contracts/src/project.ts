@@ -114,6 +114,8 @@ export const ProjectEventSchema = z
       'run.cancel_requested',
       'run.cancelled',
       'run.emergency_ceiling_reached',
+      'run.technical_retry_exhausted',
+      'run.call_budget_exhausted',
       'run.draft_discarded',
       'run.pause_requested',
       'run.paused',

@@ -516,6 +516,10 @@ export class ProjectService {
           attempts: await this.stepAttempts.list(runId, step.id),
         })),
       ),
+      // Projected straight from the ADR-0073 Call Budget ledger (#604) in
+      // `run.execution.callBudget` — never recomputed by scanning
+      // StepAttempts, which is not atomic against concurrent reservations.
+      budget: Object.values(run.execution?.callBudget ?? {}),
     };
   }
 

@@ -6,7 +6,7 @@ import {
   type PreviewWorkspaceRef,
 } from '@agent-foundry/contracts';
 import { EnvironmentOperationError, type GeneratedProjectRuntime } from '@agent-foundry/domain';
-import { makeHarness, makeStores, seedRun } from './testing/harness.js';
+import { authenticationError, makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
 
 const ENVIRONMENT: AppEnvironment = {
@@ -643,7 +643,13 @@ describe('ProjectService.create workspace boot', () => {
     const initialize = vi.fn(async () => ENVIRONMENT);
     const unused = () => Promise.reject(new Error('unused test runtime operation'));
     const harness = makeHarness(
-      { implement: { kind: 'fail-once', error: () => new Error('implementation failed') } },
+      // A plain executor failure is now ADR-0073's Technical Retry (#604): a
+      // `fail-once` generic Error would auto-heal on the same-candidate
+      // replay and never leave a failed step for `retryStep` to act on. An
+      // auth failure stays outside Technical Retry (it's an environment
+      // fault, not a provider/executor call failure), so it still fails the
+      // step on the first attempt the way this test needs.
+      { implement: { kind: 'fail-once', error: authenticationError } },
       makeStores(),
       {
         generatedProjectRuntime: {

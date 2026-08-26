@@ -117,8 +117,10 @@ nodes:
         complexity: 5
         risk: 4
         preferredTags: [coding, repository, tool-use]
-      # Honoured: attempts per task before the task — and the run — fails.
-      maxAttempts: 2
+      # ADR-0073: "Each task receives one Luna implementation call". Exhaustion
+      # now converges to Preserved Draft + operator pause (#604) instead of
+      # failing the run outright.
+      maxAttempts: 1
     # The task's gate includes cheap source-integrity checks; the full compiler,
     # test, migration and preview gates run once after the graph lands.
     verify:

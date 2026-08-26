@@ -66,9 +66,9 @@ describe('preview cleanup on run failure (#579)', () => {
     );
     await seedRun(harness);
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'agent exploded',
-    );
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toThrow();
 
     expect(previews.stop).toHaveBeenCalledExactlyOnceWith('preview-1');
     expect(previews.session()?.status).toBe('stopped');
@@ -155,9 +155,9 @@ describe('preview cleanup on run failure (#579)', () => {
     );
     await seedRun(harness);
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'agent exploded',
-    );
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toThrow();
 
     // The project already had a live session, so this run never booted its own.
     expect(previews.start).not.toHaveBeenCalled();
@@ -185,9 +185,9 @@ describe('preview cleanup on run failure (#579)', () => {
     );
     await seedRun(harness);
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'agent exploded',
-    );
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toThrow();
 
     expect(previews.start).not.toHaveBeenCalled();
     expect(previews.stop).not.toHaveBeenCalled();
@@ -216,9 +216,9 @@ describe('preview cleanup on run failure (#579)', () => {
     );
     await seedRun(harness);
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      'agent exploded',
-    );
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toThrow();
 
     // Pins that cleanup was actually attempted (and its throw swallowed), not
     // just that the run's own failure survived a cleanup call that never happened.

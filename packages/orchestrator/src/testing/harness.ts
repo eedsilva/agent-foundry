@@ -1556,6 +1556,7 @@ export interface HasExecuteStep {
     pinnedArtifacts?: ArtifactReference[],
     routingStartIndex?: number,
     worktree?: string,
+    taskId?: string,
   ): Promise<StoredArtifact>;
 }
 

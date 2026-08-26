@@ -67,6 +67,14 @@ export interface TaskGraphStepExecution {
    * scheduler that assigns one per concurrent task lands separately.
    */
   worktree?: string;
+  /**
+   * The `for-each-task` task this step belongs to, always present for an
+   * implement or repair dispatch (#604) — the ADR-0073 Call Budget ledger is
+   * keyed by `nodeId`+`taskId`, not by `step.id`, since one task's implement
+   * and repair steps must share one ledger entry. Absent for a step outside a
+   * task graph, which the ledger does not budget.
+   */
+  taskId?: string;
 }
 
 /**
@@ -487,6 +495,7 @@ export class TaskGraphRunner {
             step,
             runId,
             nodeId: node.id,
+            taskId: task.id,
             signal,
             iteration: attempt,
             pinnedArtifacts: pinnedInputs,
@@ -954,6 +963,7 @@ export class TaskGraphRunner {
         step: repairStep,
         runId,
         nodeId: node.id,
+        taskId: task.id,
         signal,
         iteration,
         pinnedArtifacts: [...pinnedInputs, planReference, artifactReference(report)],
@@ -1084,6 +1094,7 @@ export class TaskGraphRunner {
         step: repairStep,
         runId,
         nodeId: node.id,
+        taskId: task.id,
         signal,
         iteration,
         pinnedArtifacts: [...pinnedInputs, artifactReference(report)],

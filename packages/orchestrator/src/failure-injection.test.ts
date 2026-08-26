@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EXECUTION_PROTOCOL_VERSION, type ExecutionRequest } from '@agent-foundry/contracts';
-import { ExecutionError } from '@agent-foundry/domain';
+import { EmergencyCeilingError, ExecutionError } from '@agent-foundry/domain';
 import {
   assertCountsUnchanged,
   authenticationError,
@@ -200,7 +200,12 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     expect(harness.metricsRecords.some((record) => record.success)).toBe(true);
   });
 
-  it('fails the run with a valid terminal state when all candidates fail', async () => {
+  // A rate-limit-shaped failure is ADR-0073's Technical Retry (#604): one
+  // same-candidate replay, then an unconditional pause on the second failure
+  // — it never reaches the second fallback candidate, so this converges via
+  // the technical-retry-exhausted ceiling instead of the old candidate-ladder
+  // exhaustion's plain `project.failed` terminal.
+  it('converges to the technical-retry-exhausted ceiling when a candidate keeps failing', async () => {
     const harness = makeHarness(
       { implement: { kind: 'fail-always', error: rateLimitError } },
       undefined,
@@ -210,19 +215,21 @@ describe('Group A: executor failure modes with fallback recovery', () => {
 
     await expect(
       harness.orchestrator.runProject('project-1', undefined, 'run-1'),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(EmergencyCeilingError);
 
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
+    expect((await harness.runs.get('run-1'))?.execution?.ceiling?.reason).toBe(
+      'technical-retry-exhausted',
+    );
     const implement = liveStepRun(harness, 'implement');
     expect(implement.status).toBe('failed');
     const attempts = await harness.stepAttempts.list('run-1', implement.id);
     expect(attempts).toHaveLength(2);
     expect(attempts.every((attempt) => attempt.status === 'failed')).toBe(true);
     expect(harness.workspaces.rollbacks.length).toBeGreaterThan(0);
-    expect((await harness.projects.get('project-1'))?.status).toBe('failed');
-    expect(harness.events.events.find((event) => event.type === 'project.failed')?.dedupeKey).toBe(
-      'run-1:project.failed',
-    );
+    expect(
+      harness.events.events.find((event) => event.type === 'run.technical_retry_exhausted'),
+    ).toBeDefined();
 
     // Terminal-run guard: redelivering the failed run changes nothing.
     const before = snapshotCounts(harness);
@@ -230,11 +237,11 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     assertCountsUnchanged(harness, before);
   });
 
-  // Sibling of the test above, pinned to the structured-output contract (#563):
-  // a response that never validates must burn the candidate budget and stop,
-  // not retry forever. The call-count assertion is the bound — it fails the
-  // moment the finite candidate loop is replaced by an open-ended retry.
-  it('stops a never-valid structured output after exactly the candidate budget (#563)', async () => {
+  // Sibling of the test above, pinned to the structured-output contract
+  // (#563): the executor never producing a parseable artifact is also a
+  // Technical Retry (#604) — a same-candidate replay, then a pause — so this
+  // never reaches the second fallback candidate either.
+  it('converges a never-valid structured output to the technical-retry-exhausted ceiling (#563)', async () => {
     const harness = makeHarness(
       { implement: { kind: 'fail-always', error: invalidOutputError } },
       undefined,
@@ -242,18 +249,18 @@ describe('Group A: executor failure modes with fallback recovery', () => {
     );
     await seedRun(harness);
 
-    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /valid artifact JSON/,
-    );
+    await expect(
+      harness.orchestrator.runProject('project-1', undefined, 'run-1'),
+    ).rejects.toBeInstanceOf(EmergencyCeilingError);
 
-    // Router offers exactly two candidates under `fallback: true`.
+    // One candidate, replayed once by the Technical Retry — never the second.
     expect(harness.executor.started('implement')).toBe(2);
     const implement = liveStepRun(harness, 'implement');
     const attempts = await harness.stepAttempts.list('run-1', implement.id);
     expect(attempts).toHaveLength(2);
     const run = await harness.runs.get('run-1');
     expect(run?.status).toBe('failed');
-    expect(run?.error?.message).toMatch(/valid artifact JSON/);
+    expect(run?.execution?.ceiling?.reason).toBe('technical-retry-exhausted');
   });
 });
 

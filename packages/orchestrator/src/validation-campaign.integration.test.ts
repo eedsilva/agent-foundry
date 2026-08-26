@@ -663,7 +663,15 @@ async function stepsByIds(
   return found;
 }
 
-/** Runs the campaign until the downstream task fails, and returns that failed step run. */
+/**
+ * Runs the campaign until the downstream task fails, and returns that failed
+ * step run. `timeoutError` is now ADR-0073's Technical Retry (#604): the
+ * `fail-once` first attempt gets a same-candidate replay before it would
+ * otherwise succeed, and that replay is itself a second dispatch the
+ * campaign's own attempts-per-step budget (already exhausted by the first)
+ * refuses — so the task now fails on the campaign limit rather than the raw
+ * timeout message, one step earlier than before but at the same step.
+ */
 async function arrangeFailedTask(options: { models?: typeof models } = {}) {
   const seeded = await seedTaskCampaignRun(
     { 'implement.T2': { kind: 'fail-once', error: () => timeoutError() } },
@@ -671,7 +679,7 @@ async function arrangeFailedTask(options: { models?: typeof models } = {}) {
   );
   await expect(
     seeded.harness.orchestrator.runProject('project-1', undefined, 'run-1'),
-  ).rejects.toThrow(/Command timed out/);
+  ).rejects.toThrow(/reached its attempts limit/);
   return { ...seeded, failed: liveStepRun(seeded.harness, 'implement.T2') };
 }
 
