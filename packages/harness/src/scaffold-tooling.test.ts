@@ -42,6 +42,7 @@ describe('generated Next.js scaffold tooling', () => {
     // building a package on its own.
     expect(packageJson.scripts.build).toContain('pnpm --recursive --workspace-concurrency=1 build');
     expect(packageJson.scripts.build).toContain('node scripts/check-http-framework.mjs');
+    expect(packageJson.scripts.build).toContain('node scripts/check-api-boundaries.mjs');
     expect(packageJson.scripts.build).toContain('node scripts/check-route-handlers.mjs');
     expect(packageJson.scripts.build).toContain('node scripts/check-build-output.mjs');
   });

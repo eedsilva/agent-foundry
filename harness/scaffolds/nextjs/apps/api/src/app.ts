@@ -11,6 +11,65 @@ type ApiEnv = {
 
 export const app = new Hono<ApiEnv>();
 
+const DEFAULT_ITEMS_LIMIT = 25;
+const MAX_ITEMS_LIMIT = 100;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CURSOR_TIMESTAMP = /^[0-9T:Z+ .-]+$/;
+
+type ItemsCursor = { createdAt: string; id: string };
+
+export type ItemsQuery = { limit: number; cursor?: ItemsCursor };
+
+function encodeCursor(cursor: ItemsCursor): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(cursor));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function decodeCursor(value: string): ItemsCursor {
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(value)) throw new Error('invalid cursor');
+  const padded =
+    value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (value.length % 4)) % 4);
+  const binary = atob(padded);
+  const decoded = JSON.parse(
+    new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0))),
+  ) as {
+    createdAt?: unknown;
+    id?: unknown;
+  };
+  if (
+    typeof decoded.createdAt !== 'string' ||
+    !CURSOR_TIMESTAMP.test(decoded.createdAt) ||
+    Number.isNaN(Date.parse(decoded.createdAt)) ||
+    typeof decoded.id !== 'string' ||
+    !UUID.test(decoded.id)
+  ) {
+    throw new Error('invalid cursor');
+  }
+  return { createdAt: decoded.createdAt, id: decoded.id };
+}
+
+export function parseItemsQuery(input: {
+  limit?: string;
+  cursor?: string;
+}): { ok: true; value: ItemsQuery } | { ok: false; error: string } {
+  const rawLimit = input.limit;
+  if (rawLimit !== undefined && !/^\d+$/.test(rawLimit)) {
+    return { ok: false, error: 'Invalid item limit.' };
+  }
+  const limit = rawLimit === undefined ? DEFAULT_ITEMS_LIMIT : Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_ITEMS_LIMIT) {
+    return { ok: false, error: 'Invalid item limit.' };
+  }
+  if (input.cursor === undefined) return { ok: true, value: { limit } };
+  try {
+    return { ok: true, value: { limit, cursor: decodeCursor(input.cursor) } };
+  } catch {
+    return { ok: false, error: 'Invalid item cursor.' };
+  }
+}
+
 // Minimum scaffold contract, shared by both runtime entry points:
 // GET /health -> { status: "ok" }
 app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -31,13 +90,34 @@ app.use('/items', async (c, next) => {
 });
 
 app.get('/items', async (c) => {
-  const { data, error } = await c
+  const parsedQuery = parseItemsQuery({
+    limit: c.req.query('limit'),
+    cursor: c.req.query('cursor'),
+  });
+  if (!parsedQuery.ok) return c.json({ error: parsedQuery.error }, 400);
+
+  let query = c
     .get('supabase')
     .from('items')
-    .select('id, title')
-    .order('created_at', { ascending: true });
+    .select('id, title, created_at')
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
+    .limit(parsedQuery.value.limit + 1);
+  if (parsedQuery.value.cursor) {
+    const { createdAt, id } = parsedQuery.value.cursor;
+    query = query.or(`created_at.gt.${createdAt},and(created_at.eq.${createdAt},id.gt.${id})`);
+  }
+
+  const { data, error } = await query;
   if (error) return c.json({ error: 'Reading items failed.' }, 500);
-  return c.json({ items: data });
+  const rows = data ?? [];
+  const items = rows.slice(0, parsedQuery.value.limit).map(({ id, title }) => ({ id, title }));
+  const lastRow =
+    rows.length > parsedQuery.value.limit ? rows[parsedQuery.value.limit - 1] : undefined;
+  return c.json({
+    items,
+    nextCursor: lastRow ? encodeCursor({ createdAt: lastRow.created_at, id: lastRow.id }) : null,
+  });
 });
 
 app.post('/items', async (c) => {

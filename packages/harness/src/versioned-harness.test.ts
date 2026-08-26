@@ -88,6 +88,7 @@ describe('VersionedHarnessRepository.scaffoldFiles', () => {
       'pnpm-lock.yaml',
       'pnpm-workspace.yaml',
       'prettier.config.mjs',
+      'scripts/check-api-boundaries.mjs',
       'scripts/check-build-output.mjs',
       'scripts/check-http-framework.mjs',
       'scripts/check-route-handlers.mjs',

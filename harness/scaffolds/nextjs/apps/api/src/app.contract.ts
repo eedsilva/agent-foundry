@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createNodeHandler } from './app.js';
+import { createNodeHandler, parseItemsQuery } from './app.js';
 import worker from './worker.js';
 
 const runtimeEnv = {
@@ -24,4 +24,18 @@ test('Worker rejects missing bindings before the health route', async () => {
 
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: 'Worker runtime is not configured.' });
+});
+
+test('Items query rejects malformed cursors and bounds page size', () => {
+  const invalidCursor = Buffer.from(
+    JSON.stringify({ createdAt: '2026-08-26T00:00:00.000Z', id: 'not-a-uuid' }),
+  ).toString('base64url');
+
+  assert.deepEqual(parseItemsQuery({ cursor: invalidCursor }), {
+    ok: false,
+    error: 'Invalid item cursor.',
+  });
+  assert.deepEqual(parseItemsQuery({}), { ok: true, value: { limit: 25 } });
+  assert.equal(parseItemsQuery({ limit: '0' }).ok, false);
+  assert.equal(parseItemsQuery({ limit: '101' }).ok, false);
 });

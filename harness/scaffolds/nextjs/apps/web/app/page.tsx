@@ -11,15 +11,30 @@ async function fetchItems(accessToken: string): Promise<Array<{ id: string; titl
   // start both tiers in one process tree. The Compose deployment (ADR 0008)
   // puts the API in its own container and will need an API_URL env instead.
   const apiPort = process.env.API_PORT || '3001';
-  const response = await fetch(`http://127.0.0.1:${apiPort}/items`, {
-    headers: { authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    throw new Error(`The API tier answered HTTP ${response.status} for /items.`);
+  const items: Array<{ id: string; title: string }> = [];
+  let cursor: string | undefined;
+
+  for (;;) {
+    const url = new URL(`http://127.0.0.1:${apiPort}/items`);
+    url.searchParams.set('limit', '100');
+    if (cursor) url.searchParams.set('cursor', cursor);
+    const response = await fetch(url, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      throw new Error(`The API tier answered HTTP ${response.status} for /items.`);
+    }
+    const body = (await response.json()) as {
+      items: Array<{ id: string; title: string }>;
+      nextCursor: string | null;
+    };
+    items.push(...body.items);
+    if (!body.nextCursor) return items;
+    if (body.nextCursor === cursor)
+      throw new Error('The API tier returned a repeated items cursor.');
+    cursor = body.nextCursor;
   }
-  const body = (await response.json()) as { items: Array<{ id: string; title: string }> };
-  return body.items;
 }
 
 export default async function HomePage() {
