@@ -89,7 +89,6 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
 test('blocks a missing Docker daemon without invoking a model', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
   assert.equal(runDoctor(fixture, ['--json']).status, 0);
-  await rm(join(fixture.root, '.data'), { recursive: true, force: true });
   await rm(join(fixture.bin, 'docker'));
 
   const result = runDoctor(fixture, ['--json']);
@@ -98,16 +97,34 @@ test('blocks a missing Docker daemon without invoking a model', async (t) => {
   assertNoModelInvocation(fixture);
 });
 
-test('reuses a green preflight only for the same source revision', async (t) => {
+test('reruns preflight when a provider session changes without a new source revision', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
   assert.equal(runDoctor(fixture, ['--json']).status, 0);
-  await writeFile(join(fixture.root, 'provider-fixtures.json'), '{}\n');
+  await writeFile(
+    join(fixture.root, 'provider-fixtures.json'),
+    JSON.stringify({
+      ...readyFixtures,
+      codex: { ...readyFixtures.codex, auth: { stdout: 'Not logged in\n' } },
+    }),
+  );
 
-  assert.equal(runDoctor(fixture, ['--json']).status, 0, 'same revision reuses cache');
-  await writeFile(join(fixture.root, 'git-revision'), `${'b'.repeat(40)}\n`);
-  assert.equal(runDoctor(fixture, ['--json']).status, 1, 'changed revision reruns checks');
+  assert.equal(runDoctor(fixture, ['--json']).status, 1, 'same revision reruns checks');
   assertNoModelInvocation(fixture);
 });
+
+for (const [label, degrade] of [
+  ['srt', (fixture) => rm(join(fixture.bin, 'srt'))],
+  ['model catalog', (fixture) => rm(join(fixture.root, 'models', 'catalog.yaml'))],
+]) {
+  test(`blocks a lost ${label} after a green preflight without invoking a model`, async (t) => {
+    const fixture = await createFixture(t, readyFixtures);
+    assert.equal(runDoctor(fixture, ['--json']).status, 0);
+    await degrade(fixture);
+
+    assert.equal(runDoctor(fixture, ['--json']).status, 1);
+    assertNoModelInvocation(fixture);
+  });
+}
 
 test('fails real mode when srt (the sandbox wrapper #637 spawns instead of codex) is missing, even with Codex itself ready', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
@@ -121,7 +138,7 @@ test('fails real mode when srt (the sandbox wrapper #637 spawns instead of codex
     name: 'srt',
     ok: false,
     required: true,
-    message: 'missing or not executable',
+    message: 'install srt (@anthropic-ai/sandbox-runtime) and retry',
   });
   // The Codex provider probe itself still reports ready — health() (not
   // doctor's own probe) is what CodexCliExecutor uses to combine the two;
@@ -156,6 +173,10 @@ test('classifies providers with absent sessions as unauthenticated', async (t) =
   assert.deepEqual(
     JSON.parse(result.stdout).probes.map(({ status }) => status),
     ['unauthenticated', 'unauthenticated'],
+  );
+  assert.deepEqual(
+    JSON.parse(result.stdout).probes.map(({ message }) => message),
+    ['run codex login and retry.', 'run claude auth login and retry.'],
   );
   assert.doesNotMatch(result.stdout + result.stderr, /secret@test|private-user|Not logged in/);
   assertNoModelInvocation(fixture);
@@ -322,7 +343,7 @@ test('redacts existing and missing filesystem paths from JSON checks', async (t)
         ['harness manifest', 'workflow directory', 'model catalog'].includes(name),
       )
       .map(({ message }) => message),
-    ['harness/manifest.json', 'workflows', 'missing: models/catalog.yaml'],
+    ['harness/manifest.json', 'workflows', 'restore models/catalog.yaml and retry'],
   );
   assert.equal(result.stdout.includes(fixture.root), false);
   assert.doesNotMatch(result.stdout, /private-user/);
@@ -377,7 +398,7 @@ test('reports unauthenticated when the identity variable is withheld from the pr
   assert.equal(result.status, 1);
   const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'claude');
   assert.equal(probe.status, 'unauthenticated');
-  assert.equal(probe.message, 'Claude is not authenticated.');
+  assert.equal(probe.message, 'run claude auth login and retry.');
 });
 
 function readyProbe(provider, version, message, extraCapabilities = {}) {

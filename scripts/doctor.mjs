@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 // The same list packages/executors/src/safe-environment.ts imports. The doctor
@@ -17,113 +17,110 @@ const executorMode = env.EXECUTOR_MODE ?? 'mock';
 const realMode = executorMode === 'real';
 const dataDirectory = resolve(root, env.DATA_DIR ?? '.data');
 const sourceRevision = sourceRevisionCheck();
-const cached = sourceRevision.revision ? readPreflightCache(sourceRevision.revision) : undefined;
-if (cached) {
-  print(cached);
-} else {
-  const checks = [
-    commandCheck('node', ['--version'], true, { minimumVersion: '22.0.0' }),
-    commandCheck('git', ['--version'], true),
-    sourceRevision,
-    // `CodexCliExecutor` spawns `srt` (@anthropic-ai/sandbox-runtime), not
-    // `codex`, as the real process in real mode (#637, docs/adr/0081) — the
-    // `codex` probe below says nothing about whether the wrapper it actually
-    // runs through is installed. Only required in real mode, same as the
-    // provider probes: `srt` is never spawned in mock mode.
-    commandCheck('srt', ['--version'], realMode),
-    fileCheck(
-      'harness manifest',
-      resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
-      true,
-      root,
-    ),
-    fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root),
-    fileCheck(
-      'model catalog',
-      resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
-      true,
-      root,
-    ),
-    commandCheck('docker', ['info', '--format', '{{.ServerVersion}}'], realMode, {
-      missingMessage: 'start Docker Desktop and retry',
-    }),
-    ...storageChecks({ root, dataDirectory }),
-    fileVaultCheck(process.platform, run),
-  ];
-  const probes = await Promise.all([
-    providerProbe({
-      provider: 'codex',
-      label: 'Codex',
-      versionArgs: ['--version'],
-      helpArgs: ['exec', '--help'],
-      authArgs: ['login', 'status'],
-      flags: {
-        nonInteractive: [
-          '--json',
-          '--ephemeral',
-          '--color',
-          '--output-last-message',
-          '--skip-git-repo-check',
-        ],
-        modelSelection: ['--model'],
-        sandbox: ['--sandbox'],
-      },
-      authenticationStatus(result) {
-        const output = combinedOutput(result).trim();
-        if (/^Not logged in\.?$/i.test(output)) return false;
-        if (
-          result.status === 0 &&
-          /^Logged in(?: using (?:ChatGPT|an API key))?\.?$/i.test(output)
-        ) {
-          return true;
-        }
+const checks = [
+  commandCheck('node', ['--version'], true, { minimumVersion: '22.0.0' }),
+  commandCheck('git', ['--version'], true),
+  sourceRevision,
+  // `CodexCliExecutor` spawns `srt` (@anthropic-ai/sandbox-runtime), not
+  // `codex`, as the real process in real mode (#637, docs/adr/0081) — the
+  // `codex` probe below says nothing about whether the wrapper it actually
+  // runs through is installed. Only required in real mode, same as the
+  // provider probes: `srt` is never spawned in mock mode.
+  commandCheck('srt', ['--version'], realMode, {
+    missingMessage: 'install srt (@anthropic-ai/sandbox-runtime) and retry',
+  }),
+  fileCheck(
+    'harness manifest',
+    resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
+    true,
+    root,
+    { missingMessage: 'restore harness/manifest.json and retry' },
+  ),
+  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root, {
+    missingMessage: 'restore workflows/ and retry',
+  }),
+  fileCheck(
+    'model catalog',
+    resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
+    true,
+    root,
+    { missingMessage: 'restore models/catalog.yaml and retry' },
+  ),
+  commandCheck('docker', ['info', '--format', '{{.ServerVersion}}'], realMode, {
+    missingMessage: 'start Docker Desktop and retry',
+  }),
+  ...storageChecks({ root, dataDirectory }),
+  fileVaultCheck(process.platform, run),
+];
+const probes = await Promise.all([
+  providerProbe({
+    provider: 'codex',
+    label: 'Codex',
+    versionArgs: ['--version'],
+    helpArgs: ['exec', '--help'],
+    authArgs: ['login', 'status'],
+    flags: {
+      nonInteractive: [
+        '--json',
+        '--ephemeral',
+        '--color',
+        '--output-last-message',
+        '--skip-git-repo-check',
+      ],
+      modelSelection: ['--model'],
+      sandbox: ['--sandbox'],
+    },
+    authenticationStatus(result) {
+      const output = combinedOutput(result).trim();
+      if (/^Not logged in\.?$/i.test(output)) return false;
+      if (result.status === 0 && /^Logged in(?: using (?:ChatGPT|an API key))?\.?$/i.test(output)) {
+        return true;
+      }
+      return null;
+    },
+  }),
+  providerProbe({
+    provider: 'claude',
+    label: 'Claude',
+    versionArgs: ['--version'],
+    helpArgs: ['--help'],
+    authArgs: ['auth', 'status'],
+    flags: {
+      nonInteractive: [
+        '--print',
+        '--verbose',
+        '--output-format',
+        '--no-session-persistence',
+        '--prompt-suggestions',
+        '--json-schema',
+      ],
+      modelSelection: ['--model'],
+      sandbox: ['--safe-mode', '--permission-mode'],
+    },
+    authenticationStatus(result) {
+      try {
+        const { loggedIn } = JSON.parse(result.stdout ?? '');
+        if (loggedIn === false) return false;
+        if (loggedIn === true && result.status === 0) return true;
         return null;
-      },
-    }),
-    providerProbe({
-      provider: 'claude',
-      label: 'Claude',
-      versionArgs: ['--version'],
-      helpArgs: ['--help'],
-      authArgs: ['auth', 'status'],
-      flags: {
-        nonInteractive: [
-          '--print',
-          '--verbose',
-          '--output-format',
-          '--no-session-persistence',
-          '--prompt-suggestions',
-          '--json-schema',
-        ],
-        modelSelection: ['--model'],
-        sandbox: ['--safe-mode', '--permission-mode'],
-      },
-      authenticationStatus(result) {
-        try {
-          const { loggedIn } = JSON.parse(result.stdout ?? '');
-          if (loggedIn === false) return false;
-          if (loggedIn === true && result.status === 0) return true;
-          return null;
-        } catch {
-          return null;
-        }
-      },
-    }),
-  ]);
+      } catch {
+        return null;
+      }
+    },
+  }),
+]);
 
-  const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'ready') : [];
-  const failures = [...checks.filter((check) => check.required && !check.ok), ...providerFailures];
-  const report = {
-    schemaVersion: 1,
-    sourceRevision: sourceRevision.revision,
-    executorMode,
-    checks,
-    probes,
-  };
-  if (failures.length === 0 && sourceRevision.revision) writePreflightCache(report);
-  print(report);
-  if (failures.length > 0) process.exitCode = 1;
-}
+const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'ready') : [];
+const failures = [...checks.filter((check) => check.required && !check.ok), ...providerFailures];
+const report = {
+  schemaVersion: 1,
+  sourceRevision: sourceRevision.revision,
+  executorMode,
+  checks,
+  probes,
+};
+print(report);
+if (failures.length > 0) process.exitCode = 1;
 
 function print(report) {
   if (process.argv.slice(2).includes('--json')) {
@@ -160,7 +157,9 @@ async function providerProbe(definition) {
     return probeResult(definition, {
       status: 'unavailable',
       capabilities: emptyCapabilities(),
-      message: `${definition.label} CLI is unavailable.`,
+      message: realMode
+        ? `install ${definition.label} CLI and retry.`
+        : `${definition.label} CLI is unavailable.`,
     });
   }
 
@@ -205,7 +204,7 @@ async function providerProbe(definition) {
       status: 'unauthenticated',
       version,
       capabilities,
-      message: `${definition.label} is not authenticated.`,
+      message: `run ${definition.provider === 'codex' ? 'codex login' : 'claude auth login'} and retry.`,
     });
   }
   if (authenticationStatus !== true) {
@@ -249,9 +248,9 @@ function commandCheck(command, args, required, options = {}) {
       name: command,
       ok: false,
       required,
-      message:
-        options.missingMessage ??
-        (required ? 'missing or not executable' : 'not installed; acceptable in mock mode'),
+      message: required
+        ? (options.missingMessage ?? 'missing or not executable')
+        : 'not installed; acceptable in mock mode',
     };
   }
 
@@ -294,34 +293,6 @@ function sourceRevisionCheck() {
   };
 }
 
-function cachePath(revision) {
-  return join(dataDirectory, 'environment-preflight', `preflight-${revision}.json`);
-}
-
-function readPreflightCache(revision) {
-  try {
-    const report = JSON.parse(readFileSync(cachePath(revision), 'utf8'));
-    if (
-      report.schemaVersion === 1 &&
-      report.sourceRevision === revision &&
-      report.executorMode === executorMode
-    ) {
-      return report;
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
-}
-
-function writePreflightCache(report) {
-  const directory = join(dataDirectory, 'environment-preflight');
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  writeFileSync(cachePath(report.sourceRevision), `${JSON.stringify(report, null, 2)}\n`, {
-    mode: 0o600,
-  });
-}
-
 function extractVersion(output) {
   return output.match(/\bv?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/)?.[1];
 }
@@ -361,15 +332,15 @@ function parseVersion(value) {
   return { core: core.split('.').map(Number), prerelease };
 }
 
-function fileCheck(name, path, required, workspaceRoot) {
+function fileCheck(name, path, required, workspaceRoot, options = {}) {
   const ok = existsSync(path);
   const safePath = relativeCheckPath(workspaceRoot, path);
   return {
     name,
     ok,
     required,
-    message: ok ? path : `missing: ${path}`,
-    jsonMessage: ok ? safePath : `missing: ${safePath}`,
+    message: ok ? path : (options.missingMessage ?? `missing: ${path}`),
+    jsonMessage: ok ? safePath : (options.missingMessage ?? `missing: ${safePath}`),
   };
 }
 
