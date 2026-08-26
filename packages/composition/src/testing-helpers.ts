@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { execa } from 'execa';
+import type { StepAttempt, StepRun, WorkflowRun } from '@agent-foundry/contracts';
 import type { Runtime } from './runtime.js';
 
 // Not exported from index.ts: this is test-only wiring, and re-exporting it through
@@ -76,4 +77,50 @@ export function probeDocker(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Human-readable reason a run did not reach its expected status (#658).
+ *
+ * A nightly gate that fails with `'failed' !== 'completed'` and nothing else is
+ * untriageable without reproducing the whole journey locally, which is why the
+ * pipeline regression sat red for 18 nights. Pass this as the assertion message
+ * so the first step attempt that did not succeed — its step and its error —
+ * lands in the CI log next to the failure. Pure on purpose: it formats state the
+ * caller already loaded, so it costs nothing on the passing path.
+ */
+export function describeRunFailure(
+  run: WorkflowRun | null,
+  steps: StepRun[],
+  attempts: StepAttempt[],
+): string {
+  const lines = [`run status=${run?.status ?? 'missing'}`];
+  if (run?.error) lines.push(`run error: ${run.error.name}: ${run.error.message}`);
+  const stepsById = new Map(steps.map((step) => [step.id, step]));
+  const attempt = attempts.find((candidate) => candidate.status !== 'succeeded');
+  if (attempt) {
+    const step = stepsById.get(attempt.stepRunId);
+    lines.push(
+      `first non-succeeded attempt: step ${attempt.context.nodeId}/${attempt.context.stepId}` +
+        (step ? ` (${step.stepType}, step status=${step.status})` : '') +
+        ` attempt ${attempt.id} status=${attempt.status}` +
+        (attempt.error
+          ? `\nattempt error: ${attempt.error.name}: ${attempt.error.message}` +
+            (attempt.error.exitCode === undefined ? '' : ` (exit ${attempt.error.exitCode})`)
+          : ' (no error recorded)'),
+    );
+    return lines.join('\n');
+  }
+  const failedStep = steps.find((step) => step.status === 'failed' || step.status === 'cancelled');
+  if (failedStep) {
+    lines.push(
+      `no attempt failed; first ${failedStep.status} step: ${failedStep.nodeId}/${failedStep.stepId}` +
+        (failedStep.error ? ` error: ${failedStep.error.name}: ${failedStep.error.message}` : ''),
+    );
+    return lines.join('\n');
+  }
+  lines.push(
+    `no failed step or attempt — steps: ${steps.map((step) => `${step.nodeId}/${step.stepId}=${step.status}`).join(', ') || '(none)'}`,
+  );
+  return lines.join('\n');
 }

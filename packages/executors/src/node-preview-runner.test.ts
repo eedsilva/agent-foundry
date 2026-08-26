@@ -404,6 +404,28 @@ describe('NodePreviewRunner', () => {
     expect(stopped.failureEvidence?.stderr).toContain('fixture stderr');
   }, 15_000);
 
+  it('names the missing command in failureEvidence when the dev server never spawns (#658)', async () => {
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
+    let session = await newSession('sess-dev-command-missing');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'agent-foundry-absent-package-manager', args: ['run', 'dev'] },
+      },
+    };
+
+    session = await startTracked(runner, session);
+
+    expect(session.status).toBe('failed');
+    expect(session.error?.code).toBe('PREVIEW_START_FAILED');
+    // The reason the process never started is the whole point: without it the
+    // only evidence is 'Dev server exited immediately twice.'
+    expect(session.failureEvidence?.stderr).toContain('agent-foundry-absent-package-manager');
+    expect(session.failureEvidence?.stderr).toContain('ENOENT');
+  }, 15_000);
+
   it('requires a successful HTTP response instead of treating an open TCP port as healthy', async () => {
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 250,

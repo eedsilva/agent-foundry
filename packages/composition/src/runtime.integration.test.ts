@@ -31,7 +31,7 @@ import {
   FileQualityObservationRepository,
 } from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveAllGates } from './testing-helpers.js';
+import { approveAllGates, describeRunFailure } from './testing-helpers.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
 schemaVersion: '1'
@@ -1065,6 +1065,52 @@ describe('runtime composition', () => {
     );
     expect(implementAttempts.map((attempt) => attempt.status)).toEqual(['failed']);
     expect(detail.project.error).toBe('synthetic first-candidate failure');
+  }, 30_000);
+
+  // #658: the nightly pipeline-regression gate spent 18 runs reporting only
+  // `expected 'failed' to be 'completed'`. This pins the replacement message —
+  // if the diagnostic stops naming the step or the error, this goes red before
+  // the nightly does.
+  it('names the failing step and its error when a run does not complete', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-run-diagnostic-'));
+    temporaryDirectories.push(dataDir);
+    const rootDir = resolve(import.meta.dirname, '../../..');
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: rootDir,
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+      WORKER_ID: 'run-diagnostic-worker',
+    });
+    configureMockBrowserRuntime(runtime);
+    Object.defineProperty(runtime.executors, 'executor', {
+      value: new FailFirstImplementExecutor(),
+    });
+
+    const project = await runtime.projectService.create({
+      name: 'Run diagnostic sample',
+      workflowId: 'web-app-v1',
+      prd: 'Build a small, persistent issue tracker with validation, filters, tests, type checking, clear failure states, and a production build.',
+    });
+    const runId = project.currentRunId;
+    if (!runId) throw new Error('Expected project to reference its workflow run');
+
+    expect(await runtime.worker.runOnce()).toBe(true);
+    await approveAllGates(runtime, runId);
+
+    const run = await runtime.runs.get(runId);
+    expect(run?.status).toBe('failed');
+    const steps = await runtime.stepRuns.list(runId);
+    const attempts = (
+      await Promise.all(steps.map((step) => runtime.stepAttempts.list(runId, step.id)))
+    ).flat();
+    const diagnostic = describeRunFailure(run, steps, attempts);
+
+    expect(diagnostic).toContain('run status=failed');
+    expect(diagnostic).toMatch(/first non-succeeded attempt: step [^\s]*implement\./);
+    expect(diagnostic).toContain('status=failed');
+    expect(diagnostic).toContain('synthetic first-candidate failure');
   }, 30_000);
 
   it('closes the active attempt, step, and run when execution fails', async () => {

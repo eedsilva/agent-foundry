@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveAllGates, probeDocker } from './testing-helpers.js';
+import { approveAllGates, describeRunFailure, probeDocker } from './testing-helpers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -110,16 +110,16 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
       await approveAllGates(runtime, runId, 'pipeline-regression');
 
       const run = await runtime.runs.get(runId);
-      expect(run?.status).toBe('completed');
-
+      // Loaded before the assertion on purpose (#658): a nightly gate that dies
+      // on 'failed' !== 'completed' names neither the step nor the error, and is
+      // untriageable without reproducing the whole journey locally.
+      const steps = await runtime.stepRuns.list(runId);
       // The fake CLIs — not any real provider CLI on PATH — answered every step.
       const attempts = (
-        await Promise.all(
-          (await runtime.stepRuns.list(runId)).map((step) =>
-            runtime!.stepAttempts.list(runId, step.id),
-          ),
-        )
+        await Promise.all(steps.map((step) => runtime!.stepAttempts.list(runId, step.id)))
       ).flat();
+      expect(run?.status, describeRunFailure(run, steps, attempts)).toBe('completed');
+
       expect(attempts.length).toBeGreaterThan(0);
       expect(attempts.every((attempt) => attempt.status === 'succeeded')).toBe(true);
       const planArtifact = await runtime.artifacts.getLatest(project.id, 'plan.current');
