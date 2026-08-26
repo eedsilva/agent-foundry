@@ -374,16 +374,26 @@ export class NodePreviewRunner implements PreviewRunner {
     const markExited = (result: unknown): void => {
       entry.exited = true;
       if (typeof result !== 'object' || result === null) return;
-      const record = result as { exitCode?: unknown; shortMessage?: unknown; message?: unknown };
+      const record = result as {
+        exitCode?: unknown;
+        signal?: unknown;
+        shortMessage?: unknown;
+        message?: unknown;
+      };
       if (typeof record.exitCode === 'number') {
         entry.exitCode = record.exitCode;
         return;
       }
-      // A spawn that never reached the program — the package manager missing
-      // from PATH (ENOENT), a non-executable entry point — resolves here with
-      // no exit code and no output at all. Without this the only evidence the
-      // preview can report is 'Dev server exited immediately twice.', which
-      // names neither the command nor the reason (#658).
+      // A signal means the process existed and something killed it — usually
+      // this runner's own stop(), which must not write a line the dev server
+      // never printed into the operator's log.
+      if (record.signal) return;
+      // What is left is a spawn that never reached the program — the package
+      // manager missing from PATH (ENOENT), a non-executable entry point — and
+      // it resolves here with no exit code and no output at all. Without this
+      // the only evidence the preview can report is 'Dev server exited
+      // immediately twice.', which names neither the command nor the reason
+      // (#658).
       const reason =
         typeof record.shortMessage === 'string'
           ? record.shortMessage

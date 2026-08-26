@@ -404,6 +404,40 @@ describe('NodePreviewRunner', () => {
     expect(stopped.failureEvidence?.stderr).toContain('fixture stderr');
   }, 15_000);
 
+  it('does not invent a stderr line when stop() kills a dev server that ignores SIGTERM (#658)', async () => {
+    const logs = new InMemoryPreviewLogRepository();
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000, logRepository: logs });
+    let session = await newSession('sess-stop-log-noise');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT, '--ignore-sigterm'] },
+      },
+    };
+    session = await startTracked(runner, session);
+    const pid = session.process!.pid!;
+
+    const stopped = await runner.stop(session);
+
+    // stop() escalates to SIGKILL here, so the child settles with a signal and
+    // no exit code — the same shape as a spawn that never started. Wait for the
+    // process to actually be gone: the exit handler that could append to the
+    // log is chained on the same promise, so once this holds, anything it was
+    // going to write has been queued.
+    await vi.waitFor(() => {
+      expect(isAlive(pid)).toBe(false);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const page = await logs.list(stopped.id, {});
+    // The operator's log stays the dev server's own output. A deliberate kill
+    // is not stderr the dev server printed.
+    expect(page.entries.filter((entry) => /was killed with SIG/.test(entry.message))).toEqual([]);
+    expect(page.entries.some((entry) => entry.message.includes('fixture stderr'))).toBe(true);
+  }, 30_000);
+
   it('names the missing command in failureEvidence when the dev server never spawns (#658)', async () => {
     const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
     let session = await newSession('sess-dev-command-missing');
