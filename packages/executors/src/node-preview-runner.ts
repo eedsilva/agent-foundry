@@ -330,14 +330,6 @@ export class NodePreviewRunner implements PreviewRunner {
       flushOutput: () => {},
     };
     this.processes.set(session.id, entry);
-    const markExited = (result: unknown): void => {
-      entry.exited = true;
-      if (typeof result === 'object' && result !== null && 'exitCode' in result) {
-        const exitCode = (result as { exitCode?: unknown }).exitCode;
-        if (typeof exitCode === 'number') entry.exitCode = exitCode;
-      }
-    };
-    void child.then(markExited, markExited);
     let detectedPort: number | undefined;
     const decoders = {
       stdout: new StringDecoder('utf8'),
@@ -379,6 +371,28 @@ export class NodePreviewRunner implements PreviewRunner {
       };
     child.stdout?.on('data', capture('stdout'));
     child.stderr?.on('data', capture('stderr'));
+    const markExited = (result: unknown): void => {
+      entry.exited = true;
+      if (typeof result !== 'object' || result === null) return;
+      const record = result as { exitCode?: unknown; shortMessage?: unknown; message?: unknown };
+      if (typeof record.exitCode === 'number') {
+        entry.exitCode = record.exitCode;
+        return;
+      }
+      // A spawn that never reached the program — the package manager missing
+      // from PATH (ENOENT), a non-executable entry point — resolves here with
+      // no exit code and no output at all. Without this the only evidence the
+      // preview can report is 'Dev server exited immediately twice.', which
+      // names neither the command nor the reason (#658).
+      const reason =
+        typeof record.shortMessage === 'string'
+          ? record.shortMessage
+          : typeof record.message === 'string'
+            ? record.message
+            : undefined;
+      if (reason) appendOutput('stderr', reason);
+    };
+    void child.then(markExited, markExited);
 
     const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
