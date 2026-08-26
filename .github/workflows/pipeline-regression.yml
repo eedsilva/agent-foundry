@@ -29,6 +29,14 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # The generated scaffold pins pnpm in its `packageManager` field, so the
+      # preview's dev command is `pnpm run dev` and it is spawned on the runner
+      # itself — only the install is containerized, and only that container has
+      # corepack. Without a pnpm on PATH the dev server never reaches the
+      # program, and this gate fails in provisioning before a single workflow
+      # step exists (#658). Bootstrapped the same way as scaffold-boot in
+      # ci.yml: pnpm v10 self-switches to the version the scaffold pins.
+      - run: npm install --global pnpm@10
       - uses: supabase/setup-cli@46f7f98c7f948ad727d22c1e67fab04c223a0520 # v3
         with:
           version: 2.62.5
