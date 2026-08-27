@@ -37,12 +37,13 @@ describe('generated API boundary build gate', () => {
     expect(result.status).toBe(0);
   });
 
-  it('fails when an API handler adds an Access-Control-Allow-Origin header', async () => {
-    const result = runCheck(
-      await workspaceWith("response.headers.set('Access-Control-Allow-Origin', '*');\n"),
-    );
+  it.each([
+    "response.headers.set('Access-Control-Allow-Origin', '*');\n",
+    "import { cors } from 'hono/cors';\napp.use(cors());\n",
+  ])('fails when an API handler configures CORS: %s', async (source) => {
+    const result = runCheck(await workspaceWith(source));
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('CORS response header');
+    expect(result.stderr).toContain('CORS configuration');
   });
 
   it.each([
@@ -62,15 +63,20 @@ describe('generated API boundary build gate', () => {
     'console.log(getSecret());\n',
     'console.log(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);\n',
     'console.log(\n  error,\n);\n',
-  ])('fails when an API handler logs sensitive data: %s', async (source) => {
+    'const leak = error;\nconsole.error(leak);\n',
+    'logger.error(error);\n',
+  ])('fails when an API handler logs without redaction: %s', async (source) => {
     const result = runCheck(await workspaceWith(source));
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('sensitive value in console output');
+    expect(result.stderr).toContain('API logging is not permitted');
   });
 
-  it('allows a non-sensitive startup message', async () => {
-    const result = runCheck(await workspaceWith("console.info('API started');\n"));
-    expect(result.stderr).toBe('');
-    expect(result.status).toBe(0);
-  });
+  it.each(["console.info('API started');\n", "logger.debug('API started');\n"])(
+    'fails when an API handler logs a non-sensitive message: %s',
+    async (source) => {
+      const result = runCheck(await workspaceWith(source));
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('API logging is not permitted');
+    },
+  );
 });

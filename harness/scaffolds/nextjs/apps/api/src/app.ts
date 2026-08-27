@@ -14,7 +14,8 @@ export const app = new Hono<ApiEnv>();
 const DEFAULT_ITEMS_LIMIT = 25;
 const MAX_ITEMS_LIMIT = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CURSOR_TIMESTAMP = /^[0-9T:Z+ .-]+$/;
+const CURSOR_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
 type ItemsCursor = { createdAt: string; id: string };
 
@@ -40,14 +41,37 @@ function decodeCursor(value: string): ItemsCursor {
   };
   if (
     typeof decoded.createdAt !== 'string' ||
-    !CURSOR_TIMESTAMP.test(decoded.createdAt) ||
-    Number.isNaN(Date.parse(decoded.createdAt)) ||
+    !isValidCursorTimestamp(decoded.createdAt) ||
     typeof decoded.id !== 'string' ||
     !UUID.test(decoded.id)
   ) {
     throw new Error('invalid cursor');
   }
   return { createdAt: decoded.createdAt, id: decoded.id };
+}
+
+function isValidCursorTimestamp(value: string): boolean {
+  const match = CURSOR_TIMESTAMP.exec(value);
+  if (!match) return false;
+  const [, year, month, day, hour, minute, second, , zone] = match;
+  const calendar = new Date(0);
+  calendar.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+  calendar.setUTCHours(Number(hour), Number(minute), Number(second), 0);
+  if (
+    calendar.getUTCFullYear() !== Number(year) ||
+    calendar.getUTCMonth() !== Number(month) - 1 ||
+    calendar.getUTCDate() !== Number(day) ||
+    Number(hour) > 23 ||
+    Number(minute) > 59 ||
+    Number(second) > 59
+  ) {
+    return false;
+  }
+  if (zone !== 'Z') {
+    const offset = zone.slice(1).split(':').map(Number);
+    if (offset[0] > 23 || offset[1] > 59) return false;
+  }
+  return !Number.isNaN(new Date(value).getTime());
 }
 
 export function parseItemsQuery(input: {

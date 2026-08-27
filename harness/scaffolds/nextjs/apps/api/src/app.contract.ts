@@ -47,8 +47,18 @@ test('Items query rejects malformed cursors and bounds page size', () => {
   const invalidCursor = Buffer.from(
     JSON.stringify({ createdAt: '2026-08-26T00:00:00.000Z', id: 'not-a-uuid' }),
   ).toString('base64url');
+  const impossibleDateCursor = Buffer.from(
+    JSON.stringify({
+      createdAt: '2026-02-31T00:00:00Z',
+      id: '00000000-0000-0000-0000-000000000001',
+    }),
+  ).toString('base64url');
 
   assert.deepEqual(parseItemsQuery({ cursor: invalidCursor }), {
+    ok: false,
+    error: 'Invalid item cursor.',
+  });
+  assert.deepEqual(parseItemsQuery({ cursor: impossibleDateCursor }), {
     ok: false,
     error: 'Invalid item cursor.',
   });
@@ -57,41 +67,52 @@ test('Items query rejects malformed cursors and bounds page size', () => {
   assert.equal(parseItemsQuery({ limit: '101' }).ok, false);
 });
 
-test('GET /items returns HTTP 400 for a malformed cursor', async () => {
-  const originalFetch = globalThis.fetch;
-  const requests: string[] = [];
-  globalThis.fetch = async (input) => {
-    const url = input instanceof Request ? input.url : String(input);
-    requests.push(url);
-    if (url.includes('/auth/v1/user')) {
-      return new Response(JSON.stringify(user), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+const invalidCursorCases = [
+  { name: 'malformed UUID', value: { createdAt: '2026-08-26T00:00:00.000Z', id: 'not-a-uuid' } },
+  {
+    name: 'impossible calendar date',
+    value: {
+      createdAt: '2026-02-31T00:00:00Z',
+      id: '00000000-0000-0000-0000-000000000001',
+    },
+  },
+] as const;
+
+for (const { name, value } of invalidCursorCases) {
+  test(`GET /items returns HTTP 400 for an invalid cursor: ${name}`, async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requests.push(url);
+      if (url.includes('/auth/v1/user')) {
+        return new Response(JSON.stringify(user), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    };
+
+    try {
+      const cursor = Buffer.from(JSON.stringify(value)).toString('base64url');
+      const response = await createNodeHandler(runtimeEnv)(
+        new Request(`http://localhost/items?cursor=${cursor}`, {
+          headers: { authorization: 'Bearer test-token' },
+        }),
+      );
+
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error: 'Invalid item cursor.' });
+      assert.equal(
+        requests.some((url) => url.includes('/rest/v1/items')),
+        false,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
     }
-    throw new Error(`Unexpected request: ${url}`);
-  };
-
-  try {
-    const cursor = Buffer.from(
-      JSON.stringify({ createdAt: '2026-08-26T00:00:00.000Z', id: 'not-a-uuid' }),
-    ).toString('base64url');
-    const response = await createNodeHandler(runtimeEnv)(
-      new Request(`http://localhost/items?cursor=${cursor}`, {
-        headers: { authorization: 'Bearer test-token' },
-      }),
-    );
-
-    assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), { error: 'Invalid item cursor.' });
-    assert.equal(
-      requests.some((url) => url.includes('/rest/v1/items')),
-      false,
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
+  });
+}
 
 test('GET /items returns a bounded page and advances with its cursor', async () => {
   const originalFetch = globalThis.fetch;

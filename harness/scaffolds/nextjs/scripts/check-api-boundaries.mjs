@@ -7,13 +7,11 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const apiRoot = join(root, 'apps', 'api', 'src');
 const SKIPPED_DIRECTORIES = new Set(['node_modules', '.next', 'dist']);
-const CORS_HEADER = /access-control-allow-origin/i;
+const CORS_REFERENCE = /access-control-allow-origin|['"]hono\/cors['"]|\bcors\s*\(/i;
 const COOKIE_AUTH = /cookie/i;
-// ponytail: balanced parentheses are unnecessary for this canary; use an AST
-// scanner if the scaffold grows indirect logging patterns.
-const CONSOLE_CALL = /\bconsole\.(?:debug|error|info|log|trace|warn)\s*\(([^)]*)\)/gi;
-const SENSITIVE_LOG_VALUE =
-  /(?:access.?token|authorization|cookie|email|err(?:or)?|key|password|request|secret|token)|process\.env/i;
+// No redacted structured logger exists in the scaffold, so reject every logging
+// method call regardless of receiver or argument names.
+const LOG_CALL = /\.(?:debug|error|info|log|trace|warn)\s*\(/gi;
 const offenders = [];
 
 if (existsSync(apiRoot)) walk(apiRoot);
@@ -32,14 +30,12 @@ function walk(directory) {
 function check(path, source) {
   source.split(/\r?\n/).forEach((line, index) => {
     const location = `${path}:${index + 1}`;
-    if (CORS_HEADER.test(line)) offenders.push(`${location} — CORS response header`);
+    if (CORS_REFERENCE.test(line)) offenders.push(`${location} — CORS configuration`);
     if (COOKIE_AUTH.test(line)) offenders.push(`${location} — cookie-auth reference`);
   });
-  for (const match of source.matchAll(CONSOLE_CALL)) {
-    if (SENSITIVE_LOG_VALUE.test(match[1])) {
-      const line = source.slice(0, match.index).split(/\r?\n/).length;
-      offenders.push(`${path}:${line} — sensitive value in console output`);
-    }
+  for (const match of source.matchAll(LOG_CALL)) {
+    const line = source.slice(0, match.index).split(/\r?\n/).length;
+    offenders.push(`${path}:${line} — API logging is not permitted`);
   }
 }
 
@@ -47,11 +43,10 @@ if (offenders.length > 0) {
   console.error('Generated API boundary check failed:');
   for (const offender of offenders) console.error(`  - ${offender}`);
   console.error(
-    '\nThe generated API must not emit Access-Control-Allow-Origin, authenticate from cookies,\n' +
-      'or log tokens, keys, credentials, request data, or raw errors. Add a redacted\n' +
-      'structured logger before permitting API logging.',
+    '\nThe generated API must not configure CORS, authenticate from cookies, or log through\n' +
+      'an unredacted logger. Add a redacted structured logger before permitting API logging.',
   );
   process.exit(1);
 }
 
-console.log('check-api-boundaries: ok — no CORS, cookie auth, or sensitive API logging');
+console.log('check-api-boundaries: ok — no CORS, cookie auth, or API logging');
