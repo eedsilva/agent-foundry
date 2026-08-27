@@ -34,17 +34,13 @@ const checks = [
     resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
     true,
     root,
-    { missingMessage: 'restore harness/manifest.json and retry' },
   ),
-  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root, {
-    missingMessage: 'restore workflows/ and retry',
-  }),
+  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root),
   fileCheck(
     'model catalog',
     resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
     true,
     root,
-    { missingMessage: 'restore models/catalog.yaml and retry' },
   ),
   commandCheck('docker', ['info', '--format', '{{.ServerVersion}}'], realMode, {
     missingMessage: 'start Docker Desktop and retry',
@@ -332,15 +328,17 @@ function parseVersion(value) {
   return { core: core.split('.').map(Number), prerelease };
 }
 
-function fileCheck(name, path, required, workspaceRoot, options = {}) {
+function fileCheck(name, path, required, workspaceRoot) {
   const ok = existsSync(path);
   const safePath = relativeCheckPath(workspaceRoot, path);
+  const remediation = `restore ${safePath} and retry`;
+  const displayPath = safePath === '[outside workspace]' ? safePath : path;
   return {
     name,
     ok,
     required,
-    message: ok ? path : (options.missingMessage ?? `missing: ${path}`),
-    jsonMessage: ok ? safePath : (options.missingMessage ?? `missing: ${safePath}`),
+    message: ok ? displayPath : remediation,
+    jsonMessage: ok ? safePath : remediation,
   };
 }
 
