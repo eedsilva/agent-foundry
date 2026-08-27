@@ -81,6 +81,55 @@ describe('ProjectService.create', () => {
     expect(harness.workspaces.workspacePath('id-0001')).toBe('/operator/projects/issue-radar');
   });
 
+  it('converges persisted project and run when the creation event fails in file mode', async () => {
+    const harness = makeHarness();
+    harness.events.onBeforeAppend = (event) => {
+      if (event.type === 'project.created') throw new Error('event store unavailable');
+    };
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('event store unavailable');
+
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.executor.requests).toHaveLength(0);
+    expect(harness.workspaces.projectDirectories.get('id-0001')).toBe(
+      '/operator/projects/issue-radar',
+    );
+  });
+
+  it('retries initialization compensation when its first run update fails', async () => {
+    const harness = makeHarness();
+    vi.spyOn(harness.artifacts, 'put').mockRejectedValueOnce(
+      new Error('artifact store unavailable'),
+    );
+    const update = vi
+      .spyOn(harness.runs, 'update')
+      .mockImplementationOnce(() => Promise.reject(new Error('run compensation unavailable')));
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('artifact store unavailable');
+
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.executor.requests).toHaveLength(0);
+  });
+
   it('does not publish a job when recording queued state fails', async () => {
     const harness = makeHarness();
     const append = harness.events.append.bind(harness.events);

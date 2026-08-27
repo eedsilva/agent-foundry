@@ -77,6 +77,7 @@ import { isMigrationApprovalGateId, policyHash, workflowHash } from './idempoten
 import type { QualityObservationService } from './quality-observation-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
+const INITIALIZATION_FAILURE_ATTEMPTS = 2;
 
 export class ProjectService {
   constructor(
@@ -209,7 +210,6 @@ export class ProjectService {
       leaseEpoch: 0,
       ...traceContextField(),
     };
-    let persisted = false;
     let scaffoldFiles: Array<{ path: string; content: string }> = [];
     try {
       await this.workspaces.ensure(project.id);
@@ -235,9 +235,15 @@ export class ProjectService {
           );
         }
       });
-      persisted = true;
     } catch (error) {
-      if (!persisted) {
+      const persistedProject = await this.projects.get(project.id);
+      if (persistedProject) {
+        try {
+          await this.markInitializationFailed(project.id, runId, errorMessage(error));
+        } catch (stateError) {
+          throw new AggregateError([error, stateError], errorMessage(error));
+        }
+      } else {
         const rollbackErrors: unknown[] = [];
         try {
           await this.workspaces.releaseProjectDirectory(project.id, [
@@ -304,29 +310,7 @@ export class ProjectService {
     } catch (error) {
       const message = errorMessage(error);
       try {
-        await this.transactionRunner.run(async (tx) => {
-          const failedRun = await this.runs.update(
-            transitionWorkflowRun(run, 'failed', this.clock.now(), {
-              error: { name: 'ProjectInitializationError', message },
-            }),
-            run.version,
-            tx,
-          );
-          await this.projects.update(
-            {
-              ...project,
-              status: 'failed',
-              error: message,
-              updatedAt: this.clock.now().toISOString(),
-            },
-            project.version,
-            tx,
-          );
-          await this.appendEvent(project.id, 'project.failed', message, {
-            runId: failedRun.id,
-            tx,
-          });
-        });
+        await this.markInitializationFailed(project.id, runId, message);
       } catch (stateError) {
         throw new AggregateError([error, stateError], message);
       }
@@ -1189,6 +1173,56 @@ export class ProjectService {
       }
       await this.queue.enqueue(job, tx);
     });
+  }
+
+  private async markInitializationFailed(
+    projectId: string,
+    runId: string,
+    message: string,
+  ): Promise<void> {
+    const failures: unknown[] = [];
+    for (let attempt = 0; attempt < INITIALIZATION_FAILURE_ATTEMPTS; attempt += 1) {
+      try {
+        await this.transactionRunner.run(async (tx) => {
+          const [project, run] = await Promise.all([
+            this.projects.get(projectId),
+            this.runs.get(runId),
+          ]);
+          if (run && run.status !== 'failed') {
+            await this.runs.update(
+              transitionWorkflowRun(run, 'failed', this.clock.now(), {
+                error: { name: 'ProjectInitializationError', message },
+              }),
+              run.version,
+              tx,
+            );
+          }
+          if (project && project.status !== 'failed') {
+            await this.projects.update(
+              {
+                ...project,
+                status: 'failed',
+                error: message,
+                updatedAt: this.clock.now().toISOString(),
+              },
+              project.version,
+              tx,
+            );
+          }
+          if (project && run) {
+            await this.appendEvent(projectId, 'project.failed', message, {
+              runId,
+              dedupeKey: `${runId}:project.initialization_failed`,
+              tx,
+            });
+          }
+        });
+        return;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    throw new AggregateError(failures, `Project ${projectId} initialization compensation failed.`);
   }
 
   private approvalJobId(runId: string, decisionId: string): string {
