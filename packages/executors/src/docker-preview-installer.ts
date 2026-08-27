@@ -31,6 +31,16 @@ async function configurePnpmForHostPreview(workspacePath: string): Promise<Buffe
   return original;
 }
 
+function infrastructureFailure(error: unknown): PreviewInstallOutcome {
+  return {
+    ok: false,
+    exitCode: -1,
+    stdout: '',
+    stderr: error instanceof Error ? error.message : String(error),
+    infrastructure: true,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -88,19 +98,25 @@ export class DockerPreviewInstaller implements PreviewInstaller {
       cwd: '/project',
     };
     try {
-      const sandbox = await this.runner.create(spec);
+      // Everything the sandbox itself fails at — creating the container,
+      // reaching the daemon, tearing it back down — is an environment fault,
+      // and only this layer can tell it apart from an install the generated
+      // app's own dependencies broke (#659). The exit code the install
+      // returned is the product signal; a sandbox that never ran one is not.
+      let sandbox: Awaited<ReturnType<SandboxRunner['create']>>;
+      try {
+        sandbox = await this.runner.create(spec);
+      } catch (error) {
+        if (input.signal?.aborted) throw error;
+        return infrastructureFailure(error);
+      }
       try {
         let result: Awaited<ReturnType<SandboxRunner['exec']>>;
         try {
           result = await this.runner.exec(sandbox, exec, input.signal);
         } catch (error) {
           if (input.signal?.aborted) throw error;
-          return {
-            ok: false,
-            exitCode: -1,
-            stdout: '',
-            stderr: error instanceof Error ? error.message : String(error),
-          };
+          return infrastructureFailure(error);
         }
         return {
           ok: result.exitCode === 0,

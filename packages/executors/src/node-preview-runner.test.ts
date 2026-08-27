@@ -235,6 +235,36 @@ describe('NodePreviewRunner', () => {
       },
     });
   });
+  it('separates a failed install the environment caused from one the app caused (#659)', async () => {
+    const cases = [
+      { infrastructure: true, code: 'PREVIEW_INFRASTRUCTURE_UNAVAILABLE' },
+      { infrastructure: undefined, code: 'PREVIEW_INSTALL_FAILED' },
+    ];
+    for (const [index, expected] of cases.entries()) {
+      const install = vi.fn<PreviewInstaller['install']>(async () => ({
+        ok: false,
+        exitCode: 42,
+        stdout: '',
+        stderr: 'install failed',
+        ...(expected.infrastructure ? { infrastructure: true } : {}),
+      }));
+      const runner = new NodePreviewRunner({ installer: { install } });
+      const session = await newSession(`sess-install-origin-${index}`);
+      await writeFile(join(session.workspaceRef.workspacePath, 'package.json'), '{"scripts":{}}');
+      await writeFile(
+        join(session.workspaceRef.workspacePath, 'package-lock.json'),
+        '{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{}}',
+      );
+
+      const prepared = await runner.prepare(session);
+
+      // The installer is the only layer that knows which; the session's error
+      // identity is what carries it past the run boundary.
+      expect(prepared.status).toBe('failed');
+      expect(prepared.error?.code).toBe(expected.code);
+    }
+  });
+
   it('common cleanup stops a fixture when the test omits runner.stop', async () => {
     const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
     let session = await newSession('sess-after-each-cleanup');
@@ -485,7 +515,10 @@ describe('NodePreviewRunner', () => {
     session = await startTracked(runner, session);
 
     expect(session.status).toBe('failed');
-    expect(session.error?.code).toBe('PREVIEW_START_FAILED');
+    // The package manager the plan pins is missing from this host, so the dev
+    // server never became a process. That is this environment's fault, not a
+    // dev server the generated app crashed (#659).
+    expect(session.error?.code).toBe('PREVIEW_INFRASTRUCTURE_UNAVAILABLE');
     // The reason the process never started is the whole point: without it the
     // only evidence is 'Dev server exited immediately twice.'
     expect(session.failureEvidence?.stderr).toContain('agent-foundry-absent-package-manager');

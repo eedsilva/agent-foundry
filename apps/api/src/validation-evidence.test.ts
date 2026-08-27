@@ -669,97 +669,120 @@ afterEach(async () => {
 });
 
 describe('validation evidence API', () => {
-  it('publishes terminal evidence after the public project workflow reaches a terminal state', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'validation-evidence-workflow-'));
-    directories.push(dataDir);
-    const runtime = await createRuntime(
-      {
-        ...process.env,
-        REPO_ROOT: resolve(import.meta.dirname, '../../..'),
-        DATA_DIR: dataDir,
-        WORKFLOWS_DIR: resolve(import.meta.dirname, '../../../workflows'),
-        EXECUTOR_MODE: 'real',
-        VALIDATION_CAMPAIGN: 'real-todo-v1',
-        CODEX_DEFAULT_MODEL: 'gpt-5.6-luna',
-        CLAUDE_FAST_MODEL: 'claude-haiku-4-5-20251001',
-        WORKER_ID: 'validation-evidence-public-workflow',
-      } as NodeJS.ProcessEnv,
-      undefined,
-      undefined,
-      {
-        generatedProjectRuntime: null,
-        executors: createValidationCampaignTestExecutorRegistry(),
-        disablePreviews: true,
-        // `disablePreviews` only keeps provisioning away from the preview; the
-        // browser step still starts one through its own coordinator, and in
-        // real mode that install ran in Docker. That made this test fail on a
-        // host without a daemon for a reason it does not test — the run never
-        // reached the browser step at all (#659). Stubbing the install keeps
-        // the preview origin unserved, which is the condition the assertions
-        // below actually describe, on every host.
-        previewInstaller: {
-          install: () =>
-            Promise.resolve({
-              ok: false,
-              exitCode: 1,
-              stdout: '',
-              stderr: 'Preview install is stubbed: this test never serves the preview origin.',
-            }),
+  // Both origins of an unusable preview, measured through the same journey
+  // (#659). The runner marks the environment case at the layer that knows the
+  // cause; everything else stays a defect in the generated app.
+  it.each([
+    {
+      origin: 'environment',
+      installOutcome: {
+        ok: false as const,
+        exitCode: -1,
+        stdout: '',
+        stderr: 'docker create failed: failed to connect to the docker API',
+        infrastructure: true,
+      },
+      outcome: 'environment-blocked',
+      errorName: 'BrowserInfrastructureError',
+    },
+    {
+      origin: 'product',
+      installOutcome: {
+        ok: false as const,
+        exitCode: 1,
+        stdout: '',
+        stderr: 'ERR_PNPM_OUTDATED_LOCKFILE: the generated app lockfile is out of date',
+      },
+      outcome: 'product-failed',
+      errorName: 'Error',
+    },
+  ])(
+    'publishes terminal evidence after the public project workflow reaches a terminal state ($origin-origin preview failure)',
+    async ({ installOutcome, outcome, errorName }) => {
+      const dataDir = await mkdtemp(join(tmpdir(), 'validation-evidence-workflow-'));
+      directories.push(dataDir);
+      const runtime = await createRuntime(
+        {
+          ...process.env,
+          REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+          DATA_DIR: dataDir,
+          WORKFLOWS_DIR: resolve(import.meta.dirname, '../../../workflows'),
+          EXECUTOR_MODE: 'real',
+          VALIDATION_CAMPAIGN: 'real-todo-v1',
+          CODEX_DEFAULT_MODEL: 'gpt-5.6-luna',
+          CLAUDE_FAST_MODEL: 'claude-haiku-4-5-20251001',
+          WORKER_ID: 'validation-evidence-public-workflow',
+        } as NodeJS.ProcessEnv,
+        undefined,
+        undefined,
+        {
+          generatedProjectRuntime: null,
+          executors: createValidationCampaignTestExecutorRegistry(),
+          disablePreviews: true,
+          // `disablePreviews` only keeps provisioning away from the preview; the
+          // browser step still starts one through its own coordinator, and in
+          // real mode that install ran in Docker. That made this test fail on a
+          // host without a daemon for a reason it does not test — the run never
+          // reached the browser step at all (#659). Stubbing the install keeps
+          // the preview origin unserved, which is the condition the assertions
+          // below actually describe, on every host.
+          previewInstaller: { install: () => Promise.resolve(installOutcome) },
+          validationPreflight: controlledValidationPreflight,
         },
-        validationPreflight: controlledValidationPreflight,
-      },
-    );
-    if (!runtime.runValidationPreflight) throw new Error('validation preflight is unavailable');
-    await runtime.runValidationPreflight();
-    const app = await buildApp(runtime);
-    apps.push(app);
-    const projectResponse = await app.inject({
-      method: 'POST',
-      url: '/projects',
-      payload: {
-        name: 'Public validation workflow',
-        prd: 'Create a small TODO application with persistent storage and a visible list.',
-        workflowId: 'web-app-v1',
-      },
-    });
-    expect(projectResponse.statusCode).toBe(202);
-    const project = projectResponse.json().project;
-    const runId = project.currentRunId!;
-
-    expect(await runtime.worker.runOnce()).toBe(true);
-    // Approving the plan runs the schema step and parks on its own gate (#481).
-    for (const nodeId of ['plan-approval', 'schema-approval']) {
-      const pending = (await runtime.projectService.listApprovals(runId)).find(
-        (entry) => !entry.decision,
       );
-      expect(pending?.request.nodeId).toBe(nodeId);
-      const decision = await app.inject({
+      if (!runtime.runValidationPreflight) throw new Error('validation preflight is unavailable');
+      await runtime.runValidationPreflight();
+      const app = await buildApp(runtime);
+      apps.push(app);
+      const projectResponse = await app.inject({
         method: 'POST',
-        url: `/runs/${runId}/approvals/${pending!.request.id}/decide`,
-        payload: { action: 'approve', decidedBy: 'public-workflow-test' },
+        url: '/projects',
+        payload: {
+          name: 'Public validation workflow',
+          prd: 'Create a small TODO application with persistent storage and a visible list.',
+          workflowId: 'web-app-v1',
+        },
       });
-      expect(decision.statusCode).toBe(202);
-      expect(await runtime.worker.runOnce()).toBe(true);
-    }
+      expect(projectResponse.statusCode).toBe(202);
+      const project = projectResponse.json().project;
+      const runId = project.currentRunId!;
 
-    const evidence = await app.inject({
-      method: 'GET',
-      url: `/runs/${runId}/validation-evidence`,
-    });
-    expect(evidence.statusCode).toBe(200);
-    // This harness builds the API with `inject` and sets `disablePreviews`, so
-    // nothing ever serves the preview origin — the run is #526 reproduced in a
-    // test. It used to reach a terminal state as `product-failed`: the browser
-    // check failed, the repair loop claimed it, and a dead preview was
-    // published to the campaign bundle as a defect in the generated app. That
-    // misattribution is exactly what #528 removes, so the honest terminal
-    // outcome here is `environment-blocked`, with
-    // `terminalState.error.name === 'BrowserInfrastructureError'`. The four
-    // outcomes themselves, `product-failed` included, stay covered by the
-    // sibling test below.
-    expect(evidence.json().bundle.outcome).toBe('environment-blocked');
-    expect(evidence.json().bundle.terminalState.error.name).toBe('BrowserInfrastructureError');
-  }, 120_000);
+      expect(await runtime.worker.runOnce()).toBe(true);
+      // Approving the plan runs the schema step and parks on its own gate (#481).
+      for (const nodeId of ['plan-approval', 'schema-approval']) {
+        const pending = (await runtime.projectService.listApprovals(runId)).find(
+          (entry) => !entry.decision,
+        );
+        expect(pending?.request.nodeId).toBe(nodeId);
+        const decision = await app.inject({
+          method: 'POST',
+          url: `/runs/${runId}/approvals/${pending!.request.id}/decide`,
+          payload: { action: 'approve', decidedBy: 'public-workflow-test' },
+        });
+        expect(decision.statusCode).toBe(202);
+        expect(await runtime.worker.runOnce()).toBe(true);
+      }
+
+      const evidence = await app.inject({
+        method: 'GET',
+        url: `/runs/${runId}/validation-evidence`,
+      });
+      expect(evidence.statusCode).toBe(200);
+      // This harness builds the API with `inject` and sets `disablePreviews`, so
+      // nothing ever serves the preview origin — the run is #526 reproduced in a
+      // test. It used to reach a terminal state as `product-failed` whatever the
+      // cause: the browser check failed, the repair loop claimed it, and a dead
+      // preview was published to the campaign bundle as a defect in the
+      // generated app. That misattribution is what #528 removes for a browser
+      // transport failure and #659 removes for a preview that never came up —
+      // without moving the opposite case, a preview the generated app itself
+      // broke, which must stay `product-failed`. The four outcomes themselves
+      // stay covered by the sibling test below.
+      expect(evidence.json().bundle.outcome).toBe(outcome);
+      expect(evidence.json().bundle.terminalState.error.name).toBe(errorName);
+    },
+    120_000,
+  );
 
   it('publishes all four outcomes, redacts evidence, and replays the same artifact', async () => {
     const runtime = await createEvidenceRuntime();

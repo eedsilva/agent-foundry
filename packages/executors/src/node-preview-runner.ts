@@ -1,6 +1,10 @@
 import { execa } from 'execa';
 import { get } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
+import {
+  PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+  PREVIEW_INFRASTRUCTURE_ERROR_NAME,
+} from '@agent-foundry/contracts';
 import type {
   PreviewHealth,
   PreviewLogEntry,
@@ -141,11 +145,21 @@ export class NodePreviewRunner implements PreviewRunner {
     if (outcome.ok) return withEvidence;
     const stderrTail = tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES);
     return transitionPreviewSession(withEvidence, 'failed', this.clock.now(), {
-      error: {
-        name: 'PreviewInstallError',
-        code: 'PREVIEW_INSTALL_FAILED',
-        message: stderrTail || 'Install failed.',
-      },
+      // An install the environment prevented and an install the generated
+      // app's own dependencies broke are the same failure from here; the
+      // installer is the only layer that knows which, so it says so and this
+      // carries the distinction into the session's identity (#659).
+      error: outcome.infrastructure
+        ? {
+            name: PREVIEW_INFRASTRUCTURE_ERROR_NAME,
+            code: PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+            message: stderrTail || 'Preview install could not run.',
+          }
+        : {
+            name: 'PreviewInstallError',
+            code: 'PREVIEW_INSTALL_FAILED',
+            message: stderrTail || 'Install failed.',
+          },
       failureEvidence: {
         command: plan.install.ok
           ? { command: plan.install.command, args: plan.install.args }
@@ -271,12 +285,23 @@ export class NodePreviewRunner implements PreviewRunner {
     }
     if (attempt.crashedImmediately) {
       await this.killTracked(session.id);
+      // A dev server that ran and exited reports an exit code: the generated
+      // app crashed, which is a product defect. No exit code at all means the
+      // command never became a process — the package manager is missing from
+      // this host — and that is the environment's fault, not the app's (#659).
+      const neverStarted = attempt.exitCode === undefined;
       return transitionPreviewSession(session, 'failed', this.clock.now(), {
-        error: {
-          name: 'PreviewStartError',
-          code: 'PREVIEW_START_FAILED',
-          message: 'Dev server exited immediately twice.',
-        },
+        error: neverStarted
+          ? {
+              name: PREVIEW_INFRASTRUCTURE_ERROR_NAME,
+              code: PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+              message: 'Dev server never started twice.',
+            }
+          : {
+              name: 'PreviewStartError',
+              code: 'PREVIEW_START_FAILED',
+              message: 'Dev server exited immediately twice.',
+            },
         failureEvidence: {
           command: { command: dev.command, args: dev.args },
           ...(attempt.exitCode !== undefined ? { exitCode: attempt.exitCode } : {}),
