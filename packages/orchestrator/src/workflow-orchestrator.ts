@@ -72,6 +72,7 @@ import type {
   ApprovalDecisionRepository,
   ApprovalRequestRepository,
   ArtifactStore,
+  CallBudgetClass,
   Clock,
   EventStore,
   ExecutionPlane,
@@ -101,9 +102,11 @@ import type {
 import {
   ApprovalRejectedError,
   ApprovalRequiredError,
+  CallBudgetExhaustedError,
   EmergencyCeilingError,
   EnvironmentOperationError,
   ExecutionError,
+  ExecutorFailureError,
   LeaseLostError,
   MigrationApprovalRequiredError,
   NotFoundError,
@@ -123,12 +126,15 @@ import {
   recordStepRetry,
   recordTokenUsage,
   redactString,
+  reserveTaskCallBudget,
   transitionStepAttempt,
   transitionStepRun,
   transitionWorkflowRun,
   VersionConflictError,
   withSpan,
   calculateUsageCostUsd,
+  confirmTaskCallBudget,
+  releaseTaskCallBudget,
 } from '@agent-foundry/domain';
 import {
   campaignLimitMs,
@@ -155,6 +161,14 @@ import type { QualityObservationService } from './quality-observation-service.js
 import type { ValidationEvidencePublisher } from './validation-evidence.js';
 import { TaskGraphRunner } from './task-graph-runner.js';
 import { evaluateUiQuality, gateOnUiQuality } from './ui-quality-judge.js';
+
+type TaskCallReservation = {
+  runId: string;
+  nodeId: string;
+  taskId: string;
+  callClass: CallBudgetClass;
+  settled: boolean;
+};
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -414,6 +428,7 @@ export class WorkflowOrchestrator {
             input.pinnedArtifacts ? [...input.pinnedArtifacts] : [],
             input.routingStartIndex,
             input.worktree,
+            input.taskId,
           ),
         assertExecutionMayContinue: (runId, signal) =>
           this.assertExecutionMayContinue(runId, signal),
@@ -691,6 +706,21 @@ export class WorkflowOrchestrator {
       if (isCancellation(error, signal)) {
         await this.finalizeCancellation(run.id, projectId);
         return;
+      }
+      if (error instanceof CallBudgetExhaustedError) {
+        // Converges into the same preserve-draft + operator-pause machinery as
+        // EmergencyCeilingError (#604): an exhausted ADR-0073 Call Budget
+        // cannot continue automatically, but is not a wall-clock/repair-count
+        // fail-safe, so it gets its own reason ('call-budget-exhausted')
+        // rather than folding into those above. Only a real reservation
+        // denial reaches here — a `QualityGateError` from a failing lint,
+        // build, or test gate is never relabeled as a budget exhaustion.
+        try {
+          await this.reachCeiling(run.id, 'call-budget-exhausted', signal);
+        } catch (converged) {
+          if (!(converged instanceof EmergencyCeilingError)) throw converged;
+          error = converged;
+        }
       }
       if (error instanceof EmergencyCeilingError) {
         const latest = await this.requireRun(run.id);
@@ -1032,7 +1062,8 @@ export class WorkflowOrchestrator {
 
   private async reachCeiling(
     runId: string,
-    reason: 'active-time' | 'consecutive-repairs',
+    reason:
+      'active-time' | 'consecutive-repairs' | 'technical-retry-exhausted' | 'call-budget-exhausted',
     signal?: AbortSignal,
   ): Promise<never> {
     if (signal) throwIfCancelled(signal, runId);
@@ -1075,6 +1106,77 @@ export class WorkflowOrchestrator {
         if (!(error instanceof VersionConflictError)) throw error;
       }
     }
+  }
+
+  /**
+   * Reserves the next ADR-0073 Call Budget unit for one task's `callClass`
+   * (#604), or throws `CallBudgetExhaustedError` when used plus pending calls
+   * reaches the limit. Confirmation happens immediately before provider
+   * dispatch; cancellation or setup failure releases the reservation.
+   *
+   * A run already cancelled (or cancelling) when this is called consumes
+   * nothing — cancellation observed before the reservation is exactly "cancel
+   * before spawn", so it must not count against the budget.
+   */
+  private async reserveTaskCall(
+    runId: string,
+    nodeId: string,
+    taskId: string,
+    callClass: TaskCallReservation['callClass'],
+    limit: number,
+    signal: AbortSignal,
+  ): Promise<TaskCallReservation> {
+    throwIfCancelled(signal, runId);
+    await this.updateExecution(runId, (run) => {
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        throw new RunCancelledError(runId);
+      }
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      const callBudget = reserveTaskCallBudget(
+        execution.callBudget ?? {},
+        runId,
+        nodeId,
+        taskId,
+        callClass,
+        limit,
+      );
+      return { ...execution, callBudget };
+    });
+    return { runId, nodeId, taskId, callClass, settled: false };
+  }
+
+  private async confirmTaskCall(reservation: TaskCallReservation, signal: AbortSignal) {
+    if (reservation.settled) return;
+    throwIfCancelled(signal, reservation.runId);
+    await this.updateExecution(reservation.runId, (run) => {
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        throw new RunCancelledError(reservation.runId);
+      }
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      const callBudget = confirmTaskCallBudget(
+        execution.callBudget ?? {},
+        reservation.nodeId,
+        reservation.taskId,
+        reservation.callClass,
+      );
+      return { ...execution, callBudget };
+    });
+    reservation.settled = true;
+  }
+
+  private async releaseTaskCall(reservation: TaskCallReservation) {
+    if (reservation.settled) return;
+    await this.updateExecution(reservation.runId, (run) => {
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      const callBudget = releaseTaskCallBudget(
+        execution.callBudget ?? {},
+        reservation.nodeId,
+        reservation.taskId,
+        reservation.callClass,
+      );
+      return { ...execution, callBudget };
+    });
+    reservation.settled = true;
   }
 
   private async listRunAttempts(runId: string): Promise<StepAttempt[]> {
@@ -1278,9 +1380,21 @@ export class WorkflowOrchestrator {
       }
     }
     await this.syncProjectSummary(run);
+    // Shares finalizeEmergencyCeiling's draft-preservation and CAS-safe
+    // convergence with the wall-clock/repair-count ceilings above — the
+    // fail-safe machinery is reason-agnostic — but keeps its own event type so
+    // an operator (and #604's non-interference test) can tell a Call Budget
+    // stop from the emergency ceiling instead of the two being conflated in
+    // the audit trail.
+    const eventType =
+      ceiling.reason === 'technical-retry-exhausted'
+        ? 'run.technical_retry_exhausted'
+        : ceiling.reason === 'call-budget-exhausted'
+          ? 'run.call_budget_exhausted'
+          : 'run.emergency_ceiling_reached';
     await this.emit(
       projectId,
-      'run.emergency_ceiling_reached',
+      eventType,
       errorMessage(new EmergencyCeilingError(runId, ceiling.reason)),
       {
         runId,
@@ -1841,6 +1955,7 @@ export class WorkflowOrchestrator {
     pinnedArtifacts: ArtifactReference[] = [],
     routingStartIndex?: number,
     worktree?: string,
+    taskId?: string,
   ): Promise<StoredArtifact> {
     return withSpan(
       'foundry.step',
@@ -1861,6 +1976,7 @@ export class WorkflowOrchestrator {
           pinnedArtifacts,
           routingStartIndex,
           worktree,
+          taskId,
         ),
     );
   }
@@ -1876,6 +1992,7 @@ export class WorkflowOrchestrator {
     pinnedArtifacts: ArtifactReference[] = [],
     routingStartIndex?: number,
     worktree?: string,
+    taskId?: string,
   ): Promise<StoredArtifact> {
     throwIfCancelled(signal, runId);
     await this.assertExecutionMayContinue(runId, signal);
@@ -2028,7 +2145,9 @@ export class WorkflowOrchestrator {
               ...(iteration ? { iteration } : {}),
               ...(routingStartIndex !== undefined ? { routingStartIndex } : {}),
               targetedRetry: isRetryTarget && directive?.mode === 'preserve',
+              isRetryTarget,
               ...(worktree !== undefined ? { worktree } : {}),
+              ...(taskId !== undefined ? { taskId } : {}),
             })
           : await this.executeVerifyStep(
               project,
@@ -3202,7 +3321,9 @@ export class WorkflowOrchestrator {
       iteration?: number;
       routingStartIndex?: number;
       targetedRetry?: boolean;
+      isRetryTarget?: boolean;
       worktree?: string;
+      taskId?: string;
     },
   ): Promise<StoredArtifact> {
     const {
@@ -3213,7 +3334,9 @@ export class WorkflowOrchestrator {
       iteration: loopIteration,
       routingStartIndex,
       targetedRetry = false,
+      isRetryTarget = false,
       worktree,
+      taskId,
     } = options;
     const harness = await this.harness.select({
       role: step.role,
@@ -3318,127 +3441,204 @@ export class WorkflowOrchestrator {
       },
     );
 
-    // Explicit pins are already validated by the router.
-    const candidates = explicit ? [route.selected] : [route.selected, ...route.fallbacks];
-    const checkpoint = step.mutatesWorkspace
-      ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`, worktree)
-      : null;
-    if (checkpoint) {
-      await this.emit(
-        project.id,
-        'git.checkpoint',
-        `Checkpoint ${checkpoint.slice(0, 12)} created.`,
-        {
-          nodeId: step.id,
-          runId,
-          dedupeKey: `${runId}:checkpoint:${checkpoint}:${stepRun.id}`,
-          data: { checkpoint },
-        },
-      );
-    }
+    // ADR-0073 Call Budget (#604): one reservation per implement/repair task
+    // call, not per candidate — a fallback-model retry inside this same call
+    // is execution-plane routing, still the one call the task graph asked for.
+    // A retry directive gets one explicit additional unit in the same class;
+    // repeated directives therefore cannot bypass the ledger.
+    const callClass: CallBudgetClass | undefined =
+      step.taskKind === 'implementation'
+        ? 'implement'
+        : step.taskKind === 'repair'
+          ? 'repair'
+          : undefined;
+    const budgetTaskId = taskId;
+    const pendingReservations: TaskCallReservation[] = [];
+    let pendingReservation: TaskCallReservation | undefined;
 
-    let lastError: unknown;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = candidates[index];
-      if (!candidate) continue;
-      throwIfCancelled(signal, runId);
-      if (index > 0) recordStepRetry();
-      if (checkpoint && index > 0) await this.workspaces.rollback(project.id, checkpoint, worktree);
-
-      const timestamp = this.clock.now().toISOString();
-      const attempt: StepAttempt = {
-        id: this.ids.next(),
-        runId,
-        stepRunId: stepRun.id,
-        sequence: index + 1,
-        executorKind: 'agent',
-        provider: candidate.model.provider,
-        model: candidate.model.model || candidate.model.id,
-        modelId: candidate.model.id,
-        status: 'running',
-        version: 1,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        startedAt: timestamp,
-        ...(checkpoint ? { checkpoint } : {}),
-        routeDecision: route,
-        harness: {
-          version: harness.version,
-          files: harness.files.map((file) => ({ path: file.path, priority: file.priority })),
-        },
-        context: {
-          projectId: project.id,
-          workflowId: workflow.id,
-          nodeId: stepRun.nodeId,
-          stepId: step.id,
-          ...(loopIteration ? { iteration: loopIteration } : {}),
-        },
-        inputArtifacts: inputArtifacts.map(artifactReference),
-        outputArtifacts: [],
-      };
-      await this.reserveCampaignDispatch({
-        runId,
-        nodeId: stepRun.nodeId,
-        step,
-        ...(loopIteration !== undefined ? { iteration: loopIteration } : {}),
-        candidate,
-        ...(providerHealth ? { providerHealth } : {}),
-        sequence: index + 1,
-        targetedRetry,
-        signal,
-      });
-      await this.stepAttempts.create(attempt);
-
-      // A fallback candidate (index > 0) is already known to be a retry when
-      // its span starts, so it's marked force_sample here for
-      // RECORD_AND_SAMPLED at head-sampling time. An ordinary first-candidate
-      // failure instead marks force_sample reactively (see
-      // executeAgentAttempt's catch) once it's known to fail — that now
-      // works too: KeepErrorsSampler records every span, so the reactive
-      // write isn't a no-op, and TailSpanProcessor's export-time predicate
-      // picks it up at onEnd regardless of the head-sampling outcome.
-      const outcome = await withSpan(
-        'foundry.attempt',
-        {
-          'foundry.attempt.id': attempt.id,
-          'foundry.attempt.sequence': attempt.sequence,
-          'foundry.model.id': candidate.model.id,
-          'foundry.provider': candidate.model.provider,
-          ...(index > 0 ? { 'foundry.force_sample': true } : {}),
-        },
-        (span) =>
-          this.executeAgentAttempt(
-            project,
-            workflow,
-            step,
+    try {
+      // Explicit pins are already validated by the router.
+      const candidates = explicit ? [route.selected] : [route.selected, ...route.fallbacks];
+      const checkpoint = step.mutatesWorkspace
+        ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`, worktree)
+        : null;
+      if (checkpoint) {
+        await this.emit(
+          project.id,
+          'git.checkpoint',
+          `Checkpoint ${checkpoint.slice(0, 12)} created.`,
+          {
+            nodeId: step.id,
             runId,
-            stepRun,
-            signal,
-            checkpoint,
-            candidate,
-            candidates,
-            index,
-            attempt,
-            route,
-            campaign,
-            harness,
-            systemPrompt,
-            outputSchema,
-            inputArtifacts,
-            idempotencyKey,
-            profile,
-            span,
-            worktree,
-          ),
-      );
-      if (outcome.status === 'succeeded') return outcome.artifact;
-      lastError = outcome.error;
-    }
+            dedupeKey: `${runId}:checkpoint:${checkpoint}:${stepRun.id}`,
+            data: { checkpoint },
+          },
+        );
+      }
 
-    if (checkpoint) await this.workspaces.rollback(project.id, checkpoint, worktree);
-    throw lastError instanceof Error
-      ? lastError
-      : new ExecutionError(`All candidates failed for step ${step.id}`);
+      let lastError: unknown;
+      // Counts every physical attempt in this method — every candidate AND
+      // every Technical Retry replay — so `StepAttempt.sequence` is strictly
+      // increasing across the whole call.
+      let attemptSequence = 0;
+      let budgetCallReserved = false;
+      let technicalRetryReservationNeeded = false;
+      for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        if (!candidate) continue;
+        // A provider/executor failure (ADR-0073's Technical Retry) gets one
+        // same-candidate replay after a checkpoint restore before this loop
+        // falls through to its own fallback-candidate advance below.
+        let technicalRetryUsed = false;
+        for (;;) {
+          throwIfCancelled(signal, runId);
+          attemptSequence += 1;
+          const isFallbackCandidate = index > 0;
+          if (isFallbackCandidate) recordStepRetry();
+          if (checkpoint && (isFallbackCandidate || technicalRetryUsed)) {
+            await this.workspaces.rollback(project.id, checkpoint, worktree);
+          }
+
+          const timestamp = this.clock.now().toISOString();
+          const attempt: StepAttempt = {
+            id: this.ids.next(),
+            runId,
+            stepRunId: stepRun.id,
+            sequence: attemptSequence,
+            executorKind: 'agent',
+            provider: candidate.model.provider,
+            model: candidate.model.model || candidate.model.id,
+            modelId: candidate.model.id,
+            status: 'running',
+            version: 1,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            startedAt: timestamp,
+            ...(checkpoint ? { checkpoint } : {}),
+            routeDecision: route,
+            harness: {
+              version: harness.version,
+              files: harness.files.map((file) => ({ path: file.path, priority: file.priority })),
+            },
+            context: {
+              projectId: project.id,
+              workflowId: workflow.id,
+              nodeId: stepRun.nodeId,
+              stepId: step.id,
+              ...(loopIteration ? { iteration: loopIteration } : {}),
+            },
+            inputArtifacts: inputArtifacts.map(artifactReference),
+            outputArtifacts: [],
+          };
+          await this.reserveCampaignDispatch({
+            runId,
+            nodeId: stepRun.nodeId,
+            step,
+            ...(loopIteration !== undefined ? { iteration: loopIteration } : {}),
+            candidate,
+            ...(providerHealth ? { providerHealth } : {}),
+            sequence: index + 1,
+            targetedRetry,
+            signal,
+          });
+          if (callClass && budgetTaskId !== undefined && !budgetCallReserved) {
+            pendingReservation = await this.reserveTaskCall(
+              runId,
+              stepRun.nodeId,
+              budgetTaskId,
+              callClass,
+              step.maxAttempts + (isRetryTarget ? 1 : 0),
+              signal,
+            );
+            pendingReservations.push(pendingReservation);
+            budgetCallReserved = true;
+          }
+          if (technicalRetryReservationNeeded && callClass && budgetTaskId !== undefined) {
+            pendingReservation = await this.reserveTaskCall(
+              runId,
+              stepRun.nodeId,
+              budgetTaskId,
+              'technical-retry',
+              1,
+              signal,
+            );
+            pendingReservations.push(pendingReservation);
+            technicalRetryReservationNeeded = false;
+          }
+          await this.stepAttempts.create(attempt);
+
+          // A fallback candidate or a Technical Retry replay (attemptSequence >
+          // 1) is already known to be a retry when its span starts, so it's
+          // marked force_sample here for RECORD_AND_SAMPLED at head-sampling
+          // time. An ordinary first-attempt failure instead marks force_sample
+          // reactively (see executeAgentAttempt's catch) once it's known to
+          // fail — that now works too: KeepErrorsSampler records every span, so
+          // the reactive write isn't a no-op, and TailSpanProcessor's
+          // export-time predicate picks it up at onEnd regardless of the
+          // head-sampling outcome.
+          const outcome = await withSpan(
+            'foundry.attempt',
+            {
+              'foundry.attempt.id': attempt.id,
+              'foundry.attempt.sequence': attempt.sequence,
+              'foundry.model.id': candidate.model.id,
+              'foundry.provider': candidate.model.provider,
+              ...(attemptSequence > 1 ? { 'foundry.force_sample': true } : {}),
+            },
+            (span) =>
+              this.executeAgentAttempt(
+                project,
+                workflow,
+                step,
+                runId,
+                stepRun,
+                signal,
+                checkpoint,
+                candidate,
+                candidates,
+                index,
+                attempt,
+                route,
+                campaign,
+                harness,
+                systemPrompt,
+                outputSchema,
+                inputArtifacts,
+                idempotencyKey,
+                profile,
+                span,
+                worktree,
+                pendingReservation,
+              ),
+          );
+          if (outcome.status === 'succeeded') return outcome.artifact;
+          lastError = outcome.error;
+          if (outcome.error instanceof ExecutorFailureError && !technicalRetryUsed) {
+            technicalRetryUsed = true;
+            if (callClass && budgetTaskId !== undefined) {
+              technicalRetryReservationNeeded = true;
+            }
+            continue;
+          }
+          if (outcome.error instanceof ExecutorFailureError) {
+            // Second same-model technical failure: ADR-0073 requires this to
+            // pause for operator direction rather than silently advance to a
+            // different (possibly premium) model.
+            await this.reachCeiling(runId, 'technical-retry-exhausted', signal);
+          }
+          break;
+        }
+      }
+
+      if (checkpoint) await this.workspaces.rollback(project.id, checkpoint, worktree);
+      throw lastError instanceof Error
+        ? lastError
+        : new ExecutionError(`All candidates failed for step ${step.id}`);
+    } finally {
+      for (const reservation of pendingReservations) {
+        if (!reservation.settled) await this.releaseTaskCall(reservation);
+      }
+    }
   }
 
   private async executeAgentAttempt(
@@ -3463,6 +3663,7 @@ export class WorkflowOrchestrator {
     profile: TaskProfile,
     span: Span,
     worktree?: string,
+    reservation?: TaskCallReservation,
   ): Promise<
     { status: 'succeeded'; artifact: StoredArtifact } | { status: 'failed'; error: unknown }
   > {
@@ -3522,6 +3723,7 @@ export class WorkflowOrchestrator {
         workspaceRef,
         systemPrompt,
         worktree,
+        reservation,
       );
       if (result.usage || result.executedModel) {
         // Persist provider usage and executed identity while the attempt is
@@ -3973,6 +4175,7 @@ export class WorkflowOrchestrator {
     workspaceRef: string,
     systemPrompt: string | undefined,
     worktree?: string,
+    reservation?: TaskCallReservation,
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
@@ -3980,6 +4183,7 @@ export class WorkflowOrchestrator {
       dedupeKey: `${runId}:attempt:${attemptId}:started`,
       data: { modelId: candidate.model.id, provider: candidate.model.provider, attemptId },
     });
+    if (reservation) await this.confirmTaskCall(reservation, signal);
     const executionResult = await this.executionPlane.submit(
       {
         protocolVersion: EXECUTION_PROTOCOL_VERSION,
@@ -4037,7 +4241,12 @@ export class WorkflowOrchestrator {
     }
     if (executionResult.state === 'failed' || !executionResult.agent) {
       const detail = executionResult.error;
-      const ErrorType = detail?.kind === 'auth' ? ProviderAuthenticationError : ExecutionError;
+      // Auth stays its own environment-fault class (metrics already special-case
+      // it); everything else here is a provider/executor call that never
+      // reached a completed response, so it is ADR-0073's Technical Retry
+      // class rather than the model producing output a contract later rejects.
+      const ErrorType =
+        detail?.kind === 'auth' ? ProviderAuthenticationError : ExecutorFailureError;
       throw new ErrorType(detail?.message ?? 'Execution plane reported a failure', {
         ...(detail?.exitCode !== undefined ? { exitCode: detail.exitCode } : {}),
         ...(detail?.stdout !== undefined ? { stdout: detail.stdout } : {}),

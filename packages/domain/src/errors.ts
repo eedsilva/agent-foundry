@@ -92,6 +92,18 @@ export class ProviderAuthenticationError extends ExecutionError {
 }
 
 /**
+ * The execution plane reported `state: 'failed'` for a reason other than
+ * authentication: the provider/executor call itself did not complete (crash,
+ * non-zero exit, transport error), as opposed to the model completing and
+ * producing output that later fails schema or contract validation. ADR-0073
+ * ties the Technical Retry to exactly this class — "a provider or executor
+ * failure" — so the distinction has to survive as a type, not a message match.
+ */
+export class ExecutorFailureError extends ExecutionError {
+  override readonly name = 'ExecutorFailureError';
+}
+
+/**
  * A browser check report named an unreachable preview (#526/#528): the
  * harness never reached the app, so this is an environment fault, not a
  * failed assertion the repair loop can fix. The subclass itself is the
@@ -161,9 +173,32 @@ export class EmergencyCeilingError extends Error {
 
   constructor(
     readonly runId: string,
-    readonly reason: 'active-time' | 'consecutive-repairs',
+    readonly reason:
+      'active-time' | 'consecutive-repairs' | 'technical-retry-exhausted' | 'call-budget-exhausted',
   ) {
     super(`Workflow run ${runId} reached the ${reason} emergency ceiling.`);
+  }
+}
+
+/**
+ * A `for-each-task` implement or repair call was denied because the task
+ * already used every unit of its ADR-0073 Call Budget (#604) — `reason` is
+ * always `'call-budget-exhausted'` at the `EmergencyCeilingError` this
+ * converges into. Distinct from `QualityGateError`: a real gate failure
+ * (lint/build/test) must never surface as a budget exhaustion, so only this
+ * type — thrown by the ledger reservation itself — may trigger that ceiling.
+ */
+export class CallBudgetExhaustedError extends Error {
+  override readonly name = 'CallBudgetExhaustedError';
+  readonly code = 'CALL_BUDGET_EXHAUSTED';
+
+  constructor(
+    readonly runId: string,
+    readonly nodeId: string,
+    readonly taskId: string,
+    readonly callClass: 'implement' | 'repair' | 'technical-retry',
+  ) {
+    super(`Task ${nodeId}/${taskId} exhausted its ${callClass} call budget for run ${runId}.`);
   }
 }
 
@@ -312,6 +347,7 @@ export function isRunControlFlowError(error: unknown): boolean {
     error instanceof ApprovalRequiredError ||
     error instanceof ApprovalRejectedError ||
     error instanceof EmergencyCeilingError ||
+    error instanceof CallBudgetExhaustedError ||
     error instanceof LeaseLostError ||
     error instanceof PolicyViolationError
   );

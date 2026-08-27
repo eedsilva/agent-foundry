@@ -180,21 +180,24 @@ class ScriptedUiQualityJudgeExecutor implements AgentExecutor {
   }
 }
 
-// Fails the first candidate of the per-task `implement.<taskId>` step, so the
-// implementation the deterministic gate grades was produced by the fallback
-// rather than by the model the router first selected.
+// Fails the first call of the per-task `implement.<taskId>` step, so the
+// technical-retry path must recover before the deterministic gate grades it.
 //
 // The plan is narrowed to a single task on purpose: the router re-ranks after
 // a failure, so with two tasks the model that failed the first would be
-// *selected* for the second and legitimately execute it — which would make
-// "the model that only failed was never graded" untestable rather than untrue.
+// *selected* for the second and legitimately execute it.
 class FailFirstImplementExecutor implements AgentExecutor {
   readonly provider = 'mock';
   private readonly failed = new Set<string>();
   private readonly delegate = new BrowserPlanExecutor();
 
+  constructor(private readonly failEveryImplementation = false) {}
+
   async execute(request: AgentExecutionRequest): Promise<AgentExecutionResult> {
-    if (request.stepId.startsWith('implement.') && !this.failed.has(request.stepId)) {
+    if (
+      request.stepId.startsWith('implement.') &&
+      (this.failEveryImplementation || !this.failed.has(request.stepId))
+    ) {
       this.failed.add(request.stepId);
       throw new Error('synthetic first-candidate failure');
     }
@@ -225,17 +228,23 @@ class AlwaysFailExecutor implements AgentExecutor {
 class GatedFailExecutor implements AgentExecutor {
   readonly provider = 'mock';
   private start!: () => void;
+  private retryStart!: () => void;
   private failExecution!: () => void;
+  private executions = 0;
   readonly started = new Promise<void>((resolvePromise) => {
     this.start = resolvePromise;
   });
-  private readonly failure = new Promise<AgentExecutionResult>((_resolve, reject) => {
-    this.failExecution = () => reject(new Error('synthetic provider failure'));
+  readonly retryStarted = new Promise<void>((resolvePromise) => {
+    this.retryStart = resolvePromise;
   });
 
   execute(): Promise<AgentExecutionResult> {
-    this.start();
-    return this.failure;
+    if (this.executions === 0) this.start();
+    if (this.executions === 1) this.retryStart();
+    this.executions += 1;
+    return new Promise((_resolve, reject) => {
+      this.failExecution = () => reject(new Error('synthetic provider failure'));
+    });
   }
 
   fail(): void {
@@ -522,7 +531,9 @@ describe('runtime composition', () => {
       expect(treePids.every(isAlive)).toBe(true);
 
       executor.fail();
-      await expect(running).rejects.toThrow('synthetic provider failure');
+      await executor.retryStarted;
+      executor.fail();
+      await expect(running).rejects.toThrow('technical-retry-exhausted');
 
       const record = await runtime.previewSessions.get(active.id);
       if (!record?.session.process?.port) throw new Error('Expected persisted preview process');
@@ -1024,7 +1035,7 @@ describe('runtime composition', () => {
     ).toBe(false);
   }, 30_000);
 
-  it('blocks a failed Luna implementation instead of escalating to a fallback', async () => {
+  it('recovers a failed Luna implementation with a same-model technical retry', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-fallback-'));
     temporaryDirectories.push(dataDir);
     const rootDir = resolve(import.meta.dirname, '../../..');
@@ -1054,7 +1065,7 @@ describe('runtime composition', () => {
     await approveAllGates(runtime, runId);
 
     const detail = await runtime.projectService.get(project.id);
-    expect(detail.project.status).toBe('failed');
+    expect(detail.project.status).toBe('completed');
     const implementStep = (await runtime.stepRuns.list(project.currentRunId))
       .filter((step) => step.stepId.startsWith('implement.'))
       .at(-1);
@@ -1063,14 +1074,14 @@ describe('runtime composition', () => {
       project.currentRunId,
       implementStep.id,
     );
-    expect(implementAttempts.map((attempt) => attempt.status)).toEqual(['failed']);
-    expect(detail.project.error).toBe('synthetic first-candidate failure');
+    expect(implementAttempts.map((attempt) => attempt.status)).toEqual(['failed', 'succeeded']);
+    expect(new Set(implementAttempts.map((attempt) => attempt.modelId))).toHaveLength(1);
   }, 30_000);
 
   // #658: the nightly pipeline-regression gate spent 18 runs reporting only
-  // `expected 'failed' to be 'completed'`. This pins the replacement message —
-  // if the diagnostic stops naming the step or the error, this goes red before
-  // the nightly does.
+  // `expected 'failed' to be 'completed'`. Keep the implementation fixture in
+  // the two-failure technical-retry path so this still pins the failing step
+  // and its original executor error.
   it('names the failing step and its error when a run does not complete', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-run-diagnostic-'));
     temporaryDirectories.push(dataDir);
@@ -1085,7 +1096,7 @@ describe('runtime composition', () => {
     });
     configureMockBrowserRuntime(runtime);
     Object.defineProperty(runtime.executors, 'executor', {
-      value: new FailFirstImplementExecutor(),
+      value: new FailFirstImplementExecutor(true),
     });
 
     const project = await runtime.projectService.create({
@@ -1148,7 +1159,7 @@ describe('runtime composition', () => {
       status: 'failed',
       currentRunId: project.currentRunId,
       currentNodeId: steps[0]?.nodeId,
-      error: 'synthetic provider failure',
+      error: expect.stringContaining('technical-retry-exhausted'),
     });
     expect(attempts.at(-1)?.outputArtifacts).toHaveLength(1);
   }, 30_000);

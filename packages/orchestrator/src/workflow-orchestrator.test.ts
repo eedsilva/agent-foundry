@@ -17,6 +17,7 @@ import {
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
+  EmergencyCeilingError,
   MigrationApprovalRequiredError,
   SystemClock,
   type Clock,
@@ -2405,7 +2406,11 @@ describe('worktree-label threading (#520 task 4)', () => {
         undefined,
         'task-a',
       ),
-    ).rejects.toThrow('agent exploded');
+      // `fail-always` is ADR-0073's Technical Retry (#604): one same-candidate
+      // replay before this converges to the technical-retry-exhausted
+      // ceiling, rather than the bare `agent exploded` throw a plain
+      // candidate-ladder exhaustion would have produced.
+    ).rejects.toBeInstanceOf(EmergencyCeilingError);
 
     // The step's failure rollback undoes work that only exists in the
     // worktree; aimed at the primary checkout it would reset unrelated state.

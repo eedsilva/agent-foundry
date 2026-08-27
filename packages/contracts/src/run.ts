@@ -150,6 +150,28 @@ export const RunRetryDirectiveSchema = z
   .strict();
 export type RunRetryDirective = z.infer<typeof RunRetryDirectiveSchema>;
 
+// ADR-0073 Call Budget, per running task (#604). Counts task-level attempts —
+// one `for-each-task` implement/repair StepRun per attempt — not raw
+// StepAttempts: a deterministic verify/build/lint/test step never shares this
+// stepId prefix. Reservations are held until the provider dispatch begins;
+// Technical Retry has its own one-call class.
+export const TaskCallBudgetSchema = z
+  .object({
+    nodeId: PathSegmentSchema,
+    taskId: PathSegmentSchema,
+    implementUsed: z.number().int().nonnegative(),
+    implementReserved: z.number().int().nonnegative().optional(),
+    implementLimit: z.number().int().positive(),
+    repairUsed: z.number().int().nonnegative(),
+    repairReserved: z.number().int().nonnegative().optional(),
+    repairLimit: z.number().int().nonnegative(),
+    technicalRetryUsed: z.number().int().nonnegative().optional(),
+    technicalRetryReserved: z.number().int().nonnegative().optional(),
+    technicalRetryLimit: z.number().int().positive().optional(),
+  })
+  .strict();
+export type TaskCallBudget = z.infer<typeof TaskCallBudgetSchema>;
+
 export const RunExecutionStateSchema = z
   .object({
     activeElapsedMs: z.number().int().nonnegative(),
@@ -167,7 +189,12 @@ export const RunExecutionStateSchema = z
     lastVerifiedCheckpoint: z.string().min(1).optional(),
     ceiling: z
       .object({
-        reason: z.enum(['active-time', 'consecutive-repairs']),
+        reason: z.enum([
+          'active-time',
+          'consecutive-repairs',
+          'technical-retry-exhausted',
+          'call-budget-exhausted',
+        ]),
         reachedAt: z.string().datetime(),
         draftBranch: z.string().min(1).optional(),
         draftCommit: z.string().min(1).optional(),
@@ -177,6 +204,8 @@ export const RunExecutionStateSchema = z
       .strict()
       .optional(),
     campaign: ValidationCampaignExecutionSchema.optional(),
+    /** Per-task ADR-0073 Call Budget ledger (#604), keyed by `${nodeId}:${taskId}`. */
+    callBudget: z.record(z.string(), TaskCallBudgetSchema).optional(),
   })
   .strict();
 export type RunExecutionState = z.infer<typeof RunExecutionStateSchema>;

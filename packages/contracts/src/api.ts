@@ -30,6 +30,7 @@ import {
   ApprovalRequestSchema,
   StepAttemptSchema,
   StepRunSchema,
+  TaskCallBudgetSchema,
   WorkflowRunSchema,
 } from './run.js';
 import { ChangeRequestSchema } from './change-request.js';
@@ -213,6 +214,7 @@ export const RunDetailResponseSchema = z.object({
       attempts: z.array(StepAttemptSchema),
     }),
   ),
+  budget: z.array(TaskCallBudgetSchema),
 });
 export type RunDetailResponse = z.infer<typeof RunDetailResponseSchema>;
 

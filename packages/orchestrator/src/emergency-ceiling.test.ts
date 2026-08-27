@@ -513,39 +513,52 @@ describe('emergency ceiling accounting', () => {
     });
   });
 
-  it.each(['agent', 'verifier'] as const)(
-    'classifies %s failure below four hours normally and at four hours as a ceiling',
-    async (kind) => {
-      for (const [elapsed, ceilings] of [
-        [14_399_999, false],
-        [14_400_000, true],
-      ] as const) {
-        const clock = new TestClock();
-        const stores = makeStores(clock);
-        const failure = (): never => {
-          clock.advance(elapsed);
-          throw new Error(`${kind} failed`);
-        };
-        const harness = makeHarness(
-          kind === 'agent' ? { work: { kind: 'fail-always', error: failure } } : {},
-          stores,
-          {
-            workflow: kind === 'agent' ? ONE_AGENT : VERIFY_ONLY,
-            ...(kind === 'verifier' ? { verification: failure } : {}),
-          },
-        );
-        await seedRun(harness);
+  it('classifies verifier failure below four hours normally and at four hours as a ceiling', async () => {
+    for (const [elapsed, ceilings] of [
+      [14_399_999, false],
+      [14_400_000, true],
+    ] as const) {
+      const clock = new TestClock();
+      const stores = makeStores(clock);
+      const failure = (): never => {
+        clock.advance(elapsed);
+        throw new Error('verifier failed');
+      };
+      const harness = makeHarness({}, stores, { workflow: VERIFY_ONLY, verification: failure });
+      await seedRun(harness);
 
-        const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
-        if (ceilings) await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
-        else await expect(running).rejects.toThrow(`${kind} failed`);
-        expect((await stores.runs.get('run-1'))?.execution?.ceiling?.reason).toBe(
-          ceilings ? 'active-time' : undefined,
-        );
-        expect((await stores.runs.get('run-1'))?.status).toBe('failed');
-      }
-    },
-  );
+      const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+      if (ceilings) await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+      else await expect(running).rejects.toThrow('verifier failed');
+      expect((await stores.runs.get('run-1'))?.execution?.ceiling?.reason).toBe(
+        ceilings ? 'active-time' : undefined,
+      );
+      expect((await stores.runs.get('run-1'))?.status).toBe('failed');
+    }
+  });
+
+  // A verifier failure is a plain `ExecutionError` and still reaches the
+  // classic active-time boundary above. An agent step's execution-plane
+  // failure is ADR-0073's Technical Retry (#604) instead: one same-candidate
+  // replay, then an unconditional pause on the second failure — independent
+  // of the active-time clock, since a single always-failing candidate never
+  // gets far enough into elapsed time to race it here.
+  it('converges a fail-always agent step to the technical-retry-exhausted ceiling', async () => {
+    const stores = makeStores();
+    const harness = makeHarness(
+      { work: { kind: 'fail-always', error: () => new Error('agent failed') } },
+      stores,
+      { workflow: ONE_AGENT },
+    );
+    await seedRun(harness);
+
+    const running = harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    await expect(running).rejects.toBeInstanceOf(EmergencyCeilingError);
+    expect((await stores.runs.get('run-1'))?.execution?.ceiling?.reason).toBe(
+      'technical-retry-exhausted',
+    );
+    expect((await stores.runs.get('run-1'))?.status).toBe('failed');
+  });
 
   it.each(['paused', 'awaiting_approval'] as const)(
     'does not count persisted %s wait across orchestrator restart',
