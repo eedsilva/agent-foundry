@@ -108,8 +108,11 @@ async function removeGeneratedUnit(
   renameFile = rename,
 ) {
   const source = join(projectDirectory, unit.name);
-  if (!(await matchesGeneratedUnit(source, unit.files))) return;
   const tombstone = join(projectDirectory, `.${unit.name}.rollback-${randomUUID()}`);
+  await renameFile(source, tombstone).catch((error) => {
+    if (isNotFound(error)) return;
+    throw error;
+  });
   const tombstoneExists = await lstat(tombstone).then(
     () => true,
     (error) => {
@@ -117,10 +120,7 @@ async function removeGeneratedUnit(
       throw error;
     },
   );
-  if (tombstoneExists) {
-    throw new ValidationError(`Generated rollback tombstone already exists for ${unit.name}.`);
-  }
-  await renameFile(source, tombstone);
+  if (!tombstoneExists) return;
   if (await matchesGeneratedUnit(tombstone, unit.files)) {
     await rm(tombstone, { recursive: true, force: true });
     return;

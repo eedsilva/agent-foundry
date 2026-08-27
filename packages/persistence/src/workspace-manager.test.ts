@@ -125,7 +125,7 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     );
   });
 
-  it('preserves an external edit made before pre-persistence rollback', async () => {
+  it('preserves the reservation when rollback finds an external edit', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
     const selected = join(parent, 'generated-app');
@@ -134,11 +134,16 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     await workspaces.reserveProjectDirectory('project-1', selected);
     await workspaces.writePrd('project-1', 'Generated PRD.');
     await writeFile(join(selected, 'PRD.md'), 'Operator edit.\n');
-    await workspaces.releaseProjectDirectory('project-1', [
-      { path: 'PRD.md', content: 'Generated PRD.\n' },
-    ]);
+    await expect(
+      workspaces.releaseProjectDirectory('project-1', [
+        { path: 'PRD.md', content: 'Generated PRD.\n' },
+      ]),
+    ).rejects.toThrow(/changed while removing PRD.md/i);
 
     await expect(readFile(join(selected, 'PRD.md'), 'utf8')).resolves.toBe('Operator edit.\n');
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
   });
 
   it('does not follow an intermediate symlink while rolling back generated files', async () => {
@@ -157,9 +162,12 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
 
     await expect(
       workspaces.releaseProjectDirectory('project-1', [{ path: 'src/app.ts', content: generated }]),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(/changed while removing src/i);
 
     await expect(readFile(join(external, 'app.ts'), 'utf8')).resolves.toBe(generated);
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
   });
 
   it('restores the source when a symlink replaces a generated directory before rename', async () => {
@@ -214,7 +222,7 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     await expect(readFile(join(source, 'operator.txt'), 'utf8')).resolves.toBe('keep\n');
   });
 
-  it('releases the marker when an external edit replaces a generated file with a directory', async () => {
+  it('preserves the reservation when an external edit replaces a generated file with a directory', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
     const selected = join(parent, 'generated-app');
@@ -226,12 +234,15 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     ]);
     await rm(join(selected, 'src', 'app.ts'));
     await mkdir(join(selected, 'src', 'app.ts'));
-    await workspaces.releaseProjectDirectory('project-1', [
-      { path: 'src/app.ts', content: 'export const app = true;\n' },
-    ]);
+    await expect(
+      workspaces.releaseProjectDirectory('project-1', [
+        { path: 'src/app.ts', content: 'export const app = true;\n' },
+      ]),
+    ).rejects.toThrow(/changed while removing src/i);
 
+    expect((await lstat(join(selected, 'src', 'app.ts'))).isDirectory()).toBe(true);
     await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
-      /new or empty/i,
+      /already reserved/i,
     );
   });
 
