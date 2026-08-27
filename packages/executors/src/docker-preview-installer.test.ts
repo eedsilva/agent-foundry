@@ -154,7 +154,56 @@ describe('DockerPreviewInstaller', () => {
       ok: false,
       exitCode: -1,
       stderr: 'install timed out',
+      // The sandbox failed, not the install: nothing here says anything about
+      // the generated app's dependencies (#659).
+      infrastructure: true,
     });
     expect(runner.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('marks an unreachable sandbox as infrastructure without destroying one (#659)', async () => {
+    const runner = fakeRunner();
+    runner.create = vi.fn(async () => {
+      throw new Error('docker create failed: failed to connect to the docker API');
+    });
+    const installer = new DockerPreviewInstaller({ runner });
+
+    const outcome = await installer.install({
+      plan: {
+        packageManager: 'npm',
+        install: { ok: true, command: 'npm', args: ['ci'] },
+        build: { ok: false, reason: 'not needed' },
+        dev: { ok: false, reason: 'not needed' },
+        detectedAt: '2026-07-22T12:00:00.000Z',
+      },
+      workspacePath: '/host/project',
+    });
+
+    // Before #659 this threw out of install(), and the caller had only the
+    // message to go on.
+    expect(outcome).toMatchObject({ ok: false, infrastructure: true });
+    expect(outcome.stderr).toContain('failed to connect to the docker API');
+    expect(runner.destroy).not.toHaveBeenCalled();
+  });
+
+  it('leaves an install the generated app broke unmarked (#659)', async () => {
+    const runner = fakeRunner(1);
+    const installer = new DockerPreviewInstaller({ runner });
+
+    const outcome = await installer.install({
+      plan: {
+        packageManager: 'npm',
+        install: { ok: true, command: 'npm', args: ['ci'] },
+        build: { ok: false, reason: 'not needed' },
+        dev: { ok: false, reason: 'not needed' },
+        detectedAt: '2026-07-22T12:00:00.000Z',
+      },
+      workspacePath: '/host/project',
+    });
+
+    // The sandbox ran the install and it exited non-zero: that is a product
+    // defect, and marking it infrastructure would hide it.
+    expect(outcome).toMatchObject({ ok: false, exitCode: 1 });
+    expect(outcome.infrastructure).toBeUndefined();
   });
 });

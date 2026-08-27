@@ -1244,6 +1244,15 @@ function automaticFailureClass(
   run: WorkflowRun,
   attempts: readonly StepAttempt[],
 ): ValidationEvidenceFailureClass {
+  // Deliberately name and code only, never `message` (#659). Matching the
+  // free text would turn any product failure that quotes 'docker' into an
+  // environment fault, and the default here is the expensive direction to be
+  // wrong in: an unclassified failure is published as a defect in the
+  // generated app. The contract is the other way round — an error that
+  // originates in the environment must carry that in its identity, so it
+  // survives `runError` into this function. #659 fixed the one path that
+  // dropped it: a preview that never came up used to reach here as a bare
+  // `Error` whose only clue was the message.
   const errorText = `${run.error?.name ?? ''} ${run.error?.code ?? ''}`.toLowerCase();
   // 'infrastructure' covers BrowserInfrastructureError (#526, #528): the
   // harness never reached the preview, so this is an environment fault, not

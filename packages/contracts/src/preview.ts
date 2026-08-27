@@ -818,3 +818,18 @@ export const PreviewSelectionResultSchema = z
     }
   });
 export type PreviewSelectionResult = z.infer<typeof PreviewSelectionResultSchema>;
+
+/**
+ * Marks a preview failure that originates in the environment the preview runs
+ * in — an unreachable container daemon, a package manager missing from the
+ * host — rather than in the generated app.
+ *
+ * A consumer cannot derive this from the other `PREVIEW_*` codes: both
+ * `PREVIEW_INSTALL_FAILED` and `PREVIEW_START_FAILED` are emitted for a
+ * product cause (the app's dependencies, the app's dev server) and for an
+ * environment cause. So the marker is set where the cause is known — the
+ * installer and the runner — and read as an identity downstream, instead of
+ * classifying by matching prose (#659).
+ */
+export const PREVIEW_INFRASTRUCTURE_ERROR_CODE = 'PREVIEW_INFRASTRUCTURE_UNAVAILABLE';
+export const PREVIEW_INFRASTRUCTURE_ERROR_NAME = 'PreviewInfrastructureError';

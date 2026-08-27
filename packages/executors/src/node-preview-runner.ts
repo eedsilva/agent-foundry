@@ -1,6 +1,10 @@
 import { execa } from 'execa';
 import { get } from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
+import {
+  PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+  PREVIEW_INFRASTRUCTURE_ERROR_NAME,
+} from '@agent-foundry/contracts';
 import type {
   PreviewHealth,
   PreviewLogEntry,
@@ -141,11 +145,21 @@ export class NodePreviewRunner implements PreviewRunner {
     if (outcome.ok) return withEvidence;
     const stderrTail = tailBytes(outcome.stderr, EVIDENCE_MAX_OUTPUT_BYTES);
     return transitionPreviewSession(withEvidence, 'failed', this.clock.now(), {
-      error: {
-        name: 'PreviewInstallError',
-        code: 'PREVIEW_INSTALL_FAILED',
-        message: stderrTail || 'Install failed.',
-      },
+      // An install the environment prevented and an install the generated
+      // app's own dependencies broke are the same failure from here; the
+      // installer is the only layer that knows which, so it says so and this
+      // carries the distinction into the session's identity (#659).
+      error: outcome.infrastructure
+        ? {
+            name: PREVIEW_INFRASTRUCTURE_ERROR_NAME,
+            code: PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+            message: stderrTail || 'Preview install could not run.',
+          }
+        : {
+            name: 'PreviewInstallError',
+            code: 'PREVIEW_INSTALL_FAILED',
+            message: stderrTail || 'Install failed.',
+          },
       failureEvidence: {
         command: plan.install.ok
           ? { command: plan.install.command, args: plan.install.args }
@@ -271,12 +285,26 @@ export class NodePreviewRunner implements PreviewRunner {
     }
     if (attempt.crashedImmediately) {
       await this.killTracked(session.id);
+      // A dev server that became a process and then died — whatever killed it,
+      // its own exit or a signal — is the generated app crashing, which is a
+      // product defect. A command that never became a process at all is the
+      // package manager missing from this host, and that is the environment's
+      // fault, not the app's (#659). The discriminator is whether the spawn
+      // produced a pid; an exit code cannot serve, because a real process
+      // killed by SIGTERM or SIGKILL reports none either.
+      const neverStarted = !attempt.everSpawned;
       return transitionPreviewSession(session, 'failed', this.clock.now(), {
-        error: {
-          name: 'PreviewStartError',
-          code: 'PREVIEW_START_FAILED',
-          message: 'Dev server exited immediately twice.',
-        },
+        error: neverStarted
+          ? {
+              name: PREVIEW_INFRASTRUCTURE_ERROR_NAME,
+              code: PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+              message: 'Dev server never started twice.',
+            }
+          : {
+              name: 'PreviewStartError',
+              code: 'PREVIEW_START_FAILED',
+              message: 'Dev server exited immediately twice.',
+            },
         failureEvidence: {
           command: { command: dev.command, args: dev.args },
           ...(attempt.exitCode !== undefined ? { exitCode: attempt.exitCode } : {}),
@@ -300,6 +328,8 @@ export class NodePreviewRunner implements PreviewRunner {
   ): Promise<{
     port: number;
     pid: number | undefined;
+    /** The spawn produced a process, whether or not it is still alive. */
+    everSpawned: boolean;
     crashedImmediately: boolean;
     exitCode?: number;
     stdout: string;
@@ -423,6 +453,7 @@ export class NodePreviewRunner implements PreviewRunner {
         return {
           port: reservedPort,
           pid: undefined,
+          everSpawned: child.pid !== undefined,
           crashedImmediately: true,
           ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}),
           ...entry.output,
@@ -431,7 +462,13 @@ export class NodePreviewRunner implements PreviewRunner {
       const candidate = detectedPort ?? reservedPort;
       if (await httpProbe(candidate, this.healthPath)) {
         entry.port = candidate;
-        return { port: candidate, pid: child.pid, crashedImmediately: false, ...entry.output };
+        return {
+          port: candidate,
+          pid: child.pid,
+          everSpawned: true,
+          crashedImmediately: false,
+          ...entry.output,
+        };
       }
       await new Promise((resolveTick) => setTimeout(resolveTick, POLL_INTERVAL_MS));
     }
@@ -439,6 +476,7 @@ export class NodePreviewRunner implements PreviewRunner {
     return {
       port: detectedPort ?? reservedPort,
       pid: child.pid,
+      everSpawned: child.pid !== undefined,
       crashedImmediately: entry.exited,
       ...(entry.exitCode !== undefined ? { exitCode: entry.exitCode } : {}),
       ...entry.output,

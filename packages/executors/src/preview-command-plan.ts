@@ -106,6 +106,13 @@ export interface PreviewInstallOutcome {
   stdout: string;
   stderr: string;
   versions?: PreviewToolVersions;
+  /**
+   * The install never ran: the container daemon was unreachable, or the
+   * package manager the plan pins is not on this host. Set here, where the
+   * cause is known, because a failed install alone does not say whether the
+   * environment or the generated app is at fault (#659).
+   */
+  infrastructure?: boolean;
 }
 
 export interface PreviewInstaller {
@@ -126,27 +133,42 @@ export async function runReproducibleInstall(
     return { ok: false, exitCode: 1, stdout: '', stderr: plan.install.reason };
   }
   try {
-    const result = await execa(plan.install.command, plan.install.args, {
+    const subprocess = execa(plan.install.command, plan.install.args, {
       cwd,
       timeout: options.timeoutMs,
       maxBuffer: options.maxOutputBytes,
       reject: false,
     });
+    const result = await subprocess;
+    // `reject: false` resolves even when the command never ran. The pid is
+    // what says which happened: it exists as soon as the process does, and
+    // never for a package manager missing from this host — an environment
+    // fault, not a workspace the install rejected (#659). A missing exit code
+    // cannot serve, because an install killed by a signal reports none either
+    // and that one is not this host's fault to claim.
+    const neverRan = subprocess.pid === undefined;
     const exitCode = result.exitCode ?? 1;
     const versions = exitCode === 0 ? await probeVersions(plan.install.command) : undefined;
     return {
       ok: exitCode === 0,
       exitCode,
       stdout: result.stdout ?? '',
-      stderr: result.stderr ?? '',
+      // A command that never ran writes nothing to stderr, so its own
+      // failure message is the only evidence of why (#658).
+      stderr: result.stderr || (neverRan ? (result.shortMessage ?? '') : ''),
       ...(versions ? { versions } : {}),
+      ...(neverRan ? { infrastructure: true } : {}),
     };
   } catch (error) {
+    // execa only throws here when the command never ran — the package manager
+    // is missing from this host, or is not executable. A package manager that
+    // ran and rejected the workspace comes back as a non-zero exit above.
     return {
       ok: false,
       exitCode: 1,
       stdout: '',
       stderr: error instanceof Error ? error.message : String(error),
+      infrastructure: true,
     };
   }
 }

@@ -211,6 +211,57 @@ describe('runReproducibleInstall', () => {
 
     expect(outcome.ok).toBe(false);
     expect(outcome.exitCode).not.toBe(0);
+    // The package manager ran and rejected the workspace: that is the
+    // generated app's own lockfile, not this host (#659).
+    expect(outcome.infrastructure).toBeUndefined();
+  }, 30_000);
+
+  it('leaves an install that ran and was killed by a signal unmarked (#659)', async () => {
+    const dir = await tempDir();
+
+    const outcome = await runReproducibleInstall(
+      {
+        packageManager: 'npm',
+        // Becomes a process, then dies by signal — so it resolves with no exit
+        // code, exactly like a command that never ran. Only the pid separates
+        // them, and this host did not cause it.
+        install: {
+          ok: true,
+          command: 'node',
+          args: ['-e', "process.kill(process.pid, 'SIGKILL')"],
+        },
+        build: { ok: false, reason: 'not needed' },
+        dev: { ok: false, reason: 'not needed' },
+        detectedAt: '2026-08-26T12:00:00.000Z',
+      },
+      dir,
+      { timeoutMs: 30_000, maxOutputBytes: 1_000_000 },
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.infrastructure).toBeUndefined();
+  }, 30_000);
+
+  it('marks an install whose package manager is not on this host as infrastructure (#659)', async () => {
+    const dir = await tempDir();
+
+    const outcome = await runReproducibleInstall(
+      {
+        packageManager: 'pnpm',
+        install: { ok: true, command: 'agent-foundry-absent-package-manager', args: ['install'] },
+        build: { ok: false, reason: 'not needed' },
+        dev: { ok: false, reason: 'not needed' },
+        detectedAt: '2026-08-26T12:00:00.000Z',
+      },
+      dir,
+      { timeoutMs: 30_000, maxOutputBytes: 1_000_000 },
+    );
+
+    // A command that never became a process carries no exit code, so without
+    // this marker it is indistinguishable from an install the app broke.
+    expect(outcome.ok).toBe(false);
+    expect(outcome.infrastructure).toBe(true);
+    expect(outcome.stderr).toContain('agent-foundry-absent-package-manager');
   }, 30_000);
 
   it('returns a diagnostic without executing anything when the plan has no install command', async () => {

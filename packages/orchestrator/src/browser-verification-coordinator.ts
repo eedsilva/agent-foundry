@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { isDeepStrictEqual } from 'node:util';
 import {
+  PREVIEW_INFRASTRUCTURE_ERROR_CODE,
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   PreviewSessionReferenceSchema,
@@ -15,6 +16,7 @@ import {
 } from '@agent-foundry/contracts';
 import {
   ArtifactTooLargeError,
+  BrowserInfrastructureError,
   type ArtifactBlobPutInput,
   type ArtifactStore,
   type BrowserVerificationEvidence,
@@ -58,10 +60,21 @@ export class BrowserVerificationCoordinator {
       runId: input.runId,
     });
     if (!started.url || !['running', 'unhealthy'].includes(started.session.status)) {
-      throw new Error(
+      const reason =
         started.session.error?.message ??
-          `Preview session is not available for browser verification (${started.session.status}).`,
-      );
+        `Preview session is not available for browser verification (${started.session.status}).`;
+      // Only a preview failure the runner marked as environment-origin becomes
+      // an infrastructure fault here. The name is the discriminator that
+      // survives the run boundary into automaticFailureClass, so promoting
+      // every unusable preview would publish a generated app with no dev
+      // script, or one whose dev server crashes, as an environment fault —
+      // the same misattribution #659 fixes, pointing the other way. Any other
+      // preview failure keeps the shape it has always had and classifies as a
+      // product defect.
+      if (started.session.error?.code === PREVIEW_INFRASTRUCTURE_ERROR_CODE) {
+        throw new BrowserInfrastructureError(reason, PREVIEW_INFRASTRUCTURE_ERROR_CODE);
+      }
+      throw new Error(reason);
     }
     const session = PreviewSessionReferenceSchema.parse({
       sessionId: started.session.id,
