@@ -21,6 +21,25 @@ test('blocks a forged filesystem below the 1 GiB floor and deduplicates its devi
   ]);
 });
 
+test('reports free space and passes a forged filesystem above the 1 GiB floor', () => {
+  const checks = storageChecks({
+    root: '/checkout',
+    dataDirectory: '/data',
+    exists: () => true,
+    stat: () => ({ dev: 7 }),
+    statfs: () => ({ bsize: 1n, bavail: BigInt(MINIMUM_FREE_BYTES * 1.5) }),
+  });
+
+  assert.deepEqual(checks, [
+    {
+      name: 'checkout storage',
+      ok: true,
+      required: true,
+      message: '1.5 GiB free',
+    },
+  ]);
+});
+
 test('keeps FileVault unavailable as a warning, never a blocker', () => {
   assert.deepEqual(
     fileVaultCheck('linux', () => ({ status: 1 })),

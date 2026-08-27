@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 // The same list packages/executors/src/safe-environment.ts imports. The doctor
 // must probe under the env a real execution gets, or it reports ready for a CLI
 // that is unauthenticated the moment the orchestrator actually spawns it. Read
