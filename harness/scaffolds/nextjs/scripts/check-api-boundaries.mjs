@@ -8,12 +8,12 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const apiRoot = join(root, 'apps', 'api', 'src');
 const SKIPPED_DIRECTORIES = new Set(['node_modules', '.next', 'dist']);
 const CORS_HEADER = /access-control-allow-origin/i;
-const COOKIE_AUTH = /\b(?:cookie|cookies)\b/i;
+const COOKIE_AUTH = /cookie/i;
 // ponytail: balanced parentheses are unnecessary for this canary; use an AST
 // scanner if the scaffold grows indirect logging patterns.
 const CONSOLE_CALL = /\bconsole\.(?:debug|error|info|log|trace|warn)\s*\(([^)]*)\)/gi;
 const SENSITIVE_LOG_VALUE =
-  /\b(?:accessToken|authorization|cookie|email|err|error|key|password|request|secret|token)\b|process\.env/i;
+  /(?:access.?token|authorization|cookie|email|err(?:or)?|key|password|request|secret|token)|process\.env/i;
 const offenders = [];
 
 if (existsSync(apiRoot)) walk(apiRoot);

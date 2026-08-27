@@ -45,8 +45,11 @@ describe('generated API boundary build gate', () => {
     expect(result.stderr).toContain('CORS response header');
   });
 
-  it('fails when an API handler authenticates from a cookie', async () => {
-    const result = runCheck(await workspaceWith("const token = request.headers.get('cookie');\n"));
+  it.each([
+    "const token = request.headers.get('cookie');\n",
+    "const token = getCookie(c, 'token');\n",
+  ])('fails when an API handler authenticates from a cookie: %s', async (source) => {
+    const result = runCheck(await workspaceWith(source));
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('cookie-auth reference');
   });
@@ -54,6 +57,9 @@ describe('generated API boundary build gate', () => {
   it.each([
     "console.log('request', accessToken);\n",
     'console.error(error);\n',
+    'console.log(apiKey);\n',
+    'console.error(caughtError);\n',
+    'console.log(getSecret());\n',
     'console.log(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);\n',
     'console.log(\n  error,\n);\n',
   ])('fails when an API handler logs sensitive data: %s', async (source) => {
