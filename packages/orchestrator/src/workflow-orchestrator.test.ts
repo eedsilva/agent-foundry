@@ -1523,6 +1523,34 @@ describe('generated database sync before browser verification (#429)', () => {
   });
 });
 
+describe('environment identity ordering (#617)', () => {
+  it('creates the scaffold commit before binding the environment to a version', async () => {
+    const initialize = vi.fn(async (_input: { identity?: unknown }) => ({}) as never);
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize } as never,
+    });
+    // The real WorkspaceManager has no HEAD until ensureGit() writes the
+    // scaffold commit, and the environment is bound to that commit's
+    // ProjectVersion. Provisioning before ensureGit therefore has nothing to
+    // bind to, which is why the order in runProjectTraced is load-bearing.
+    let git = false;
+    harness.workspaces.ensureGit = () => {
+      git = true;
+      return Promise.resolve();
+    };
+    harness.workspaces.head = () => Promise.resolve(git ? 'scaffold-commit' : null);
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(initialize.mock.calls[0]![0]).toMatchObject({
+      identity: { class: 'candidate', projectVersionId: expect.any(String) },
+    });
+  });
+});
+
 /** Whatever else an environment operation takes, it takes an address. */
 type EnvironmentAddress = { projectId: string; environmentId?: string };
 
