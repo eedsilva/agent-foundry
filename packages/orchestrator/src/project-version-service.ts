@@ -6,6 +6,7 @@ import {
 import {
   latestArtifactsByName,
   NotFoundError,
+  ValidationError,
   type ArtifactStore,
   type Clock,
   type IdGenerator,
@@ -43,6 +44,36 @@ export class ProjectVersionService {
     });
     await this.versions.create(version);
     return version;
+  }
+
+  /**
+   * The ProjectVersion a run's Supabase stack is bound to (#617). ADR 0080
+   * requires a candidate environment to name the exact commit it runs, so
+   * recovery "never starts an application with a mismatched commit and
+   * environment". Provisioning happens before any mutating step, so a brand
+   * new project has no ledger entry yet and gets exactly one baseline entry
+   * for the scaffold commit `ensureGit` already created.
+   *
+   * A project that already has history must produce a ledger entry belonging
+   * to this run *and* naming the current HEAD: that is the replay case, and
+   * reusing it appends nothing. Anything else — a foreign run's entry, or an
+   * entry whose commit is no longer HEAD — fails closed here, before any
+   * container or model call, rather than binding the stack to a commit the
+   * workspace is not on.
+   */
+  async baselineForRun(projectId: string, runId: string, head: string): Promise<ProjectVersion> {
+    const history = await this.versions.list(projectId);
+    if (history.length === 0) {
+      const version = await this.buildVersion(projectId, 'run', { runId, commit: head });
+      await this.versions.create(version);
+      return version;
+    }
+    const match = history.find((version) => version.runId === runId && version.commit === head);
+    if (match) return match;
+    throw new ValidationError(
+      `Project ${projectId} has version history but no entry for run ${runId} at HEAD ${head}; ` +
+        'the environment cannot be bound to a commit it does not name.',
+    );
   }
 
   /** Compensates only the exact ledger write returned by a promotion that did not complete. */

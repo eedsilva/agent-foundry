@@ -14,6 +14,7 @@ import type {
   ApprovalRequest,
   ArtifactReference,
   BrowserVerificationReport,
+  EnvironmentIdentity,
   ExecutableStep,
   ExecutorStreamEvent,
   ExecutorHealth,
@@ -50,6 +51,7 @@ import {
   BrowserTestPlanArtifactSchema,
   BrowserVerificationReportSchema,
   DEFAULT_BROWSER_EVIDENCE_POLICY,
+  EnvironmentIdentitySchema,
   EXECUTION_PROTOCOL_VERSION,
   formatZodIssues,
   generateSchemaPlanSql,
@@ -467,6 +469,71 @@ export class WorkflowOrchestrator {
   }
 
   /**
+   * The Candidate Supabase Stack this run owns (ADR 0080, #617). A Run
+   * Candidate is one run, so the environment is named after it and shared by
+   * that candidate's worktrees; it is never the bare project, which is what
+   * used to let a second run mutate the first one's database, migration
+   * history and credentials. The stack names the ProjectVersion of the commit
+   * it starts from, so recovery can refuse a mismatched commit/environment
+   * pair instead of booting against the wrong data.
+   */
+  private async runEnvironmentIdentity(
+    projectId: string,
+    runId: string,
+  ): Promise<EnvironmentIdentity & { class: 'candidate' }> {
+    if (!this.versions) {
+      throw new ExecutionError(
+        `Project ${projectId} cannot be provisioned without the version ledger: ` +
+          'an environment must name the commit it runs.',
+      );
+    }
+    const head = await this.workspaces.head(projectId);
+    if (!head) {
+      throw new ExecutionError(
+        `Project ${projectId} workspace has no commit to bind its environment to.`,
+      );
+    }
+    const baseline = await this.versions.baselineForRun(projectId, runId, head);
+    return {
+      class: 'candidate',
+      projectId,
+      environmentId: runId,
+      runCandidateId: runId,
+      projectVersionId: baseline.id,
+    };
+  }
+
+  /**
+   * Telemetry the #617 contract asks for: project, environment and the source
+   * version the stack is bound to, on the run's own span. Set from the
+   * identity at provisioning and, on a resumed run that provisioned earlier,
+   * replayed from the `project.provisioned` event — the binding does not
+   * change once made, so a resumed span reports the same triple instead of
+   * dropping two thirds of it.
+   */
+  private recordEnvironmentTelemetry(span: Span, identity: EnvironmentIdentity): void {
+    span.setAttribute('foundry.environment.id', identity.environmentId);
+    span.setAttribute('foundry.environment.class', identity.class);
+    if (identity.class !== 'manual-preview') {
+      span.setAttribute('foundry.project.version.id', identity.projectVersionId);
+    }
+  }
+
+  /** How every later environment operation of this run addresses the stack
+   * `runEnvironmentIdentity` provisioned — migrations, schema verification and
+   * backups must reach the same environment the run booted, never the legacy
+   * project-wide root. */
+  private runEnvironmentTarget(
+    projectId: string,
+    runId: string,
+  ): {
+    projectId: string;
+    environmentId: string;
+  } {
+    return { projectId, environmentId: runId };
+  }
+
+  /**
    * Installs and boots the freshly scaffolded workspace by starting a durable
    * preview session, so a new project reaches a green preview before any agent
    * step runs (#318). Skips when the project already has a live session.
@@ -475,11 +542,18 @@ export class WorkflowOrchestrator {
   private async bootWorkspacePreview(
     projectId: string,
     runId: string,
+    environmentId: string,
   ): Promise<PreviewSession | undefined> {
     if (!this.previews) return undefined;
     if (await this.previews.activeForProject(projectId)) return undefined;
     const { session } = await this.previews.start({
-      workspaceRef: { projectId, workspacePath: this.workspaces.workspacePath(projectId) },
+      // The session carries the environment so NodePreviewRunner resolves this
+      // stack's Supabase credentials, not a sibling class's (#617).
+      workspaceRef: {
+        projectId,
+        environmentId,
+        workspacePath: this.workspaces.workspacePath(projectId),
+      },
       runId,
     });
     if (session.status !== 'running') {
@@ -596,11 +670,19 @@ export class WorkflowOrchestrator {
         await this.finalizePause(run.id, projectId, workflow);
         return;
       }
+      // Before provisioning, not after (#617): the run's environment is bound
+      // to the ProjectVersion of the scaffold commit, and `ensureGit` is what
+      // creates that commit.
+      await this.workspaces.ensureGit(projectId);
       const activeRunId = run.id;
-      const alreadyProvisioned = (await this.events.list(projectId)).some(
+      const provisionedEvent = (await this.events.list(projectId)).find(
         (event) => event.runId === activeRunId && event.type === 'project.provisioned',
       );
-      if ((this.generatedProjectRuntime || this.previews) && !alreadyProvisioned) {
+      if (provisionedEvent) {
+        const recorded = EnvironmentIdentitySchema.safeParse(provisionedEvent.data?.environment);
+        if (recorded.success) this.recordEnvironmentTelemetry(span, recorded.data);
+      }
+      if ((this.generatedProjectRuntime || this.previews) && !provisionedEvent) {
         if (run.status !== 'running') {
           run = await this.runs.update(
             transitionWorkflowRun(run, 'running', this.clock.now()),
@@ -618,9 +700,16 @@ export class WorkflowOrchestrator {
           },
         );
         let bootedPreview: PreviewSession | undefined;
+        let identity: EnvironmentIdentity;
         try {
-          await this.generatedProjectRuntime?.initialize({ projectId });
-          bootedPreview = await this.bootWorkspacePreview(projectId, run.id);
+          identity = await this.runEnvironmentIdentity(projectId, run.id);
+          this.recordEnvironmentTelemetry(span, identity);
+          await this.generatedProjectRuntime?.initialize({ projectId, identity });
+          bootedPreview = await this.bootWorkspacePreview(
+            projectId,
+            run.id,
+            identity.environmentId,
+          );
         } catch (error) {
           const diagnostic = provisioningFailureDiagnostic(error);
           await this.emit(projectId, 'project.provisioning_failed', PROVISIONING_FAILURE_MESSAGE, {
@@ -633,10 +722,15 @@ export class WorkflowOrchestrator {
         await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
           runId: run.id,
           dedupeKey: `${run.id}:project.provisioned`,
-          ...(bootedPreview ? { data: provisionedPreviewData(bootedPreview) } : {}),
+          // The identity rides the event so a resumed run reports the same
+          // environment and source version without re-resolving a baseline
+          // against a HEAD that later steps have already moved (#617).
+          data: {
+            ...(bootedPreview ? provisionedPreviewData(bootedPreview) : {}),
+            environment: identity,
+          },
         });
       }
-      await this.workspaces.ensureGit(projectId);
       run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
       if (run.execution?.ceiling) {
         throw new EmergencyCeilingError(run.id, run.execution.ceiling.reason);
@@ -2923,7 +3017,7 @@ export class WorkflowOrchestrator {
     const schemaPlan = SchemaPlanArtifactSchema.safeParse(schemaArtifact.content);
     if (!schemaPlan.success) return;
     const verification = await this.generatedProjectRuntime.verifySchema({
-      projectId: project.id,
+      ...this.runEnvironmentTarget(project.id, runId),
       tables: schemaPlan.data.data.tables,
     });
     const problems = [
@@ -2963,7 +3057,7 @@ export class WorkflowOrchestrator {
     );
     try {
       await this.generatedProjectRuntime!.applyWorkspaceMigrations({
-        projectId: project.id,
+        ...this.runEnvironmentTarget(project.id, runId),
         workspaceMigrationsDir,
       });
     } catch (error) {
@@ -2986,7 +3080,7 @@ export class WorkflowOrchestrator {
       // reconcile retry for this one call — add here too if a destructive
       // migration ever needs it.
       await this.generatedProjectRuntime!.migrate({
-        projectId: project.id,
+        ...this.runEnvironmentTarget(project.id, runId),
         migrationPath: error.destructive.at(-1)!.migrationPath,
         approval,
       });
@@ -3128,7 +3222,7 @@ export class WorkflowOrchestrator {
     }
 
     const backup = await this.generatedProjectRuntime!.backupMigration({
-      projectId: project.id,
+      ...this.runEnvironmentTarget(project.id, runId),
       backupPath: `.foundry/migration-backups/${stepRun.id}.sql`,
     });
     throwIfCancelled(signal, runId);

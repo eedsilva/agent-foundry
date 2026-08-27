@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execa } from 'execa';
@@ -11,6 +12,7 @@ import {
   type ValidationPreflightReport,
   type ValidationPreflightStatus,
   type ValidationCampaignPreview,
+  type EnvironmentIdentity,
   type PreviewSession,
   type PreviewWorkspaceRef,
 } from '@agent-foundry/contracts';
@@ -34,6 +36,32 @@ import {
   runValidationCampaignCanary,
   type ValidationCanaryDependencies,
 } from './provider-canary.js';
+
+/** The preflight environment (#617). It is disposable and has no ledger
+ * entry, which is exactly the Manual Preview Stack binding: recreated when the
+ * SQL it was built from changes. The digest covers the scaffold's own
+ * `supabase/` files, so the day the scaffold gains a migration the stack stops
+ * being addressed as the same environment. Naming it explicitly is what keeps
+ * this caller off the legacy single-environment root. */
+const PREFLIGHT_ENVIRONMENT_ID = 'preflight';
+
+function preflightIdentity(
+  projectId: string,
+  scaffold: Array<{ path: string; content: string }>,
+): EnvironmentIdentity {
+  const digest = createHash('sha256');
+  for (const file of scaffold
+    .filter((file) => file.path.startsWith('supabase/'))
+    .sort((a, b) => a.path.localeCompare(b.path))) {
+    digest.update(`${file.path}\u0000${file.content}\u0000`);
+  }
+  return {
+    class: 'manual-preview',
+    projectId,
+    environmentId: PREFLIGHT_ENVIRONMENT_ID,
+    migrationDigest: digest.digest('hex'),
+  };
+}
 
 export interface ValidationPreflightChecks {
   disposableEnvironment(): Promise<void>;
@@ -191,6 +219,15 @@ export function createProductionValidationPreflightChecks(
 ): ValidationPreflightChecks {
   let environmentInitialized = false;
   let workspaceCreated = false;
+  // Resolved once and reused by every later call, so health, preview
+  // credentials and cleanup all address the environment initialize() actually
+  // created (#617).
+  let scaffoldFiles: Array<{ path: string; content: string }> | undefined;
+  const scaffold = async () => (scaffoldFiles ??= await options.harness.scaffoldFiles('nextjs'));
+  const target = () => ({
+    projectId: options.environmentId,
+    environmentId: PREFLIGHT_ENVIRONMENT_ID,
+  });
   let preview: { session: PreviewSession; url: string } | undefined;
   const canaryDependencies =
     options.canaryDependencies ?? createValidationCampaignCanaryDependencies();
@@ -219,9 +256,12 @@ export function createProductionValidationPreflightChecks(
     },
     async supabase() {
       if (!options.generatedProjectRuntime) throw new Error('Supabase runtime is unavailable.');
-      await options.generatedProjectRuntime.initialize({ projectId: options.environmentId });
+      await options.generatedProjectRuntime.initialize({
+        projectId: options.environmentId,
+        identity: preflightIdentity(options.environmentId, await scaffold()),
+      });
       environmentInitialized = true;
-      const environment = await options.generatedProjectRuntime.health(options.environmentId);
+      const environment = await options.generatedProjectRuntime.health(target());
       if (environment.health.state !== 'healthy') {
         throw new Error(`Supabase is not healthy. state=${environment.health.state}`);
       }
@@ -229,10 +269,7 @@ export function createProductionValidationPreflightChecks(
     async scaffold() {
       await options.workspaces.ensure(options.environmentId);
       workspaceCreated = true;
-      await options.workspaces.applyScaffold(
-        options.environmentId,
-        await options.harness.scaffoldFiles('nextjs'),
-      );
+      await options.workspaces.applyScaffold(options.environmentId, await scaffold());
       const workspacePath = options.workspaces.workspacePath(options.environmentId);
       const plan = await resolvePreviewCommandPlan(workspacePath);
       if (!plan.build.ok) throw new Error(plan.build.reason);
@@ -262,7 +299,7 @@ export function createProductionValidationPreflightChecks(
       }
       preview = await options.previews.start({
         workspaceRef: {
-          projectId: options.environmentId,
+          ...target(),
           workspacePath,
         } satisfies PreviewWorkspaceRef,
       });
@@ -330,7 +367,7 @@ export function createProductionValidationPreflightChecks(
           'supabase',
           environmentInitialized && options.generatedProjectRuntime
             ? options.generatedProjectRuntime.cleanup({
-                projectId: options.environmentId,
+                ...target(),
                 confirmation: {
                   confirmed: true,
                   backupCreatedAt: new Date(Date.now() - 1_000).toISOString(),

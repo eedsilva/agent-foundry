@@ -1511,8 +1511,10 @@ describe('generated database sync before browser verification (#429)', () => {
 
     await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
 
+    // Addressed by the run's own environment, never the bare project (#617).
     expect(applyWorkspaceMigrations).toHaveBeenCalledWith({
       projectId: 'project-1',
+      environmentId: 'run-1',
       workspaceMigrationsDir: join(workspace, 'supabase', 'migrations'),
     });
     expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
@@ -1666,6 +1668,11 @@ describe('destructive-migration approval gate (#535)', () => {
 
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
     expect(backupMigration).toHaveBeenCalledTimes(1);
+    expect(backupMigration).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      environmentId: 'run-1',
+      backupPath: expect.stringContaining('.foundry/migration-backups/'),
+    });
     // Once per run attempt (park, then replay) — applyWorkspaceMigrations is
     // never retried with the resolved approval attached: that retry would
     // find the destructive file already staged from the first (failed)
@@ -1675,6 +1682,7 @@ describe('destructive-migration approval gate (#535)', () => {
     expect(migrate).toHaveBeenCalledTimes(1);
     expect(migrate).toHaveBeenCalledWith({
       projectId: 'project-1',
+      environmentId: 'run-1',
       migrationPath: destructive[0]!.migrationPath,
       approval: {
         migrationChecksum: destructive[0]!.checksum,
@@ -1845,6 +1853,7 @@ describe('schema drift verification before browser check (#481)', () => {
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
     expect(verifySchema).toHaveBeenCalledWith({
       projectId: 'project-1',
+      environmentId: 'run-1',
       tables: VALID_SCHEMA_PLAN.tables,
     });
   });

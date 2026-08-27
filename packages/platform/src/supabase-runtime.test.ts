@@ -2258,6 +2258,28 @@ describe('callers address one environment, not one project (#617)', () => {
     return HOST_PORT_FIELDS.map(([section, key]) => configPort(config, section, key));
   }
 
+  it('keeps one class Supabase credentials out of the other class .env', async () => {
+    const { runtime } = fixture();
+    const envPath = (environmentId: string) =>
+      join(dataDir, 'projects', 'project-a', 'environments', environmentId, '.env');
+
+    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    const candidateEnv = await readFile(envPath(CANDIDATE.environmentId), 'utf8');
+    const acceptedEnv = await readFile(envPath(ACCEPTED.environmentId), 'utf8');
+    expect(candidateEnv).toContain(`NEXT_PUBLIC_SUPABASE_URL=${candidate.endpoints.api}`);
+    expect(acceptedEnv).toContain(`NEXT_PUBLIC_SUPABASE_URL=${accepted.endpoints.api}`);
+    // The sibling's API endpoint is what a shared file would have left behind:
+    // the last initialize() wins and the other class's preview reads it.
+    expect(candidateEnv).not.toContain(accepted.endpoints.api);
+    expect(acceptedEnv).not.toContain(candidate.endpoints.api);
+    // Nothing addressed by identity may write the legacy shared file.
+    await expect(
+      readFile(join(dataDir, 'projects', 'project-a', '.env'), 'utf8'),
+    ).rejects.toThrow();
+  });
+
   it('gives two classes of one project separate directory, compose project, network and volume', async () => {
     const { runtime } = fixture();
 

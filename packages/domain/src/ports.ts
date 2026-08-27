@@ -626,8 +626,16 @@ export interface WorkspaceManager {
  * anything that builds the agent's prompt, logs, or artifacts.
  */
 export interface SecretStore {
-  names(projectId: string): Promise<string[]>;
-  resolveAll(projectId: string): Promise<Record<string, string>>;
+  names(projectId: string, environmentId?: string): Promise<string[]>;
+  /**
+   * Values the generated app runs with. `environmentId` addresses one
+   * environment's own secrets (#617): a candidate stack and the accepted
+   * stack of the same project write different Supabase credentials, and a
+   * preview must read the ones belonging to the environment it was booted
+   * against. The project-level file still contributes operator-set secrets;
+   * the environment's own file wins on conflict.
+   */
+  resolveAll(projectId: string, environmentId?: string): Promise<Record<string, string>>;
 }
 
 export interface Clock {

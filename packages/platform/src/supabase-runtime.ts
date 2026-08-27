@@ -267,7 +267,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       // as any other CLI failure (R4, #560) instead of silently skipping
       // #writeAppSecrets and leaving the preview to fail far downstream.
       const credentials = credentialsFromStatus(result.stdout);
-      await wait('initialize', this.#writeAppSecrets(projectId, credentials));
+      await wait('initialize', this.#writeAppSecrets(resolved, credentials));
       await wait('initialize', persist(environment));
       return environment;
     } catch (error) {
@@ -970,15 +970,21 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   /**
-   * Writes the generated app's Supabase connection credentials into its
-   * per-project .env (ADR 0033/0034) so NodePreviewRunner's SecretStore
-   * resolves them into the dev-server subprocess. Merges with, rather than
-   * overwrites, any operator-set secrets already in that file.
+   * Writes the generated app's Supabase connection credentials into the
+   * addressed environment's own .env (ADR 0033/0034) so NodePreviewRunner's
+   * SecretStore resolves them into the dev-server subprocess. Merges with,
+   * rather than overwrites, any operator-set secrets already in that file.
+   * The file hangs off environmentRoot(), so two classes of one project never
+   * overwrite each other's credentials (#617); FileSecretStore still layers
+   * the project-level file underneath for the operator's own secrets.
    */
-  async #writeAppSecrets(projectId: string, credentials: SupabaseAppCredentials): Promise<void> {
-    // dirname(path) (dataDir/projects/projectId) already exists: #initialize
+  async #writeAppSecrets(
+    resolved: ResolvedTarget,
+    credentials: SupabaseAppCredentials,
+  ): Promise<void> {
+    // dirname(path) (the environment root) already exists: #initialize
     // mkdir's workdir, a child of it, before this is ever called.
-    const path = projectEnvPath(this.#dataDir, projectId);
+    const path = environmentEnvPath(this.#dataDir, resolved);
     let existing = '';
     try {
       existing = await readFile(path, 'utf8');
@@ -1074,16 +1080,14 @@ function metadataPath(dataDir: string, target: ResolvedTarget): string {
   return join(environmentDir(dataDir, target), 'environment.json');
 }
 
-// A sibling of the legacy environmentDir, matching WorkspaceManager.projectRoot
-// (packages/persistence/src/workspace-manager.ts) — outside the git-tracked
-// workspace/ directory by construction (ADR 0033).
-// ponytail: still keyed by project, so two environments of one project write
-// the same .env and the last initialize() wins the credentials the preview
-// subprocess reads. Making it per environment means teaching SecretStore and
-// NodePreviewRunner which environment a preview belongs to — a caller
-// migration of its own, outside #617's three closures.
-function projectEnvPath(dataDir: string, projectId: string): string {
-  return join(dataDir, 'projects', projectId, '.env');
+// A sibling of the environment's own workdir — outside the git-tracked
+// workspace/ directory by construction (ADR 0033). A legacy address keeps
+// <projectRoot>/.env, matching WorkspaceManager.projectRoot
+// (packages/persistence/src/workspace-manager.ts); an explicit environment
+// gets its own file, which FileSecretStore reads for exactly that
+// environmentId (packages/persistence/src/secret-store.ts).
+function environmentEnvPath(dataDir: string, target: ResolvedTarget): string {
+  return join(environmentRoot(dataDir, target), '.env');
 }
 
 /** `supabase status --output json`'s DB_URL — never `start`'s stdout, which

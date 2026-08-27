@@ -549,7 +549,18 @@ describe('ProjectService.create', () => {
     });
     await worker.runOnce();
 
-    expect(initialize).toHaveBeenCalledWith({ projectId: 'id-0001' });
+    // Provisioning names the candidate stack it creates, never the bare
+    // project (#617): the run owns the environment and the ledger entry.
+    expect(initialize).toHaveBeenCalledWith({
+      projectId: 'id-0001',
+      identity: {
+        class: 'candidate',
+        projectId: 'id-0001',
+        environmentId: 'id-0002',
+        runCandidateId: 'id-0002',
+        projectVersionId: expect.any(String),
+      },
+    });
     expect((await harness.events.list('id-0001')).map((event) => event.type)).toEqual(
       expect.arrayContaining(['project.provisioning_started', 'project.provisioned']),
     );
@@ -712,6 +723,7 @@ describe('ProjectService.create workspace boot', () => {
     expect(start).toHaveBeenCalledWith({
       workspaceRef: {
         projectId: 'id-0001',
+        environmentId: 'id-0002',
         workspacePath: harness.workspaces.workspacePath('id-0001'),
       },
       runId: 'id-0002',
@@ -726,6 +738,15 @@ describe('ProjectService.create workspace boot', () => {
               command: 'pnpm',
               args: ['install', '--frozen-lockfile'],
               versions: { node: 'v22.22.3', packageManager: '10.30.1' },
+            },
+            // Recorded so a resumed run reports the same environment and
+            // source version without re-resolving a moved HEAD (#617).
+            environment: {
+              class: 'candidate',
+              projectId: 'id-0001',
+              environmentId: 'id-0002',
+              runCandidateId: 'id-0002',
+              projectVersionId: expect.any(String),
             },
           },
         }),

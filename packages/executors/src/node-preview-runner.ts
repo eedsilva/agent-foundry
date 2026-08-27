@@ -366,8 +366,14 @@ export class NodePreviewRunner implements PreviewRunner {
     for (let attempt = 0; attempt < 10 && apiPort === reservedPort; attempt += 1) {
       apiPort = await this.reservePort();
     }
+    // The session names the environment it was booted against (#617): a
+    // candidate preview must run with that stack's Supabase credentials, not
+    // whichever class initialized last.
     const secrets = this.secretStore
-      ? await this.secretStore.resolveAll(session.workspaceRef.projectId)
+      ? await this.secretStore.resolveAll(
+          session.workspaceRef.projectId,
+          session.workspaceRef.environmentId,
+        )
       : {};
     const child = execa(dev.command, dev.args, {
       cwd: session.workspaceRef.workspacePath,
