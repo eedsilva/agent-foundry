@@ -13,6 +13,8 @@ const COOKIE_AUTH = /cookie/i;
 // method call regardless of receiver or argument names.
 const LOG_CALL =
   /(?:\.(?:debug|error|info|log|trace|warn)|\[\s*['"](?:debug|error|info|log|trace|warn)['"]\s*\])\s*(?:\?\.)?\s*\(/gi;
+const LOG_ALIAS =
+  /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*(?:\s*\.\s*(?:debug|error|info|log|trace|warn)|\s*\[\s*['"](?:debug|error|info|log|trace|warn)['"]\s*\])/gi;
 const LOG_DESTRUCTURE =
   /\b(?:const|let|var)\s*\{[^}]*\b(?:debug|error|info|log|trace|warn)\b[^}]*\}\s*=\s*console\b/gi;
 const offenders = [];
@@ -37,6 +39,10 @@ function check(path, source) {
     if (COOKIE_AUTH.test(line)) offenders.push(`${location} — cookie-auth reference`);
   });
   for (const match of source.matchAll(LOG_CALL)) {
+    const line = source.slice(0, match.index).split(/\r?\n/).length;
+    offenders.push(`${path}:${line} — API logging is not permitted`);
+  }
+  for (const match of source.matchAll(LOG_ALIAS)) {
     const line = source.slice(0, match.index).split(/\r?\n/).length;
     offenders.push(`${path}:${line} — API logging is not permitted`);
   }

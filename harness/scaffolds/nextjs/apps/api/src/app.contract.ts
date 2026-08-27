@@ -121,17 +121,17 @@ test('GET /items returns a bounded page and advances with its cursor', async () 
     {
       id: '00000000-0000-0000-0000-000000000001',
       title: 'First',
-      created_at: '2026-08-26T00:00:00.000Z',
+      created_at: '2026-08-26T00:01:00.123456+00:00',
     },
     {
       id: '00000000-0000-0000-0000-000000000002',
       title: 'Second',
-      created_at: '2026-08-26T00:01:00.000Z',
+      created_at: '2026-08-26T00:01:00.123456+00:00',
     },
     {
       id: '00000000-0000-0000-0000-000000000003',
       title: 'Third',
-      created_at: '2026-08-26T00:02:00.000Z',
+      created_at: '2026-08-26T00:01:00.123456+00:00',
     },
   ];
   let itemPage = 0;
@@ -191,7 +191,10 @@ test('GET /items returns a bounded page and advances with its cursor', async () 
     const itemRequests = requests.filter((url) => url.includes('/rest/v1/items'));
     assert.equal(itemRequests.length, 2);
     assert.match(itemRequests[0], /limit=3/);
-    assert.match(itemRequests[1], /created_at\.gt\.|id\.gt\./);
+    assert.match(itemRequests[1], /created_at\.gt\./);
+    assert.match(itemRequests[1], /created_at\.eq\./);
+    assert.match(itemRequests[1], /id\.gt\./);
+    assert.doesNotMatch(itemRequests[1], /created_at\.gt\.[^,]+,id\.gt\./);
   } finally {
     globalThis.fetch = originalFetch;
   }

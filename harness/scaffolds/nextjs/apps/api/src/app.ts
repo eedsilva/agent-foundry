@@ -15,7 +15,7 @@ const DEFAULT_ITEMS_LIMIT = 25;
 const MAX_ITEMS_LIMIT = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CURSOR_TIMESTAMP =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
 
 type ItemsCursor = { createdAt: string; id: string };
 
