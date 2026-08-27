@@ -1,7 +1,8 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import type { EnvironmentIdentity } from '@agent-foundry/contracts';
 import { EmergencyCeilingError, type Clock } from '@agent-foundry/domain';
 import { makeHarness, makeStores, rateLimitError, seedRun } from './testing/harness.js';
 
@@ -47,6 +48,69 @@ describe('orchestrator span coverage', () => {
     trace.disable();
     context.disable();
     propagation.disable();
+  });
+
+  it('records project, environment and source version on the run span (#617)', async () => {
+    const initialize = vi.fn(
+      async (_input: { projectId: string; identity?: EnvironmentIdentity }) => ({}) as never,
+    );
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize } as never,
+    });
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    const identity = initialize.mock.calls[0]![0].identity!;
+    expect(identity.class).toBe('candidate');
+    if (identity.class === 'manual-preview') throw new Error('unreachable');
+    const runSpan = exporter.getFinishedSpans().find((span) => span.name === 'foundry.run');
+    expect(runSpan?.attributes).toMatchObject({
+      'foundry.project.id': 'project-1',
+      'foundry.environment.id': 'run-1',
+      'foundry.environment.class': 'candidate',
+      'foundry.project.version.id': identity.projectVersionId,
+    });
+    // The version is the ledger entry the stack was bound to, not an invented id.
+    expect(identity.projectVersionId).toBeTypeOf('string');
+  });
+
+  it('replays the same environment and version on a resumed run that provisioned earlier (#617)', async () => {
+    const initialize = vi.fn(async () => ({}) as never);
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize } as never,
+    });
+    await seedRun(harness);
+    await harness.events.append({
+      id: 'event-provisioned',
+      projectId: 'project-1',
+      runId: 'run-1',
+      type: 'project.provisioned',
+      createdAt: harness.clock.now().toISOString(),
+      message: 'Project provisioning completed.',
+      data: {
+        environment: {
+          class: 'candidate',
+          projectId: 'project-1',
+          environmentId: 'run-1',
+          runCandidateId: 'run-1',
+          projectVersionId: 'version-7',
+        },
+      },
+    });
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    // Provisioning is skipped, so the triple can only come from the recorded
+    // event — a resumed span must not drop two thirds of the identity.
+    expect(initialize).not.toHaveBeenCalled();
+    const runSpan = exporter.getFinishedSpans().find((span) => span.name === 'foundry.run');
+    expect(runSpan?.attributes).toMatchObject({
+      'foundry.project.id': 'project-1',
+      'foundry.environment.id': 'run-1',
+      'foundry.environment.class': 'candidate',
+      'foundry.project.version.id': 'version-7',
+    });
   });
 
   it('produces one foundry.run trace with foundry.step and foundry.attempt descendants', async () => {

@@ -1523,6 +1523,9 @@ describe('generated database sync before browser verification (#429)', () => {
   });
 });
 
+/** Whatever else an environment operation takes, it takes an address. */
+type EnvironmentAddress = { projectId: string; environmentId?: string };
+
 describe('destructive-migration approval gate (#535)', () => {
   function browserVerifyFixture() {
     return vi.fn(
@@ -1606,11 +1609,12 @@ describe('destructive-migration approval gate (#535)', () => {
     // This mock throws unconditionally, the same way the real one always
     // fails on a first, unapproved call, so a fix that re-calls
     // applyWorkspaceMigrations instead of migrate() on retry is caught here.
-    const applyWorkspaceMigrations = vi.fn(async () => {
+    const applyWorkspaceMigrations = vi.fn(async (_input: EnvironmentAddress) => {
       throw new MigrationApprovalRequiredError(destructive);
     });
-    const migrate = vi.fn(async () => ({}) as never);
-    const backupMigration = vi.fn(async () => ({
+    const migrate = vi.fn(async (_input: EnvironmentAddress) => ({}) as never);
+    const initialize = vi.fn(async (_input: { identity?: unknown }) => ({}) as never);
+    const backupMigration = vi.fn(async (_input: EnvironmentAddress) => ({
       path: '.foundry/migration-backups/backup.sql',
       checksum: 'b'.repeat(64),
       schemaChecksum: 'c'.repeat(64),
@@ -1626,14 +1630,14 @@ describe('destructive-migration approval gate (#535)', () => {
         applyWorkspaceMigrations,
         migrate,
         backupMigration,
-        initialize: vi.fn(async () => ({}) as never),
+        initialize,
         health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
       } as never,
       agentOutput: agentOutputFixture(),
     });
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
-    return { harness, applyWorkspaceMigrations, migrate, backupMigration, destructive };
+    return { harness, applyWorkspaceMigrations, migrate, backupMigration, initialize, destructive };
   }
 
   it('parks the run at an approval gate naming the file and statement instead of failing the run', async () => {
@@ -1720,6 +1724,43 @@ describe('destructive-migration approval gate (#535)', () => {
     expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(2);
     const rejected = harness.events.events.find((event) => event.type === 'run.rejected');
     expect(rejected?.message).toContain('not safe to drop obsolete yet');
+  });
+
+  /**
+   * The caller matrix the #617 contract asks for, stated as an invariant
+   * rather than a list: whatever the run asks of the generated runtime, it
+   * asks of its own environment. A new caller added later without an
+   * environment fails here even though no assertion names it.
+   */
+  it('leaves no generated-runtime call addressed by the bare project (#617)', async () => {
+    const { harness, applyWorkspaceMigrations, migrate, backupMigration, initialize } =
+      await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+      note: 'obsolete is unused',
+    });
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    // initialize names the environment through the identity it creates;
+    // every later operation addresses that same environment by id.
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(initialize.mock.calls[0]![0]).toMatchObject({
+      identity: { class: 'candidate', environmentId: 'run-1', runCandidateId: 'run-1' },
+    });
+    const addressed: EnvironmentAddress[] = [
+      ...applyWorkspaceMigrations.mock.calls,
+      ...migrate.mock.calls,
+      ...backupMigration.mock.calls,
+    ].map(([input]) => input);
+    expect(addressed.length).toBeGreaterThan(0);
+    for (const input of addressed) {
+      expect(input.projectId).toBe('project-1');
+      expect(input.environmentId).toBe('run-1');
+    }
   });
 });
 

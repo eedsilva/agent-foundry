@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -387,7 +388,7 @@ describe('production preflight cleanup', () => {
     const production = createProductionValidationPreflightChecks({
       campaign,
       environmentId: 'validation-preflight-1',
-      harness: { scaffoldFiles: vi.fn() },
+      harness: { scaffoldFiles: vi.fn(async () => []) },
       workspaces: {
         ensure: vi.fn(),
         applyScaffold: vi.fn(),
@@ -406,6 +407,54 @@ describe('production preflight cleanup', () => {
     await expect(production.cleanup()).rejects.toThrow(
       'supabase teardown failed: container stop timed out after 90000ms',
     );
+  });
+
+  it('addresses its disposable stack by identity, never the legacy project root (#617)', async () => {
+    const generatedProjectRuntime = {
+      initialize: vi.fn(async () => undefined),
+      health: vi.fn(async () => ({ health: { state: 'healthy' } })),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const scaffoldFiles = vi.fn(async () => [
+      { path: 'package.json', content: '{}' },
+      { path: 'supabase/migrations/0001_init.sql', content: 'create table t ();' },
+    ]);
+    const production = createProductionValidationPreflightChecks({
+      campaign,
+      environmentId: 'validation-preflight-1',
+      harness: { scaffoldFiles },
+      workspaces: {
+        ensure: vi.fn(),
+        applyScaffold: vi.fn(),
+        workspacePath: vi.fn(),
+        cleanup: vi.fn(),
+      },
+      generatedProjectRuntime,
+      previews: { start: vi.fn(), stop: vi.fn() },
+      previewRunner: { health: vi.fn() },
+      maxOutputBytes: 1_000,
+    } as unknown as Parameters<typeof createProductionValidationPreflightChecks>[0]);
+
+    await production.supabase();
+    await production.cleanup();
+
+    const target = { projectId: 'validation-preflight-1', environmentId: 'preflight' };
+    // The stack has no ledger entry and is rebuilt when the scaffold's SQL
+    // changes, which is exactly the manual-preview binding.
+    expect(generatedProjectRuntime.initialize).toHaveBeenCalledWith({
+      projectId: 'validation-preflight-1',
+      identity: {
+        class: 'manual-preview',
+        ...target,
+        migrationDigest: createHash('sha256')
+          .update('supabase/migrations/0001_init.sql\u0000create table t ();\u0000')
+          .digest('hex'),
+      },
+    });
+    // health and cleanup must reach the environment initialize() created; the
+    // bare project id would address the legacy root and leak the stack.
+    expect(generatedProjectRuntime.health).toHaveBeenCalledWith(target);
+    expect(generatedProjectRuntime.cleanup).toHaveBeenCalledWith(expect.objectContaining(target));
   });
 });
 
