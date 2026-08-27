@@ -295,11 +295,11 @@ export class ProjectService {
       }
 
       await this.transactionRunner.run(async (tx) => {
-        await this.queue.enqueue(job, tx);
         await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
           runId,
           tx,
         });
+        await this.queue.enqueue(job, tx);
       });
     } catch (error) {
       const message = errorMessage(error);

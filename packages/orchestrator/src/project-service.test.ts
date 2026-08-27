@@ -81,6 +81,48 @@ describe('ProjectService.create', () => {
     expect(harness.workspaces.workspacePath('id-0001')).toBe('/operator/projects/issue-radar');
   });
 
+  it('does not publish a job when recording queued state fails', async () => {
+    const harness = makeHarness();
+    const append = harness.events.append.bind(harness.events);
+    vi.spyOn(harness.events, 'append').mockImplementation(async (event) => {
+      if (event.type === 'project.queued') throw new Error('event store unavailable');
+      return append(event);
+    });
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('event store unavailable');
+
+    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.executor.requests).toHaveLength(0);
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+  });
+
+  it('does not execute when job publication fails after queued state is recorded', async () => {
+    const harness = makeHarness();
+    harness.failNextEnqueue(new Error('queue unavailable'));
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('queue unavailable');
+
+    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.executor.requests).toHaveLength(0);
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+  });
+
   it('exposes a pre-persistence rollback failure without deleting its reservation', async () => {
     const harness = makeHarness();
     vi.spyOn(harness.workspaces, 'writePrd').mockRejectedValueOnce(
@@ -211,7 +253,7 @@ describe('ProjectService.create', () => {
     expect(harness.workspaces.lastPrd).toBeUndefined();
   });
 
-  it('persists the run preflight before exposing its queue job', async () => {
+  it('persists the run preflight and queued state before exposing its queue job', async () => {
     const campaign = ValidationCampaignPreviewSchema.parse({
       schemaVersion: '1',
       id: 'real-todo-v1',
@@ -257,6 +299,9 @@ describe('ProjectService.create', () => {
         expect.objectContaining({
           metadata: expect.objectContaining({ runId: 'id-0002' }),
         }),
+      );
+      expect(await harness.events.list('id-0001')).toEqual(
+        expect.arrayContaining([expect.objectContaining({ type: 'project.queued' })]),
       );
       return enqueue(job, tx);
     });
