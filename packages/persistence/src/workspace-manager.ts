@@ -64,12 +64,29 @@ function reservationId(projectDirectory: string): string {
   return createHash('sha256').update(projectDirectory).digest('hex');
 }
 
+async function hasSymlinkAncestor(root: string, path: string): Promise<boolean> {
+  const segments = relative(root, path).split(sep);
+  let current = root;
+  for (const segment of segments) {
+    current = join(current, segment);
+    const entry = await lstat(current).catch((error) => {
+      if (isNotFound(error)) return null;
+      throw error;
+    });
+    if (!entry) return false;
+    if (entry.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
 async function removeEmptyParents(root: string, path: string): Promise<void> {
   for (let current = dirname(path); current !== root; current = dirname(current)) {
     try {
+      if ((await lstat(current)).isSymbolicLink()) return;
       await rmdir(current);
     } catch (error) {
-      if (isNotFound(error) || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY') return;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (isNotFound(error) || code === 'ENOTEMPTY' || code === 'ENOTDIR') return;
       throw error;
     }
   }
@@ -234,12 +251,14 @@ export class FileWorkspaceManager implements WorkspaceManager {
           ...generatedFiles,
         ]) {
           const generatedFile = pathFor(projectDirectory, ...path.split('/'));
+          if (await hasSymlinkAncestor(projectDirectory, generatedFile)) continue;
           const current = await readFile(generatedFile, 'utf8').catch((error) => {
             const code = (error as NodeJS.ErrnoException).code;
             if (isNotFound(error) || code === 'EISDIR' || code === 'EINVAL') return null;
             throw error;
           });
           if (current !== content) continue;
+          if (await hasSymlinkAncestor(projectDirectory, generatedFile)) continue;
           await rm(generatedFile, { force: true });
           await removeEmptyParents(projectDirectory, generatedFile);
         }

@@ -152,7 +152,7 @@ sequenceDiagram
     participant A as ArtifactStore
     participant G as Git/Workspace
 
-    UI->>API: POST /projects {name, prd, workflowId}
+    UI->>API: POST /projects {name, prd, workflowId, projectDirectory}
     API->>PS: create(input)
     PS->>G: ensure + write PRD.md
     PS->>A: put(prd)

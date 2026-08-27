@@ -171,7 +171,7 @@ Os registros são append-only: um rerun adiciona uma nova tentativa e nunca sobr
 
 ## Ciclo de uma execução
 
-1. `POST /projects` valida o nome, PRD e workflow.
+1. `POST /projects` valida nome, PRD, workflow e `projectDirectory` absoluto escolhido pelo operador.
 2. `ProjectService` cria o workspace e grava `PRD.md`.
 3. O projeto e o artefato `prd` são persistidos.
 4. Um job `run-project` entra na fila.

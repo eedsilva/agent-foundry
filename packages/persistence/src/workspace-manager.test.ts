@@ -136,6 +136,27 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     await expect(readFile(join(selected, 'PRD.md'), 'utf8')).resolves.toBe('Operator edit.\n');
   });
 
+  it('does not follow an intermediate symlink while rolling back generated files', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+    const generated = 'export const app = true;\n';
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await workspaces.applyScaffold('project-1', [{ path: 'src/app.ts', content: generated }]);
+    await rm(join(selected, 'src'), { recursive: true });
+    await writeFile(join(external, 'app.ts'), generated);
+    await symlink(external, join(selected, 'src'), 'dir');
+
+    await expect(
+      workspaces.releaseProjectDirectory('project-1', [{ path: 'src/app.ts', content: generated }]),
+    ).resolves.toBeUndefined();
+
+    await expect(readFile(join(external, 'app.ts'), 'utf8')).resolves.toBe(generated);
+  });
+
   it('releases the marker when an external edit replaces a generated file with a directory', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
