@@ -525,6 +525,27 @@ describe('NodePreviewRunner', () => {
     expect(session.failureEvidence?.stderr).toContain('ENOENT');
   }, 15_000);
 
+  it('keeps a real dev server killed by a signal a product failure, not an environment one (#659)', async () => {
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
+    let session = await newSession('sess-dev-server-signalled');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        // Becomes a process, then dies by signal — so it reports no exit code,
+        // exactly like a spawn that never ran. The pid is what tells them
+        // apart, and the generated app crashing must stay repairable.
+        dev: { ok: true, command: 'node', args: ['-e', "process.kill(process.pid, 'SIGKILL')"] },
+      },
+    };
+
+    session = await startTracked(runner, session);
+
+    expect(session.status).toBe('failed');
+    expect(session.error?.code).toBe('PREVIEW_START_FAILED');
+  }, 15_000);
+
   it('requires a successful HTTP response instead of treating an open TCP port as healthy', async () => {
     const runner = new NodePreviewRunner({
       startupTimeoutMs: 250,
