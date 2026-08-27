@@ -63,6 +63,12 @@ nodes:
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-approvals-project-'));
+  dirs.push(path);
+  return path;
+}
+
 interface StartedApi {
   runtime: Runtime;
   baseUrl: string;
@@ -97,6 +103,7 @@ async function createProject(baseUrl: string): Promise<string> {
       name: 'Approval E2E',
       prd: 'x'.repeat(60),
       workflowId: 'approval-e2e-v1',
+      projectDirectory: await createProjectDirectory(),
     }),
   });
   expect(response.status).toBe(202);

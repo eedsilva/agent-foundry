@@ -54,6 +54,7 @@ async function dockerBaseline(): Promise<{ containers: Set<string>; networks: Se
 suite('foundry pipeline regression (real mode, fake CLIs)', () => {
   let runtime: Runtime | undefined;
   let dataDir: string | undefined;
+  let projectDirectory: string | undefined;
   let baseline: Awaited<ReturnType<typeof dockerBaseline>> | undefined;
   let teardownProjectId: string | undefined;
   let teardownSessionId: string | undefined;
@@ -65,6 +66,7 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
     // workflow both run this file alone with --maxWorkers=1.
     process.env.PATH = `${FAKE_CLI_DIR}:${originalPath}`;
     dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-pipeline-regression-'));
+    projectDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-pipeline-regression-project-'));
     runtime = await createRuntime({
       ...process.env,
       REPO_ROOT: rootDir,
@@ -89,18 +91,21 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
       await runtime.generatedProjectRuntime.stop(teardownProjectId).catch(() => undefined);
     }
     if (dataDir) await rm(dataDir, { recursive: true, force: true });
+    if (projectDirectory) await rm(projectDirectory, { recursive: true, force: true });
   }, 180_000);
 
   it(
     'walks creation → approval → tasks → deterministic checks → preview health and tears everything down',
     async () => {
-      if (!runtime || !baseline) throw new Error('runtime was not initialized');
+      if (!runtime || !baseline || !projectDirectory)
+        throw new Error('runtime was not initialized');
       const dockerBefore = baseline;
 
       const project = await runtime.projectService.create({
         name: 'Pipeline regression',
         workflowId: 'web-app-v1',
         prd: 'Build the smallest persistent TODO app that proves the builder pipeline end to end.',
+        projectDirectory,
       });
       teardownProjectId = project.id;
       const runId = project.currentRunId;

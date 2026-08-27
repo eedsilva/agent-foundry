@@ -380,6 +380,12 @@ class FakeWorkspaces implements WorkspaceManager {
   workspacePath(projectId: string): string {
     return `/fake/${projectId}/workspace`;
   }
+  reserveProjectDirectory(_projectId: string, projectDirectory: string): Promise<string> {
+    return Promise.resolve(projectDirectory);
+  }
+  releaseProjectDirectory(): Promise<void> {
+    return Promise.resolve();
+  }
   ensure(): Promise<void> {
     return Promise.resolve();
   }

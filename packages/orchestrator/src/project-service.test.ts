@@ -36,6 +36,24 @@ describe('ProjectService.get', () => {
 });
 
 describe('ProjectService.create', () => {
+  it('persists the operator-selected canonical project directory before queueing', async () => {
+    const harness = makeHarness();
+
+    const project = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+
+    expect(project).toMatchObject({ projectDirectory: '/operator/projects/issue-radar' });
+    expect(await harness.projects.get(project.id)).toMatchObject({
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    expect(harness.workspaces.workspacePath(project.id)).toBe('/operator/projects/issue-radar');
+    expect(harness.enqueued).toHaveLength(1);
+  });
+
   it('stops before project creation when validation preflight is blocked', async () => {
     const campaign = ValidationCampaignPreviewSchema.parse({
       schemaVersion: '1',
@@ -89,6 +107,7 @@ describe('ProjectService.create', () => {
         name: 'Issue Radar',
         prd: 'Build it',
         workflowId: harness.workflow.id,
+        projectDirectory: '/fake/project',
       }),
     ).rejects.toThrow('Validation preflight environment-blocked at docker.');
 
@@ -128,6 +147,7 @@ describe('ProjectService.create', () => {
         name: 'Issue Radar',
         prd: 'Build it',
         workflowId: harness.workflow.id,
+        projectDirectory: '/fake/project',
       }),
     ).rejects.toThrow('Validation preflight is missing or does not match the selected campaign.');
 
@@ -190,6 +210,7 @@ describe('ProjectService.create', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
   });
 
@@ -227,6 +248,7 @@ describe('ProjectService.create', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
 
     expect(initialize).not.toHaveBeenCalled();
@@ -282,6 +304,7 @@ describe('ProjectService.create', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     harness.queueForWorker(harness.enqueued[0]!);
 
@@ -338,10 +361,13 @@ describe('ProjectService.create', () => {
         name: 'Issue Radar',
         prd: 'Build it',
         workflowId: harness.workflow.id,
+        projectDirectory: '/fake/project',
       }),
     ).rejects.toBe(transactionError);
 
     expect(harness.workspaces.cleanups).toEqual(['id-0001']);
+    expect(harness.workspaces.projectDirectories.has('id-0001')).toBe(false);
+    expect(harness.enqueued).toEqual([]);
   });
 });
 
@@ -393,6 +419,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     await runWorker(harness);
 
@@ -440,6 +467,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     await runWorker(harness);
 
@@ -486,6 +514,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     await runWorker(harness);
 
@@ -528,6 +557,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     await runWorker(harness);
 
@@ -556,6 +586,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     await runWorker(harness);
 
@@ -608,6 +639,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     await runWorker(harness);
 
@@ -630,6 +662,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     await runWorker(harness);
 
@@ -679,6 +712,7 @@ describe('ProjectService.create workspace boot', () => {
       name: 'Retry project',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     const worker = new WorkerLoop(harness.queue, harness.orchestrator, {} as never, {
       workerId: 'worker-1',
@@ -714,6 +748,7 @@ describe('ProjectService.create scaffold application', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
 
     expect(harness.workspaces.lastScaffoldFiles).toEqual(stores.scaffoldFiles.value);
@@ -735,6 +770,7 @@ describe('ProjectService.create scaffold application', () => {
       name: 'Issue Radar',
       prd: 'Build it',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
 
     expect(harness.workspaces.lastScaffoldFiles).toEqual([]);

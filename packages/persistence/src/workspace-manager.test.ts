@@ -15,6 +15,139 @@ import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 import { FileWorkspaceManager } from './workspace-manager.js';
 
+describe('FileWorkspaceManager project-directory reservation (#599)', () => {
+  function manager(dataDir: string): FileWorkspaceManager {
+    return new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+    });
+  }
+
+  it('reserves the exact canonical empty directory and rejects a concurrent second project', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    const attempts = await Promise.allSettled([
+      workspaces.reserveProjectDirectory('project-1', selected),
+      workspaces.reserveProjectDirectory('project-2', selected),
+    ]);
+    const winnerIndex = attempts.findIndex((attempt) => attempt.status === 'fulfilled');
+    const winner = attempts[winnerIndex] as PromiseFulfilledResult<string>;
+
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    expect(winner.value).toBe(await realpath(selected));
+    expect(workspaces.workspacePath(`project-${winnerIndex + 1}`)).toBe(await realpath(selected));
+  });
+
+  it('rejects a non-empty directory without changing it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const selected = await mkdtemp(join(tmpdir(), 'agent-foundry-project-'));
+    const sentinel = join(selected, 'keep.txt');
+    await writeFile(sentinel, 'operator work\n');
+
+    await expect(manager(dataDir).reserveProjectDirectory('project-1', selected)).rejects.toThrow(
+      /empty/i,
+    );
+    await expect(readFile(sentinel, 'utf8')).resolves.toBe('operator work\n');
+  });
+
+  it('rejects a directory whose parent has not been chosen or created', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+
+    await expect(
+      manager(dataDir).reserveProjectDirectory(
+        'project-1',
+        join(dataDir, 'missing', 'generated-app'),
+      ),
+    ).rejects.toThrow(/parent must already exist/i);
+  });
+
+  it('rejects a directory inside DATA_DIR before creating or reserving it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const selected = join(dataDir, 'generated-app');
+
+    await expect(manager(dataDir).reserveProjectDirectory('project-1', selected)).rejects.toThrow(
+      /outside DATA_DIR/i,
+    );
+    await expect(lstat(selected)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('releases pre-persistence artifacts so the selected directory can be reused', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await workspaces.ensure('project-1');
+    await workspaces.writePrd('project-1', 'Build the generated application.');
+    await workspaces.applyScaffold('project-1', [
+      { path: 'src/app.ts', content: 'export const app = true;\n' },
+    ]);
+    await workspaces.releaseProjectDirectory('project-1', [
+      { path: 'PRD.md', content: 'Build the generated application.\n' },
+      { path: 'src/app.ts', content: 'export const app = true;\n' },
+    ]);
+
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).resolves.toBe(
+      await realpath(selected),
+    );
+  });
+
+  it('preserves an external edit made before pre-persistence rollback', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await workspaces.writePrd('project-1', 'Generated PRD.');
+    await writeFile(join(selected, 'PRD.md'), 'Operator edit.\n');
+    await workspaces.releaseProjectDirectory('project-1', [
+      { path: 'PRD.md', content: 'Generated PRD.\n' },
+    ]);
+
+    await expect(readFile(join(selected, 'PRD.md'), 'utf8')).resolves.toBe('Operator edit.\n');
+  });
+
+  it('releases the marker when an external edit replaces a generated file with a directory', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await workspaces.applyScaffold('project-1', [
+      { path: 'src/app.ts', content: 'export const app = true;\n' },
+    ]);
+    await rm(join(selected, 'src', 'app.ts'));
+    await mkdir(join(selected, 'src', 'app.ts'));
+    await workspaces.releaseProjectDirectory('project-1', [
+      { path: 'src/app.ts', content: 'export const app = true;\n' },
+    ]);
+
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /new or empty/i,
+    );
+  });
+
+  it('keeps a durable reservation after a manager restart', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+
+    await manager(dataDir).reserveProjectDirectory('project-1', selected);
+    const restarted = manager(dataDir);
+
+    expect(restarted.workspacePath('project-1')).toBe(await realpath(selected));
+    await expect(restarted.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
+  });
+});
+
 describe('FileWorkspaceManager run inputs', () => {
   it('materializes a project knowledge input in the attempt context for a CLI child tool', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-workspace-'));

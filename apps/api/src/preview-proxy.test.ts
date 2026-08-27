@@ -12,6 +12,12 @@ const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
 const cleanups: Array<() => Promise<void>> = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-proxy-project-'));
+  dirs.push(path);
+  return path;
+}
+
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((stop) => stop().catch(() => undefined)));
   await Promise.all(apps.splice(0).map((app) => app.close()));
@@ -73,7 +79,11 @@ async function startPreview(baseUrl: string, runtime: Runtime, id: string, fixtu
   const projectResponse = await fetch(`${baseUrl}/projects`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: `Proxy ${id}`, prd: 'x'.repeat(60) }),
+    body: JSON.stringify({
+      name: `Proxy ${id}`,
+      prd: 'x'.repeat(60),
+      projectDirectory: await createProjectDirectory(),
+    }),
   });
   const { project } = (await projectResponse.json()) as { project: { id: string } };
   await runtime.workspaces.ensure(project.id);
@@ -410,7 +420,11 @@ describe('inspector script injection', () => {
     const projectResponse = await fetch(`${baseUrl}/projects`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: `Inject ${id}`, prd: 'x'.repeat(60) }),
+      body: JSON.stringify({
+        name: `Inject ${id}`,
+        prd: 'x'.repeat(60),
+        projectDirectory: await createProjectDirectory(),
+      }),
     });
     const { project } = (await projectResponse.json()) as { project: { id: string } };
     await runtime.workspaces.ensure(project.id);

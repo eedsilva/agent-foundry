@@ -51,6 +51,7 @@ suite('Supabase Postgres + Storage data plane', () => {
   let runtime: Runtime | undefined;
   let config: SupabaseDataPlaneConfig | undefined;
   let runtimeDataDir: string | undefined;
+  let projectDirectory: string | undefined;
   let localSupabaseDir: string | undefined;
   let bucket: string | undefined;
   let s3: S3Client | undefined;
@@ -60,6 +61,8 @@ suite('Supabase Postgres + Storage data plane', () => {
   beforeAll(async () => {
     runtimeDataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-supabase-data-plane-'));
     cleanupPaths.add(runtimeDataDir);
+    projectDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-supabase-data-plane-project-'));
+    cleanupPaths.add(projectDirectory);
     config = USE_HOSTED
       ? hostedSupabaseDataPlaneConfigFromEnv(process.env)
       : await startLocalSupabaseProject();
@@ -172,7 +175,7 @@ suite('Supabase Postgres + Storage data plane', () => {
   it(
     'becomes ready, completes a representative Postgres-backed workflow run, and round-trips direct blob-store bytes through Supabase S3',
     async () => {
-      if (!runtime || !config || !bucket) {
+      if (!runtime || !config || !bucket || !projectDirectory) {
         throw new Error('Expected Supabase data-plane runtime to be initialized.');
       }
 
@@ -185,6 +188,7 @@ suite('Supabase Postgres + Storage data plane', () => {
         name: 'Supabase data-plane sample',
         workflowId: 'web-app-v1',
         prd: 'Build a small persistent issue tracker with deterministic tests.',
+        projectDirectory,
       });
       if (!project.currentRunId) {
         throw new Error('Expected project to reference its workflow run.');

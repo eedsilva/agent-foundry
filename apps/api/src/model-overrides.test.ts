@@ -7,6 +7,12 @@ import { buildApp } from './app.js';
 
 const directories: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-api-overrides-project-'));
+  directories.push(path);
+  return path;
+}
+
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -28,6 +34,7 @@ describe('model override API', () => {
       name: 'Override API',
       prd: 'Create a deterministic model override API with immutable audit records.',
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const model = (await runtime.router.catalog()).find((candidate) => candidate.model)!;
     const app = await buildApp(runtime);
@@ -84,6 +91,7 @@ describe('model override API', () => {
       name: 'Forbidden override',
       prd: 'Reject a policy-forbidden explicit model before invoking the configured executor.',
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const claude = (await runtime.router.catalog()).find((model) => model.provider === 'claude')!;
     await runtime.projectService.createModelOverride(project.currentRunId!, {
@@ -121,6 +129,7 @@ describe('model override API', () => {
       name: 'Unresolved override',
       prd: 'Reject an explicit model pin when its catalog tuple does not match.',
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const app = await buildApp(runtime);
 
@@ -185,6 +194,7 @@ describe('model override API', () => {
       name: 'Duplicate tuple',
       prd: 'Preserve the selected catalog identity.',
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const app = await buildApp(runtime);
 
@@ -228,6 +238,7 @@ describe('model override API', () => {
       name: 'Verify retry pin',
       prd: 'Reject model pins for non-agent retry targets.',
       workflowId: 'verify-only',
+      projectDirectory: await createProjectDirectory(),
     });
     const runId = project.currentRunId!;
     expect(await runtime.worker.runOnce()).toBe(true);

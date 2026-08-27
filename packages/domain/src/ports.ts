@@ -528,6 +528,13 @@ export interface VerificationService {
 
 export interface WorkspaceManager {
   projectRoot(projectId: string): string;
+  /** Reserves an operator-selected directory for one project until its durable record exists. */
+  reserveProjectDirectory(projectId: string, projectDirectory: string): Promise<string>;
+  /** Releases only unchanged files generated before the project record was persisted. */
+  releaseProjectDirectory(
+    projectId: string,
+    generatedFiles?: Array<{ path: string; content: string }>,
+  ): Promise<void>;
   /**
    * With `worktree`, resolves to `<projectRoot>/worktrees/<worktree>` (see
    * `createWorktree`); otherwise the primary `<projectRoot>/workspace`

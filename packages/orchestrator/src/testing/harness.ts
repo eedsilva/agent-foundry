@@ -736,6 +736,7 @@ export class FakeWorkspaces implements WorkspaceManager {
    */
   readonly checkpointTargets: string[] = [];
   readonly cleanups: string[] = [];
+  readonly projectDirectories = new Map<string, string>();
   readonly drafts: string[] = [];
   readonly draftCommits = new Map<string, string>();
   current = 'initial-head';
@@ -753,7 +754,20 @@ export class FakeWorkspaces implements WorkspaceManager {
   workspacePath(projectId: string, worktree?: string): string {
     return worktree !== undefined
       ? `/fake/${projectId}/worktrees/${worktree}`
-      : `/fake/${projectId}/workspace`;
+      : (this.projectDirectories.get(projectId) ?? `/fake/${projectId}/workspace`);
+  }
+  reserveProjectDirectory(projectId: string, projectDirectory: string): Promise<string> {
+    if ([...this.projectDirectories.values()].includes(projectDirectory)) {
+      return Promise.reject(
+        new Error(`Project directory is already reserved: ${projectDirectory}`),
+      );
+    }
+    this.projectDirectories.set(projectId, projectDirectory);
+    return Promise.resolve(projectDirectory);
+  }
+  releaseProjectDirectory(projectId: string): Promise<void> {
+    this.projectDirectories.delete(projectId);
+    return Promise.resolve();
   }
   ensure(): Promise<void> {
     return Promise.resolve();

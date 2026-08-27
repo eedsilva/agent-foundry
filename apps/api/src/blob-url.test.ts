@@ -10,6 +10,12 @@ import { buildApp } from './app.js';
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-url-project-'));
+  dirs.push(path);
+  return path;
+}
+
 afterEach(async () => {
   await Promise.all(apps.splice(0).map((app) => app.close().catch(() => undefined)));
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -37,7 +43,11 @@ async function createProject(app: FastifyInstance): Promise<string> {
   const response = await app.inject({
     method: 'POST',
     url: '/projects',
-    payload: { name: 'Blob URL sample', prd: 'x'.repeat(60) },
+    payload: {
+      name: 'Blob URL sample',
+      prd: 'x'.repeat(60),
+      projectDirectory: await createProjectDirectory(),
+    },
   });
   const { project } = response.json() as { project: { id: string } };
   return project.id;

@@ -8,6 +8,12 @@ import { sweepUnreferencedBlobs } from './blob-gc.js';
 
 const dirs: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-blob-gc-project-'));
+  dirs.push(path);
+  return path;
+}
+
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -34,6 +40,7 @@ describe('sweepUnreferencedBlobs', () => {
       name: 'GC removed knowledge',
       prd: 'x'.repeat(60),
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const metadata = await runtime.artifacts.putBlob(
       {
@@ -89,6 +96,7 @@ describe('sweepUnreferencedBlobs', () => {
       name: 'GC referenced',
       prd: 'x'.repeat(60),
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const metadata = await runtime.artifacts.putBlob(
       {
@@ -115,6 +123,7 @@ describe('sweepUnreferencedBlobs', () => {
       name: 'GC young orphan',
       prd: 'x'.repeat(60),
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const key = blobKeyFor(project.id, 'crashed-write', 1);
     await runtime.blobStore.put(
@@ -134,6 +143,7 @@ describe('sweepUnreferencedBlobs', () => {
       name: 'GC old orphan',
       prd: 'x'.repeat(60),
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const key = blobKeyFor(project.id, 'crashed-write', 1);
     await runtime.blobStore.put(

@@ -160,11 +160,16 @@ export class ProjectService {
     const now = this.clock.now().toISOString();
     const projectId = this.ids.next();
     const runId = this.ids.next();
+    const projectDirectory = await this.workspaces.reserveProjectDirectory(
+      projectId,
+      input.projectDirectory,
+    );
     const project: Project = {
       id: projectId,
       name: input.name,
       workflowId: input.workflowId,
       policyId,
+      projectDirectory,
       status: 'queued',
       version: 1,
       createdAt: now,
@@ -190,13 +195,6 @@ export class ProjectService {
         : {}),
     };
 
-    await this.workspaces.ensure(project.id);
-    await this.workspaces.writePrd(project.id, input.prd);
-    const scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
-    if (scaffoldFiles.length > 0) {
-      await this.workspaces.applyScaffold(project.id, scaffoldFiles);
-    }
-
     const job: QueueJob = {
       id: this.ids.next(),
       type: 'run-project',
@@ -210,8 +208,16 @@ export class ProjectService {
       leaseEpoch: 0,
       ...traceContextField(),
     };
-
+    let persisted = false;
+    let scaffoldFiles: Array<{ path: string; content: string }> = [];
     try {
+      await this.workspaces.ensure(project.id);
+      await this.workspaces.writePrd(project.id, input.prd);
+      scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
+      if (scaffoldFiles.length > 0) {
+        await this.workspaces.applyScaffold(project.id, scaffoldFiles);
+      }
+
       await this.transactionRunner.run(async (tx) => {
         await this.projects.create(project, tx);
         await this.runs.create(run, tx);
@@ -228,8 +234,17 @@ export class ProjectService {
           );
         }
       });
+      persisted = true;
     } catch (error) {
-      await this.workspaces.cleanup(project.id).catch(() => undefined);
+      if (!persisted) {
+        await this.workspaces
+          .releaseProjectDirectory(project.id, [
+            { path: 'PRD.md', content: `${input.prd.trim()}\n` },
+            ...scaffoldFiles,
+          ])
+          .catch(() => undefined);
+        await this.workspaces.cleanup(project.id).catch(() => undefined);
+      }
       throw error;
     }
 

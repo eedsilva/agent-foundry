@@ -1,5 +1,18 @@
-import { open, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readlinkSync } from 'node:fs';
+import {
+  lstat,
+  open,
+  readFile,
+  readlink,
+  readdir,
+  realpath,
+  rmdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execa } from 'execa';
 import {
   ExecutionError,
@@ -17,7 +30,9 @@ import {
   exists,
   isNotFound,
   pathFor,
+  readJsonOrNull,
   safeSegment,
+  withRecoverableDirectoryLock,
 } from './fs-utils.js';
 
 export interface FileWorkspaceManagerOptions {
@@ -29,6 +44,36 @@ export interface FileWorkspaceManagerOptions {
  * tight enough that a pathological workspace file can't be read fully into
  * memory and serialized back over HTTP unbounded. */
 const WORKSPACE_FILE_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_GITIGNORE = [
+  'node_modules/',
+  '.next/',
+  'dist/',
+  'coverage/',
+  '.env*',
+  '!.env.example',
+  '.orchestrator/',
+  '*.log',
+  // The Supabase CLI's state for the project's own local stack.
+  'supabase/.temp/',
+  '',
+].join('\n');
+
+type ProjectDirectoryReservation = { projectId: string; projectDirectory: string };
+
+function reservationId(projectDirectory: string): string {
+  return createHash('sha256').update(projectDirectory).digest('hex');
+}
+
+async function removeEmptyParents(root: string, path: string): Promise<void> {
+  for (let current = dirname(path); current !== root; current = dirname(current)) {
+    try {
+      await rmdir(current);
+    } catch (error) {
+      if (isNotFound(error) || (error as NodeJS.ErrnoException).code === 'ENOTEMPTY') return;
+      throw error;
+    }
+  }
+}
 
 /**
  * Recursive walk that prunes gitignored directories (node_modules, .next,
@@ -87,7 +132,117 @@ export class FileWorkspaceManager implements WorkspaceManager {
     if (worktree !== undefined) {
       return join(this.projectRoot(projectId), 'worktrees', safeSegment(worktree));
     }
-    return join(this.projectRoot(projectId), 'workspace');
+    const workspace = join(this.projectRoot(projectId), 'workspace');
+    try {
+      return readlinkSync(workspace);
+    } catch (error) {
+      if (isNotFound(error) || (error as NodeJS.ErrnoException).code === 'EINVAL') {
+        return workspace;
+      }
+      throw error;
+    }
+  }
+
+  async reserveProjectDirectory(projectId: string, projectDirectory: string): Promise<string> {
+    if (!isAbsolute(projectDirectory)) {
+      throw new ValidationError('Project directory must be an absolute path.');
+    }
+    const requested = resolve(projectDirectory);
+    const existing = await lstat(requested).catch((error) => {
+      if (isNotFound(error)) return null;
+      throw error;
+    });
+    const canonical = existing
+      ? await realpath(requested)
+      : join(
+          await realpath(dirname(requested)).catch((error) => {
+            if (isNotFound(error)) {
+              throw new ValidationError('Project directory parent must already exist.');
+            }
+            throw error;
+          }),
+          basename(requested),
+        );
+    const canonicalDataDir = await realpath(this.dataDir);
+    if (canonical === canonicalDataDir || canonical.startsWith(`${canonicalDataDir}${sep}`)) {
+      throw new ValidationError('Project directory must be outside DATA_DIR.');
+    }
+    const id = reservationId(canonical);
+    const reservationPath = join(this.dataDir, 'project-directory-reservations', `${id}.json`);
+    const workspace = join(this.projectRoot(projectId), 'workspace');
+
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['project-directory-reservations', id, 'lock'],
+      async () => {
+        const reserved = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
+        if (reserved) {
+          throw new ValidationError(
+            `Project directory is already reserved by ${reserved.projectId}.`,
+          );
+        }
+        const current = await lstat(canonical).catch((error) => {
+          if (isNotFound(error)) return null;
+          throw error;
+        });
+        if (current) {
+          if (!current.isDirectory())
+            throw new ValidationError('Project directory must be a directory.');
+          if ((await readdir(canonical)).length > 0) {
+            throw new ValidationError('Project directory must be new or empty.');
+          }
+        } else {
+          await ensureDir(canonical);
+        }
+        await atomicWriteJson(reservationPath, { projectId, projectDirectory: canonical });
+        try {
+          await ensureDir(this.projectRoot(projectId));
+          await symlink(canonical, workspace, 'dir');
+        } catch (error) {
+          await rm(reservationPath, { force: true });
+          throw error;
+        }
+      },
+    );
+    return canonical;
+  }
+
+  async releaseProjectDirectory(
+    projectId: string,
+    generatedFiles: Array<{ path: string; content: string }> = [],
+  ): Promise<void> {
+    const workspace = join(this.projectRoot(projectId), 'workspace');
+    const projectDirectory = await readlink(workspace).catch((error) => {
+      if (isNotFound(error)) return null;
+      throw error;
+    });
+    if (!projectDirectory) return;
+    const id = reservationId(projectDirectory);
+    const reservationPath = join(this.dataDir, 'project-directory-reservations', `${id}.json`);
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['project-directory-reservations', id, 'lock'],
+      async () => {
+        const reserved = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
+        if (!reserved || reserved.projectId !== projectId) return;
+        for (const { path, content } of [
+          { path: '.gitignore', content: DEFAULT_GITIGNORE },
+          ...generatedFiles,
+        ]) {
+          const generatedFile = pathFor(projectDirectory, ...path.split('/'));
+          const current = await readFile(generatedFile, 'utf8').catch((error) => {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (isNotFound(error) || code === 'EISDIR' || code === 'EINVAL') return null;
+            throw error;
+          });
+          if (current !== content) continue;
+          await rm(generatedFile, { force: true });
+          await removeEmptyParents(projectDirectory, generatedFile);
+        }
+        await rm(reservationPath, { force: true });
+        await rm(workspace, { force: true });
+      },
+    );
   }
 
   async ensure(projectId: string): Promise<void> {
@@ -95,22 +250,7 @@ export class FileWorkspaceManager implements WorkspaceManager {
     await ensureDir(workspace);
     const gitignore = join(workspace, '.gitignore');
     if (!(await exists(gitignore))) {
-      await atomicWriteText(
-        gitignore,
-        [
-          'node_modules/',
-          '.next/',
-          'dist/',
-          'coverage/',
-          '.env*',
-          '!.env.example',
-          '.orchestrator/',
-          '*.log',
-          // The Supabase CLI's state for the project's own local stack.
-          'supabase/.temp/',
-          '',
-        ].join('\n'),
-      );
+      await atomicWriteText(gitignore, DEFAULT_GITIGNORE);
     }
   }
 

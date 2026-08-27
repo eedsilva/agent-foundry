@@ -97,6 +97,7 @@ function readCookie(header: string, name: string): string | undefined {
 export async function createProject(input: {
   name: string;
   prd: string;
+  projectDirectory: string;
   workflowId: string;
 }): Promise<Project> {
   const response = await api<{ project: Project }>('/projects', {

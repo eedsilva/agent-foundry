@@ -10,6 +10,12 @@ import { buildApp } from './app.js';
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-quality-project-'));
+  dirs.push(path);
+  return path;
+}
+
 const routeDecision = RouteDecisionSchema.parse({
   routeId: 'route-1',
   createdAt: '2026-07-18T12:00:00.000Z',
@@ -91,6 +97,7 @@ describe('quality observation API (#64)', () => {
       name: 'Quality evidence',
       prd: 'x'.repeat(60),
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const artifact = await runtime.artifacts.put({
       projectId: project.id,
@@ -143,6 +150,7 @@ describe('quality observation API (#64)', () => {
       name: 'Regression evidence',
       prd: 'x'.repeat(60),
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const artifact = await runtime.artifacts.put({
       projectId: project.id,
@@ -185,6 +193,7 @@ describe('quality observation API (#64)', () => {
       name: 'Unrouted evidence',
       prd: 'x'.repeat(60),
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     });
     const artifact = await runtime.artifacts.put({
       projectId: project.id,

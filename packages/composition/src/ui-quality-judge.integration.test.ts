@@ -216,6 +216,8 @@ async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
 }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ui-quality-judge-'));
   temporaryDirectories.push(dataDir);
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-ui-quality-judge-project-'));
+  temporaryDirectories.push(projectDirectory);
   const policiesDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ui-quality-judge-policies-'));
   temporaryDirectories.push(policiesDir);
   // A dedicated policy (rather than the repo's shared policies/default.yaml)
@@ -268,6 +270,7 @@ async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
       'Build a tiny issue tracker with create and complete flows.',
       'Persist issues, validate inputs, expose clear failure states, and add deterministic tests.',
     ].join('\n\n'),
+    projectDirectory,
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
   return { runtime, runId: project.currentRunId, projectId: project.id, judge };

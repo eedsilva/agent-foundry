@@ -51,11 +51,13 @@ async function fixture(): Promise<{
   runtime: Runtime;
   env: NodeJS.ProcessEnv;
   catalogPath: string;
+  projectDirectory: string;
 }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-override-drift-data-'));
   const workflowsDir = await mkdtemp(join(tmpdir(), 'agent-foundry-override-drift-workflows-'));
   const modelDir = await mkdtemp(join(tmpdir(), 'agent-foundry-override-drift-models-'));
-  directories.push(dataDir, workflowsDir, modelDir);
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-override-drift-project-'));
+  directories.push(dataDir, workflowsDir, modelDir, projectDirectory);
   const catalogPath = join(modelDir, 'catalog.yaml');
   await writeFile(join(workflowsDir, 'override-drift-v1.yaml'), WORKFLOW, 'utf8');
   await writeFile(catalogPath, catalog('model-v1'), 'utf8');
@@ -68,7 +70,7 @@ async function fixture(): Promise<{
     EXECUTOR_MODE: 'mock',
     AUTO_INSTALL_DEPENDENCIES: 'false',
   };
-  return { runtime: await createRuntime(env), env, catalogPath };
+  return { runtime: await createRuntime(env), env, catalogPath, projectDirectory };
 }
 
 async function attemptCount(runtime: Runtime, runId: string): Promise<number> {
@@ -83,11 +85,12 @@ describe('persisted override catalog drift', () => {
   it.each(['run', 'step'] as const)(
     'fails a %s pin before execution after restart changes the catalog tuple',
     async (scopeKind) => {
-      const { runtime, env, catalogPath } = await fixture();
+      const { runtime, env, catalogPath, projectDirectory } = await fixture();
       const project = await runtime.projectService.create({
         name: `${scopeKind} drift`,
         prd: 'Fail closed when a persisted model pin no longer matches the restarted catalog.',
         workflowId: 'override-drift-v1',
+        projectDirectory,
       });
       const runId = project.currentRunId!;
       await runtime.projectService.createModelOverride(runId, {
@@ -113,11 +116,12 @@ describe('persisted override catalog drift', () => {
   );
 
   it('fails a retry pin before a second attempt after restart changes the catalog tuple', async () => {
-    const { runtime, env, catalogPath } = await fixture();
+    const { runtime, env, catalogPath, projectDirectory } = await fixture();
     const project = await runtime.projectService.create({
       name: 'retry drift',
       prd: 'Fail closed when a persisted retry pin no longer matches the restarted catalog.',
       workflowId: 'override-drift-v1',
+      projectDirectory,
     });
     const runId = project.currentRunId!;
     expect(await runtime.worker.runOnce()).toBe(true);
