@@ -774,14 +774,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       artifact,
       createdAt: this.#now().toISOString(),
     });
-    await storeFunctionVersion(this.#dataDir, environment.projectId, version, files);
-    await activateFunctionVersion(
-      this.#dataDir,
-      environment.workdir,
-      environment.projectId,
-      version,
-      files,
-    );
+    const root = this.#root(input);
+    await storeFunctionVersion(root, version, files);
+    await activateFunctionVersion(root, environment.workdir, version, files);
     await this.#touch(environment);
     return version;
   }
@@ -792,9 +787,11 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     environmentId?: string;
     functionName: string;
   }): Promise<FunctionVersion[]> {
-    const environment = await this.#require(targetFrom(input));
+    // Kept for its side effect: an unknown environment must fail as such
+    // rather than come back as an empty version list.
+    await this.#require(targetFrom(input));
     const functionName = parsePathSegment('function name', input.functionName);
-    return readFunctionVersions(this.#dataDir, environment.projectId, functionName);
+    return readFunctionVersions(this.#root(input), functionName);
   }
 
   async rollbackFunction(input: {
@@ -807,12 +804,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     const environment = await this.#require(targetFrom(input));
     const functionName = parsePathSegment('function name', input.functionName);
     const versionId = parsePathSegment('version ID', input.versionId);
-    const manifestPath = functionVersionManifestPath(
-      this.#dataDir,
-      environment.projectId,
-      functionName,
-      versionId,
-    );
+    const root = this.#root(input);
+    const manifestPath = functionVersionManifestPath(root, functionName, versionId);
     let version: FunctionVersion;
     try {
       version = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
@@ -823,18 +816,12 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       throw error;
     }
     const files = await collectFunctionFiles(
-      functionVersionFilesDir(this.#dataDir, environment.projectId, functionName, versionId),
+      functionVersionFilesDir(root, functionName, versionId),
     );
     if (functionChecksum(files) !== version.checksum) {
       throw new ValidationError('Stored function version failed checksum verification.');
     }
-    await activateFunctionVersion(
-      this.#dataDir,
-      environment.workdir,
-      environment.projectId,
-      version,
-      files,
-    );
+    await activateFunctionVersion(root, environment.workdir, version, files);
     await this.#touch(environment);
     return version;
   }
@@ -849,20 +836,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }): Promise<FunctionInvocationResult> {
     const environment = await this.#require(targetFrom(input));
     const functionName = parsePathSegment('function name', input.functionName);
+    const root = this.#root(input);
     let current: FunctionVersion;
     try {
       const pointer = JSON.parse(
-        await readFile(
-          currentFunctionVersionPath(this.#dataDir, environment.projectId, functionName),
-          'utf8',
-        ),
+        await readFile(currentFunctionVersionPath(root, functionName), 'utf8'),
       ) as { versionId: string };
-      const manifestPath = functionVersionManifestPath(
-        this.#dataDir,
-        environment.projectId,
-        functionName,
-        pointer.versionId,
-      );
+      const manifestPath = functionVersionManifestPath(root, functionName, pointer.versionId);
       current = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
     } catch (error) {
       if (isNotFound(error)) {
@@ -931,6 +911,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       if (isNotFound(error)) return null;
       throw error;
     }
+  }
+
+  /** Root of the addressed environment's own state on disk. Everything a
+   * caller stores per environment — today the function version history —
+   * hangs off it, never off the bare project. */
+  #root(input: { projectId: string; environmentId?: string }): string {
+    return environmentRoot(this.#dataDir, resolveTarget(targetFrom(input)));
   }
 
   async #require(target: EnvironmentTarget | ResolvedTarget): Promise<AppEnvironment> {
@@ -1042,9 +1029,9 @@ function resolveTarget(target: EnvironmentTarget | ResolvedTarget): ResolvedTarg
     : { projectId, environmentId: parsePathSegment('environment ID', target.environmentId) };
 }
 
-/** Key for in-process maps and hashes. Distinct per environment, so two
- * classes of one project never share an in-flight initialization or a
- * preferred port slot. */
+/** Key for in-process maps and for the message a caller reads. Distinct per
+ * environment, so two classes of one project never share an in-flight
+ * initialization. */
 function targetKey(target: ResolvedTarget): string {
   return target.environmentId ? `${target.projectId}/${target.environmentId}` : target.projectId;
 }
@@ -1056,14 +1043,19 @@ function targetFrom(input: { projectId: string; environmentId?: string }): Envir
 }
 
 /** ADR 0080 requires directory, compose project, network, and volume to be
- * candidate-aware. `projects/<id>/environment` stays the legacy root so
- * existing installs keep resolving; explicit environments live under
- * `projects/<id>/environments/<environmentId>` and can never collide with it
- * or with each other. */
-function environmentDir(dataDir: string, target: ResolvedTarget): string {
+ * candidate-aware, and everything one environment owns hangs off this root:
+ * its Supabase workdir and its function version history. A legacy address
+ * keeps `projects/<id>`, so an existing install resolves unchanged; an
+ * explicit environment gets `projects/<id>/environments/<environmentId>`,
+ * which can never collide with the legacy root or with a sibling. */
+function environmentRoot(dataDir: string, target: ResolvedTarget): string {
   return target.environmentId
     ? join(dataDir, 'projects', target.projectId, 'environments', target.environmentId)
-    : join(dataDir, 'projects', target.projectId, 'environment');
+    : join(dataDir, 'projects', target.projectId);
+}
+
+function environmentDir(dataDir: string, target: ResolvedTarget): string {
+  return join(environmentRoot(dataDir, target), 'environment');
 }
 
 function projectResources(dataDir: string, target: ResolvedTarget) {
@@ -1082,9 +1074,14 @@ function metadataPath(dataDir: string, target: ResolvedTarget): string {
   return join(environmentDir(dataDir, target), 'environment.json');
 }
 
-// A sibling of environmentDir, matching WorkspaceManager.projectRoot
+// A sibling of the legacy environmentDir, matching WorkspaceManager.projectRoot
 // (packages/persistence/src/workspace-manager.ts) — outside the git-tracked
 // workspace/ directory by construction (ADR 0033).
+// ponytail: still keyed by project, so two environments of one project write
+// the same .env and the last initialize() wins the credentials the preview
+// subprocess reads. Making it per environment means teaching SecretStore and
+// NodePreviewRunner which environment a preview belongs to — a caller
+// migration of its own, outside #617's three closures.
 function projectEnvPath(dataDir: string, projectId: string): string {
   return join(dataDir, 'projects', projectId, '.env');
 }
@@ -1303,48 +1300,36 @@ function functionChecksum(files: FunctionFile[]): string {
   return sha256(Buffer.concat(parts));
 }
 
-function functionVersionsDir(dataDir: string, projectId: string, functionName: string): string {
-  return join(dataDir, 'projects', projectId, 'functions', functionName, 'versions');
+// Function state is keyed by the environment root, not by the project: a
+// candidate deploy must not rewrite the accepted stack's version list or its
+// current pointer (#617). The legacy root is still `projects/<id>`, so an
+// existing install's `functions/` directory resolves unchanged.
+function functionVersionsDir(root: string, functionName: string): string {
+  return join(root, 'functions', functionName, 'versions');
 }
 
 function functionVersionManifestPath(
-  dataDir: string,
-  projectId: string,
+  root: string,
   functionName: string,
   versionId: string,
 ): string {
-  return join(functionVersionsDir(dataDir, projectId, functionName), `${versionId}.json`);
+  return join(functionVersionsDir(root, functionName), `${versionId}.json`);
 }
 
-function functionVersionFilesDir(
-  dataDir: string,
-  projectId: string,
-  functionName: string,
-  versionId: string,
-): string {
-  return join(functionVersionsDir(dataDir, projectId, functionName), versionId);
+function functionVersionFilesDir(root: string, functionName: string, versionId: string): string {
+  return join(functionVersionsDir(root, functionName), versionId);
 }
 
-function currentFunctionVersionPath(
-  dataDir: string,
-  projectId: string,
-  functionName: string,
-): string {
-  return join(dataDir, 'projects', projectId, 'functions', functionName, 'current.json');
+function currentFunctionVersionPath(root: string, functionName: string): string {
+  return join(root, 'functions', functionName, 'current.json');
 }
 
 async function storeFunctionVersion(
-  dataDir: string,
-  projectId: string,
+  root: string,
   version: FunctionVersion,
   files: FunctionFile[],
 ): Promise<void> {
-  const versionDir = functionVersionFilesDir(
-    dataDir,
-    projectId,
-    version.functionName,
-    version.versionId,
-  );
+  const versionDir = functionVersionFilesDir(root, version.functionName, version.versionId);
   await mkdir(versionDir, { recursive: true });
   await Promise.all(
     files.map(async (file) => {
@@ -1354,17 +1339,16 @@ async function storeFunctionVersion(
     }),
   );
   await atomicWrite(
-    functionVersionManifestPath(dataDir, projectId, version.functionName, version.versionId),
+    functionVersionManifestPath(root, version.functionName, version.versionId),
     `${JSON.stringify(version, null, 2)}\n`,
   );
 }
 
 async function readFunctionVersions(
-  dataDir: string,
-  projectId: string,
+  root: string,
   functionName: string,
 ): Promise<FunctionVersion[]> {
-  const dir = functionVersionsDir(dataDir, projectId, functionName);
+  const dir = functionVersionsDir(root, functionName);
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -1397,9 +1381,8 @@ function liveFunctionDir(workdir: string, functionName: string): string {
 }
 
 async function activateFunctionVersion(
-  dataDir: string,
+  root: string,
   workdir: string,
-  projectId: string,
   version: FunctionVersion,
   files: FunctionFile[],
 ): Promise<void> {
@@ -1415,7 +1398,7 @@ async function activateFunctionVersion(
   );
   await writeFunctionConfigSection(workdir, version.functionName, version.artifact);
   await atomicWrite(
-    currentFunctionVersionPath(dataDir, projectId, version.functionName),
+    currentFunctionVersionPath(root, version.functionName),
     `${JSON.stringify({ versionId: version.versionId }, null, 2)}\n`,
   );
 }

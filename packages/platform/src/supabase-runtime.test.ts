@@ -2243,7 +2243,15 @@ describe('callers address one environment, not one project (#617)', () => {
   } as const;
 
   const environmentMetadata = (projectId: string, environmentId: string) =>
-    join(dataDir, 'projects', projectId, 'environments', environmentId, 'environment.json');
+    join(
+      dataDir,
+      'projects',
+      projectId,
+      'environments',
+      environmentId,
+      'environment',
+      'environment.json',
+    );
 
   async function hostPorts(workdir: string): Promise<number[]> {
     const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
@@ -2332,6 +2340,56 @@ describe('callers address one environment, not one project (#617)', () => {
     expect(
       environments.map((environment) => environment.identity?.environmentId ?? null).sort(),
     ).toEqual([CANDIDATE.environmentId, null].sort());
+  });
+
+  it('keeps one class function history out of the other', async () => {
+    const { runtime } = fixture();
+    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    const deploy = async (workdir: string, environmentId: string, body: string) => {
+      const dir = join(workdir, 'supabase', 'functions', 'hello');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'index.ts'), body);
+      return runtime.deployFunction({
+        projectId: 'project-a',
+        environmentId,
+        functionPath: 'supabase/functions/hello',
+        artifact: FUNCTION_ARTIFACT,
+      });
+    };
+    const versions = async (environmentId: string) =>
+      (
+        await runtime.listFunctionVersions({
+          projectId: 'project-a',
+          environmentId,
+          functionName: 'hello',
+        })
+      ).map((version) => version.versionId);
+
+    const candidateVersion = await deploy(
+      candidate.workdir,
+      CANDIDATE.environmentId,
+      'export default () => new Response("candidate");\n',
+    );
+    const acceptedVersion = await deploy(
+      accepted.workdir,
+      ACCEPTED.environmentId,
+      'export default () => new Response("accepted");\n',
+    );
+
+    // Par negativo: keyed by project id, both deploys land in one history and
+    // the second one silently becomes the first one's current version.
+    expect(await versions(CANDIDATE.environmentId)).toEqual([candidateVersion.versionId]);
+    expect(await versions(ACCEPTED.environmentId)).toEqual([acceptedVersion.versionId]);
+    await expect(
+      runtime.rollbackFunction({
+        projectId: 'project-a',
+        environmentId: ACCEPTED.environmentId,
+        functionName: 'hello',
+        versionId: candidateVersion.versionId,
+      }),
+    ).rejects.toThrow(/was not found/);
   });
 
   it('refuses an identity that names another project', async () => {
