@@ -438,6 +438,38 @@ describe('NodePreviewRunner', () => {
     expect(page.entries.some((entry) => entry.message.includes('fixture stderr'))).toBe(true);
   }, 30_000);
 
+  it('keeps the reason a dev server was killed from outside this runner (#663)', async () => {
+    const logs = new InMemoryPreviewLogRepository();
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000, logRepository: logs });
+    let session = await newSession('sess-external-kill');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT, '--ignore-sigterm'] },
+      },
+    };
+    session = await startTracked(runner, session);
+    const pid = session.process!.pid!;
+
+    // stop() never runs: this is the OOM killer, or an operator. The signal
+    // reaches the same exit handler a deliberate kill does, and there is no
+    // field on the session that records it — `PreviewFailureEvidenceSchema` is
+    // `.strict()` with only command/exitCode/stdout/stderr — so suppressing
+    // this line leaves a dead preview with no cause at all.
+    process.kill(pid, 'SIGKILL');
+    await vi.waitFor(() => {
+      expect(isAlive(pid)).toBe(false);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const stopped = await runner.stop(session);
+    const page = await logs.list(stopped.id, {});
+    expect(page.entries.some((entry) => /was killed with SIGKILL/.test(entry.message))).toBe(true);
+    expect(stopped.failureEvidence?.stderr).toMatch(/was killed with SIGKILL/);
+  }, 30_000);
+
   it('names the missing command in failureEvidence when the dev server never spawns (#658)', async () => {
     const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
     let session = await newSession('sess-dev-command-missing');

@@ -60,6 +60,13 @@ interface ProcessEntry {
   port: number;
   logWrites: Promise<void>;
   exited: boolean;
+  /**
+   * This runner asked the process to die. Set before the kill, so the exit
+   * handler can tell a deliberate stop from a signal that came from outside
+   * (an OOM kill, an operator's `kill -9`) — which is a cause worth reporting,
+   * and whose only carrier is that line (#663).
+   */
+  stopping: boolean;
   exitCode?: number;
   output: { stdout: string; stderr: string };
   flushOutput: () => void;
@@ -233,6 +240,7 @@ export class NodePreviewRunner implements PreviewRunner {
       if (persistedPid !== undefined) await terminatePersistedProcessTree(persistedPid);
       return;
     }
+    entry.stopping = true;
     if (entry.exited) killProcessTree(entry.child, 'SIGKILL');
     else await terminateProcessTree(entry.child);
     entry.flushOutput();
@@ -326,6 +334,7 @@ export class NodePreviewRunner implements PreviewRunner {
       port: reservedPort,
       logWrites: Promise.resolve(),
       exited: false,
+      stopping: false,
       output: { stdout: '', stderr: '' },
       flushOutput: () => {},
     };
@@ -384,10 +393,13 @@ export class NodePreviewRunner implements PreviewRunner {
         entry.exitCode = record.exitCode;
         return;
       }
-      // A signal means the process existed and something killed it — usually
-      // this runner's own stop(), which must not write a line the dev server
-      // never printed into the operator's log.
-      if (record.signal) return;
+      // A signal means the process existed and something killed it. When this
+      // runner asked for that, the reason is not stderr the dev server printed
+      // and must stay out of the operator's log. When it came from outside —
+      // an OOM kill, an operator's `kill -9` — this line is the only carrier
+      // of the cause: `PreviewFailureEvidenceSchema` is `.strict()` with no
+      // field for a signal, so dropping it here loses it everywhere (#663).
+      if (record.signal && entry.stopping) return;
       // What is left is a spawn that never reached the program — the package
       // manager missing from PATH (ENOENT), a non-executable entry point — and
       // it resolves here with no exit code and no output at all. Without this
