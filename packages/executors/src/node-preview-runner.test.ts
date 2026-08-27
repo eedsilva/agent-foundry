@@ -500,6 +500,36 @@ describe('NodePreviewRunner', () => {
     expect(stopped.failureEvidence?.stderr).toMatch(/was killed with SIGKILL/);
   }, 30_000);
 
+  it('keeps the cause when an outside kill has not drained yet as stop() lands (#665)', async () => {
+    const logs = new InMemoryPreviewLogRepository();
+    const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000, logRepository: logs });
+    let session = await newSession('sess-external-kill-race');
+    session = await runner.prepare(session);
+    session = {
+      ...session,
+      commandPlan: {
+        ...session.commandPlan!,
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT, '--ignore-sigterm'] },
+      },
+    };
+    session = await startTracked(runner, session);
+    const pid = session.process!.pid!;
+
+    // Same outside kill as the #663 case, but stop() lands before the exit
+    // handler drains — the shape of an OOM kill answered by an immediate
+    // teardown. Neither `entry.exited` nor `process.kill(pid, 0)` can tell the
+    // truth here: the first has not been updated yet and the second succeeds on
+    // the zombie. Claiming authorship on either would drop the only carrier of
+    // the cause, since `PreviewFailureEvidenceSchema` is `.strict()` with no
+    // field for a signal.
+    process.kill(pid, 'SIGKILL');
+    const stopped = await runner.stop(session); // no wait, on purpose
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const page = await logs.list(stopped.id, {});
+    expect(page.entries.some((entry) => /was killed with SIGKILL/.test(entry.message))).toBe(true);
+  }, 30_000);
+
   it('names the missing command in failureEvidence when the dev server never spawns (#658)', async () => {
     const runner = new NodePreviewRunner({ startupTimeoutMs: 5_000 });
     let session = await newSession('sess-dev-command-missing');
