@@ -14,7 +14,7 @@ const COOKIE_AUTH = /cookie/i;
 const LOG_CALL =
   /(?:\.(?:debug|error|info|log|trace|warn)|\[\s*['"](?:debug|error|info|log|trace|warn)['"]\s*\])\s*(?:\?\.)?\s*\(/gi;
 const LOG_ALIAS =
-  /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*[A-Za-z_$][\w$]*(?:\s*\.\s*(?:debug|error|info|log|trace|warn)|\s*\[\s*['"](?:debug|error|info|log|trace|warn)['"]\s*\])/gi;
+  /\b(?:(?:const|let|var)\s+)?[A-Za-z_$][\w$]*\s*=\s*\(?\s*[A-Za-z_$][\w$]*(?:\s*(?:\?\.|\.)\s*(?:debug|error|info|log|trace|warn)|\s*\[\s*['"](?:debug|error|info|log|trace|warn)['"]\s*\])\s*\)?/gi;
 const LOG_DESTRUCTURE =
   /\b(?:const|let|var)\s*\{[^}]*\b(?:debug|error|info|log|trace|warn)\b[^}]*\}\s*=\s*console\b/gi;
 const offenders = [];

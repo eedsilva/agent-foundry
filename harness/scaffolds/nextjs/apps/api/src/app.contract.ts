@@ -194,6 +194,7 @@ test('GET /items returns a bounded page and advances with its cursor', async () 
     assert.match(itemRequests[1], /created_at\.gt\./);
     assert.match(itemRequests[1], /created_at\.eq\./);
     assert.match(itemRequests[1], /id\.gt\./);
+    assert.match(itemRequests[1], /123456/);
     assert.doesNotMatch(itemRequests[1], /created_at\.gt\.[^,]+,id\.gt\./);
   } finally {
     globalThis.fetch = originalFetch;

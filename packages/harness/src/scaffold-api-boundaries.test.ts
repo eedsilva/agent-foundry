@@ -69,6 +69,9 @@ describe('generated API boundary build gate', () => {
     'console.error?.(error);\n',
     'const { error: emit } = console; emit(error);\n',
     'const emit = console.error;\nemit(error);\n',
+    'const emit = (console.error);\nemit(error);\n',
+    'const emit = console?.error;\nemit(error);\n',
+    'let emit;\nemit = console.error;\nemit(error);\n',
   ])('fails when an API handler logs without redaction: %s', async (source) => {
     const result = runCheck(await workspaceWith(source));
     expect(result.status).toBe(1);
