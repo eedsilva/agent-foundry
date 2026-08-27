@@ -36,7 +36,8 @@ async function startStatusAppRun(workerId: string): Promise<{
   runId: string;
 }> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-plan-approval-'));
-  temporaryDirectories.push(dataDir);
+  const projectDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-plan-approval-project-'));
+  temporaryDirectories.push(dataDir, projectDirectory);
   const runtime = await createRuntime({
     ...process.env,
     REPO_ROOT: resolve(import.meta.dirname, '../../..'),
@@ -49,6 +50,7 @@ async function startStatusAppRun(workerId: string): Promise<{
     name: 'Status App',
     workflowId: 'web-app-v1',
     prd: STATUS_APP_PRD,
+    projectDirectory,
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
   expect(await runtime.worker.runOnce()).toBe(true);

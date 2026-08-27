@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -89,6 +89,89 @@ describe('FileJobQueue lease semantics', () => {
     expect(await queue.claim('worker-b')).toBeNull();
   });
 
+  it('does not duplicate a legacy run job under its deterministic recovery id', async () => {
+    for (const state of ['pending', 'processing'] as const) {
+      const dataDir = await temporaryDataDir();
+      const queue = new FileJobQueue(dataDir, {
+        leaseMs: 60_000,
+        clock: new FakeClock(new Date(createdAt)),
+      });
+      await queue.enqueue({ ...baseJob('legacy-random-id'), runId: 'run-1' });
+      if (state === 'processing') await queue.claim('worker-a');
+
+      await queue.enqueue({ ...baseJob('run-project-run-1'), runId: 'run-1' });
+
+      const logicalJobs = (
+        await Promise.all([
+          readdir(join(dataDir, 'queue', 'pending')),
+          readdir(join(dataDir, 'queue', 'processing')),
+        ])
+      ).flat();
+      expect(logicalJobs).toHaveLength(1);
+    }
+  });
+
+  it('ignores orphaned atomic-write temps while deduplicating legacy run jobs', async () => {
+    for (const contents of [
+      JSON.stringify({ ...baseJob('legacy-random-id'), runId: 'run-1' }),
+      '{',
+    ]) {
+      const dataDir = await temporaryDataDir();
+      const pending = join(dataDir, 'queue', 'pending');
+      await mkdir(pending, { recursive: true });
+      await writeFile(join(pending, 'legacy-random-id.json.123.uuid.tmp'), contents);
+      const queue = new FileJobQueue(dataDir);
+
+      await queue.enqueue({ ...baseJob('run-project-run-1'), runId: 'run-1' });
+
+      expect((await readdir(pending)).filter((entry) => entry.endsWith('.json'))).toEqual([
+        'run-project-run-1.json',
+      ]);
+    }
+  });
+
+  it('preserves distinct pending approval generations for the same run', async () => {
+    const dataDir = await temporaryDataDir();
+    const queue = new FileJobQueue(dataDir);
+    await queue.enqueue({
+      ...baseJob('run-project-run-1-approval-decision-1'),
+      runId: 'run-1',
+    });
+    await queue.enqueue({
+      ...baseJob('run-project-run-1-approval-decision-2'),
+      runId: 'run-1',
+    });
+
+    expect(await readdir(join(dataDir, 'queue', 'pending'))).toEqual([
+      'run-project-run-1-approval-decision-1.json',
+      'run-project-run-1-approval-decision-2.json',
+    ]);
+  });
+
+  it('does not add an initial recovery job beside an approval job for the same run', async () => {
+    for (const state of ['pending', 'processing'] as const) {
+      const dataDir = await temporaryDataDir();
+      const queue = new FileJobQueue(dataDir);
+      const approval = {
+        ...baseJob('run-project-run-1-approval-decision-1'),
+        runId: 'run-1',
+      };
+      await queue.enqueue(approval);
+      if (state === 'processing') await queue.claim('worker-a');
+
+      await queue.enqueue({ ...baseJob('run-project-run-1'), runId: 'run-1' });
+
+      const jobs = (
+        await Promise.all([
+          readdir(join(dataDir, 'queue', 'pending')),
+          readdir(join(dataDir, 'queue', 'processing')),
+        ])
+      ).flat();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toContain('approval-decision-1');
+    }
+  });
+
   it('does not publish a duplicate while the same job id has an active lease', async () => {
     const dataDir = await temporaryDataDir();
     const clock = new FakeClock(new Date(createdAt));
@@ -126,8 +209,8 @@ describe('FileJobQueue lease semantics', () => {
     const dataDir = await temporaryDataDir();
     const clock = new FakeClock(new Date(createdAt));
     const queue = new FileJobQueue(dataDir, { leaseMs: 60_000, clock });
-    const oldJob = baseJob('run-project-run-1-approval-decision-1');
-    const newJob = baseJob('run-project-run-1-approval-decision-2');
+    const oldJob = { ...baseJob('run-project-run-1-approval-decision-1'), runId: 'run-1' };
+    const newJob = { ...baseJob('run-project-run-1-approval-decision-2'), runId: 'run-1' };
     await queue.enqueue(oldJob);
     const claimedOld = (await queue.claim('worker-a'))!;
     await queue.enqueue(newJob);

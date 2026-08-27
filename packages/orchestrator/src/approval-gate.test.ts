@@ -154,6 +154,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       name: 'Timeout retry',
       prd: 'Create an approval gate.',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     const [originalJob] = harness.enqueued;
     expect(originalJob).toMatchObject({ type: 'run-project', maxAttempts: 2 });
@@ -188,6 +189,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       name: 'Timeout retry exhaustion',
       prd: 'Create an approval gate.',
       workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
     });
     const [originalJob] = harness.enqueued;
     harness.queueForWorker(originalJob!);

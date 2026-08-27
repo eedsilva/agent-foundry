@@ -56,6 +56,7 @@ export async function runDogfoodTask(
   const startedAt = new Date();
   const started = Date.now();
   const runtimeDataDir = await mkdtemp(join(tmpdir(), `dogfood-run-${task.id}-`));
+  const projectDirectory = await mkdtemp(join(tmpdir(), `dogfood-project-${task.id}-`));
 
   let projectId = '';
   let runId = '';
@@ -87,6 +88,7 @@ export async function runDogfoodTask(
       name: task.id,
       prd: task.prompt,
       workflowId: task.workflowId,
+      projectDirectory,
     });
     projectId = project.id;
     runId = project.currentRunId ?? '';
@@ -213,6 +215,7 @@ export async function runDogfoodTask(
     failure = { kind: errorName(error), message: truncate(errorMessage(error)) };
   } finally {
     await rm(runtimeDataDir, { recursive: true, force: true });
+    await rm(projectDirectory, { recursive: true, force: true });
   }
 
   const record = DogfoodRunRecordSchema.parse({

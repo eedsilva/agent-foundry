@@ -61,6 +61,7 @@ import {
   ApprovalConflictError,
   latestArtifactsByName,
   NotFoundError,
+  errorMessage,
   ResumeBlockedError,
   ValidationError,
   VersionConflictError,
@@ -76,6 +77,25 @@ import { isMigrationApprovalGateId, policyHash, workflowHash } from './idempoten
 import type { QualityObservationService } from './quality-observation-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
+const INITIALIZATION_FAILURE_ATTEMPTS = 2;
+const INITIALIZATION_INTERRUPTED =
+  'Project initialization was interrupted before queue publication.';
+
+function runProjectJob(project: Project, run: WorkflowRun, availableAt: string): QueueJob {
+  return {
+    id: `run-project-${run.id}`,
+    type: 'run-project',
+    projectId: project.id,
+    workflowId: project.workflowId,
+    runId: run.id,
+    attempts: 0,
+    maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
+    createdAt: run.createdAt,
+    availableAt,
+    leaseEpoch: 0,
+    ...traceContextField(),
+  };
+}
 
 export class ProjectService {
   constructor(
@@ -160,11 +180,16 @@ export class ProjectService {
     const now = this.clock.now().toISOString();
     const projectId = this.ids.next();
     const runId = this.ids.next();
+    const projectDirectory = await this.workspaces.reserveProjectDirectory(
+      projectId,
+      input.projectDirectory,
+    );
     const project: Project = {
       id: projectId,
       name: input.name,
       workflowId: input.workflowId,
       policyId,
+      projectDirectory,
       status: 'queued',
       version: 1,
       createdAt: now,
@@ -190,31 +215,26 @@ export class ProjectService {
         : {}),
     };
 
-    await this.workspaces.ensure(project.id);
-    await this.workspaces.writePrd(project.id, input.prd);
-    const scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
-    if (scaffoldFiles.length > 0) {
-      await this.workspaces.applyScaffold(project.id, scaffoldFiles);
-    }
-
-    const job: QueueJob = {
-      id: this.ids.next(),
-      type: 'run-project',
-      projectId: project.id,
-      workflowId: project.workflowId,
-      runId,
-      attempts: 0,
-      maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
-      createdAt: now,
-      availableAt: now,
-      leaseEpoch: 0,
-      ...traceContextField(),
+    const stagedProject: Project = {
+      ...project,
+      status: 'failed',
+      error: INITIALIZATION_INTERRUPTED,
     };
-
+    const stagedRun = transitionWorkflowRun(run, 'failed', this.clock.now(), {
+      error: { name: 'ProjectInitializationError', message: INITIALIZATION_INTERRUPTED },
+    });
+    const job = runProjectJob(project, run, now);
+    let createdProject = project;
+    let scaffoldFiles: Array<{ path: string; content: string }> = [];
     try {
+      scaffoldFiles = await this.harness.scaffoldFiles(workflow.stack);
       await this.transactionRunner.run(async (tx) => {
-        await this.projects.create(project, tx);
-        await this.runs.create(run, tx);
+        await this.projects.create(stagedProject, tx);
+        await this.runs.create(stagedRun, tx);
+      });
+
+      await this.workspaces.initializeProject(project.id, input.prd, scaffoldFiles);
+      await this.transactionRunner.run(async (tx) => {
         await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', {
           runId,
           tx,
@@ -229,7 +249,37 @@ export class ProjectService {
         }
       });
     } catch (error) {
-      await this.workspaces.cleanup(project.id).catch(() => undefined);
+      const persistedProject = await this.projects.get(project.id);
+      if (persistedProject) {
+        try {
+          if (!(await this.runs.get(runId))) {
+            await this.runs.create({
+              ...stagedRun,
+              error: { name: 'ProjectInitializationError', message: errorMessage(error) },
+            });
+          }
+          await this.markInitializationFailed(project.id, runId, errorMessage(error));
+        } catch (stateError) {
+          throw new AggregateError([error, stateError], errorMessage(error));
+        }
+      } else {
+        const rollbackErrors: unknown[] = [];
+        try {
+          await this.workspaces.releaseProjectDirectory(project.id);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+        if (rollbackErrors.length === 0) {
+          try {
+            await this.workspaces.cleanup(project.id);
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+        }
+        if (rollbackErrors.length > 0) {
+          throw new AggregateError([error, ...rollbackErrors], errorMessage(error));
+        }
+      }
       throw error;
     }
 
@@ -237,43 +287,62 @@ export class ProjectService {
     // has a FK to `projects(id)`, and ArtifactStore.put isn't part of the
     // transactional seam (see the design note at the top of this task in the
     // plan) -- the project row must already be visible on its own connection.
-    await this.artifacts.put({
-      projectId: project.id,
-      name: 'prd',
-      content: input.prd,
-      contentType: 'text/markdown',
-      createdBy: 'user',
-      runId,
-    });
-    if (scaffoldFiles.length > 0) {
+    try {
       await this.artifacts.put({
         projectId: project.id,
-        name: 'scaffold-manifest',
-        content: scaffoldFiles.map((file) => file.path),
-        contentType: 'application/json',
-        createdBy: `scaffold:${workflow.stack}`,
+        name: 'prd',
+        content: input.prd,
+        contentType: 'text/markdown',
+        createdBy: 'user',
         runId,
       });
-    }
-    if (runPreflight) {
-      await this.artifacts.put({
-        projectId: project.id,
-        name: 'validation-preflight',
-        content: redactValidationPreflightReport(runPreflight),
-        createdBy: `validation-preflight:${runPreflight.environmentId}`,
-        runId,
+      if (scaffoldFiles.length > 0) {
+        await this.artifacts.put({
+          projectId: project.id,
+          name: 'scaffold-manifest',
+          content: scaffoldFiles.map((file) => file.path),
+          contentType: 'application/json',
+          createdBy: `scaffold:${workflow.stack}`,
+          runId,
+        });
+      }
+      if (runPreflight) {
+        await this.artifacts.put({
+          projectId: project.id,
+          name: 'validation-preflight',
+          content: redactValidationPreflightReport(runPreflight),
+          createdBy: `validation-preflight:${runPreflight.environmentId}`,
+          runId,
+        });
+      }
+
+      await this.appendEvent(
+        project.id,
+        'project.initialization_ready',
+        'Project initialization completed; queue publication pending.',
+        { runId, dedupeKey: `${runId}:project.initialization_ready` },
+      );
+      await this.transactionRunner.run(async (tx) => {
+        await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
+          runId,
+          dedupeKey: `${runId}:project.queued`,
+          tx,
+        });
+        await this.runs.update(run, stagedRun.version, tx);
+        createdProject = await this.projects.update(project, stagedProject.version, tx);
+        await this.queue.enqueue(job, tx);
       });
+    } catch (error) {
+      const message = errorMessage(error);
+      try {
+        await this.markInitializationFailed(project.id, runId, message);
+      } catch (stateError) {
+        throw new AggregateError([error, stateError], message);
+      }
+      throw error;
     }
 
-    await this.transactionRunner.run(async (tx) => {
-      await this.queue.enqueue(job, tx);
-      await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
-        runId,
-        tx,
-      });
-    });
-
-    return project;
+    return createdProject;
   }
 
   async get(projectId: string): Promise<Omit<ProjectDetailResponse, 'knowledgeFiles'>> {
@@ -287,6 +356,31 @@ export class ProjectService {
 
   async list(limit = 50): Promise<Project[]> {
     return this.projects.list(limit);
+  }
+
+  /** Re-publishes deterministic jobs after a file-mode crash between queued state and enqueue. */
+  async recoverQueuedProjects(): Promise<void> {
+    for (const project of await this.projects.listAll()) {
+      if (!project.currentRunId) continue;
+      const run = await this.runs.get(project.currentRunId);
+      if (!run) continue;
+      const events = await this.events.list(project.id);
+      const ready = events.some(
+        (event) => event.dedupeKey === `${run.id}:project.initialization_ready`,
+      );
+      if (!ready) continue;
+      if (project.status !== 'queued' || run.status !== 'queued') continue;
+      await this.queue.enqueue(runProjectJob(project, run, this.clock.now().toISOString()));
+      await this.appendEvent(
+        project.id,
+        'project.queued',
+        'Project queue publication recovered after restart.',
+        {
+          runId: run.id,
+          dedupeKey: `${run.id}:project.recovered_queued`,
+        },
+      );
+    }
   }
 
   async getArtifact(projectId: string, name: string, revision?: number) {
@@ -356,9 +450,17 @@ export class ProjectService {
   async retry(projectId: string, input?: RetryProjectRequest): Promise<Project> {
     const project = await this.requireProject(projectId);
     if (project.status === 'running') return project;
+    const previousRun = project.currentRunId ? await this.runs.get(project.currentRunId) : null;
+    if (
+      project.error === INITIALIZATION_INTERRUPTED ||
+      previousRun?.error?.name === 'ProjectInitializationError'
+    ) {
+      throw new ValidationError(
+        'Project initialization failed; retry is blocked until workspace recovery is implemented.',
+      );
+    }
     if (input?.prompt) await this.workspaces.writePrd(projectId, input.prompt);
     const now = this.clock.now().toISOString();
-    const previousRun = project.currentRunId ? await this.runs.get(project.currentRunId) : null;
     const campaignPreview = previousRun?.execution?.campaign?.preview ?? this.validationCampaign;
     const runId = this.ids.next();
     const run: WorkflowRun = {
@@ -1129,6 +1231,60 @@ export class ProjectService {
       }
       await this.queue.enqueue(job, tx);
     });
+  }
+
+  private async markInitializationFailed(
+    projectId: string,
+    runId: string,
+    message: string,
+  ): Promise<void> {
+    const failures: unknown[] = [];
+    for (let attempt = 0; attempt < INITIALIZATION_FAILURE_ATTEMPTS; attempt += 1) {
+      try {
+        await this.transactionRunner.run(async (tx) => {
+          const [project, run] = await Promise.all([
+            this.projects.get(projectId),
+            this.runs.get(runId),
+          ]);
+          if (run && (run.status !== 'failed' || run.error?.message !== message)) {
+            const failedRun =
+              run.status === 'failed'
+                ? {
+                    ...run,
+                    error: { name: 'ProjectInitializationError' as const, message },
+                    updatedAt: this.clock.now().toISOString(),
+                  }
+                : transitionWorkflowRun(run, 'failed', this.clock.now(), {
+                    error: { name: 'ProjectInitializationError', message },
+                  });
+            await this.runs.update(failedRun, run.version, tx);
+          }
+          if (project && (project.status !== 'failed' || project.error !== message)) {
+            await this.projects.update(
+              {
+                ...project,
+                status: 'failed',
+                error: message,
+                updatedAt: this.clock.now().toISOString(),
+              },
+              project.version,
+              tx,
+            );
+          }
+          if (project && run) {
+            await this.appendEvent(projectId, 'project.failed', message, {
+              runId,
+              dedupeKey: `${runId}:project.initialization_failed`,
+              tx,
+            });
+          }
+        });
+        return;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    throw new AggregateError(failures, `Project ${projectId} initialization compensation failed.`);
   }
 
   private approvalJobId(runId: string, decisionId: string): string {

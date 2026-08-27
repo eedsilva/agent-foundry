@@ -3,7 +3,9 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -13,7 +15,264 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
-import { FileWorkspaceManager } from './workspace-manager.js';
+import { FileWorkspaceManager, type FileWorkspaceManagerOptions } from './workspace-manager.js';
+
+describe('FileWorkspaceManager project-directory reservation (#599)', () => {
+  function manager(
+    dataDir: string,
+    options: Partial<FileWorkspaceManagerOptions> = {},
+  ): FileWorkspaceManager {
+    return new FileWorkspaceManager(dataDir, {
+      gitAuthorName: 'Test Agent',
+      gitAuthorEmail: 'test@example.com',
+      ...options,
+    });
+  }
+
+  it('reserves the exact canonical empty directory and rejects a concurrent second project', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    const attempts = await Promise.allSettled([
+      workspaces.reserveProjectDirectory('project-1', selected),
+      workspaces.reserveProjectDirectory('project-2', selected),
+    ]);
+    const winnerIndex = attempts.findIndex((attempt) => attempt.status === 'fulfilled');
+    const winner = attempts[winnerIndex] as PromiseFulfilledResult<string>;
+
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    expect(winner.value).toBe(await realpath(selected));
+    expect(workspaces.workspacePath(`project-${winnerIndex + 1}`)).toBe(await realpath(selected));
+  });
+
+  it('serializes concurrent aliases that resolve to the same directory', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const upper = join(parent, 'Generated-App');
+    const lower = join(parent, 'generated-app');
+    const probe = join(parent, 'case-probe');
+    await mkdir(probe);
+    const aliasesSame = await lstat(join(parent, 'CASE-PROBE')).then(
+      () => true,
+      () => false,
+    );
+    await rm(probe, { recursive: true });
+    if (!aliasesSame) return;
+    const workspaces = manager(dataDir);
+
+    const attempts = await Promise.allSettled([
+      workspaces.reserveProjectDirectory('project-1', upper),
+      workspaces.reserveProjectDirectory('project-2', lower),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    expect(await realpath(upper)).toBe(await realpath(lower));
+  });
+
+  it('rejects a non-empty directory without changing it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const selected = await mkdtemp(join(tmpdir(), 'agent-foundry-project-'));
+    const sentinel = join(selected, 'keep.txt');
+    await writeFile(sentinel, 'operator work\n');
+
+    await expect(manager(dataDir).reserveProjectDirectory('project-1', selected)).rejects.toThrow(
+      /empty/i,
+    );
+    await expect(readFile(sentinel, 'utf8')).resolves.toBe('operator work\n');
+  });
+
+  it('rejects a directory whose parent has not been chosen or created', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+
+    await expect(
+      manager(dataDir).reserveProjectDirectory(
+        'project-1',
+        join(dataDir, 'missing', 'generated-app'),
+      ),
+    ).rejects.toThrow(/parent must already exist/i);
+  });
+
+  it('rejects a directory inside DATA_DIR before creating or reserving it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const selected = join(dataDir, 'generated-app');
+
+    await expect(manager(dataDir).reserveProjectDirectory('project-1', selected)).rejects.toThrow(
+      /outside DATA_DIR/i,
+    );
+    await expect(lstat(selected)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('releases an empty pre-persistence reservation so the directory can be reused', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await workspaces.releaseProjectDirectory('project-1');
+    await expect(
+      lstat(join(workspaces.projectRoot('project-1'), 'workspace')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).resolves.toBe(
+      await realpath(selected),
+    );
+  });
+
+  it('preserves a non-empty directory and its reservation', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await writeFile(join(external, 'operator.txt'), 'keep\n');
+    await symlink(external, join(selected, 'external'), 'dir');
+    await expect(workspaces.releaseProjectDirectory('project-1')).rejects.toThrow(
+      /changed before reservation release/i,
+    );
+
+    await expect(readFile(join(selected, 'external', 'operator.txt'), 'utf8')).resolves.toBe(
+      'keep\n',
+    );
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
+  });
+
+  it('refuses to release or reassign a reserved path whose directory identity changed', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await rm(selected, { recursive: true });
+    await symlink(external, selected, 'dir');
+
+    await expect(workspaces.releaseProjectDirectory('project-1')).rejects.toThrow(
+      /identity changed/i,
+    );
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
+  });
+
+  it('finishes release after a crash removed the workspace symlink first', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await rm(join(workspaces.projectRoot('project-1'), 'workspace'), { force: true });
+    await workspaces.releaseProjectDirectory('project-1');
+
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).resolves.toBe(
+      await realpath(selected),
+    );
+  });
+
+  it('keeps a durable reservation after a manager restart', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+
+    await manager(dataDir).reserveProjectDirectory('project-1', selected);
+    const restarted = manager(dataDir);
+
+    expect(restarted.workspacePath('project-1')).toBe(await realpath(selected));
+    await expect(restarted.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
+  });
+
+  it('rejects a renamed directory that retains a reserved physical identity', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const renamed = join(parent, 'renamed-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await rename(selected, renamed);
+
+    await expect(workspaces.reserveProjectDirectory('project-2', renamed)).rejects.toThrow(
+      /already reserved/i,
+    );
+  });
+
+  it('handles a legacy reservation without crashing or reassigning its path', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const unrelated = join(parent, 'unrelated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    const reservationRoot = join(dataDir, 'project-directory-reservations');
+    const [marker] = (await readdir(reservationRoot)).filter((entry) => entry.endsWith('.json'));
+    if (!marker) throw new Error('Expected reservation marker');
+    await writeFile(
+      join(reservationRoot, marker),
+      JSON.stringify({ projectId: 'project-1', projectDirectory: await realpath(selected) }),
+    );
+
+    await expect(workspaces.reserveProjectDirectory('project-2', unrelated)).resolves.toBe(
+      join(await realpath(parent), 'unrelated-app'),
+    );
+    await expect(workspaces.reserveProjectDirectory('project-3', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
+    await expect(workspaces.releaseProjectDirectory('project-1')).rejects.toThrow(
+      /without identity metadata/i,
+    );
+  });
+
+  it('does not overwrite a file added after reservation during project initialization', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir, {
+      beforeInitializeWrite: () => writeFile(join(selected, 'operator.txt'), 'operator work\n'),
+    });
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+
+    await expect(
+      workspaces.initializeProject('project-1', 'generated PRD', [
+        { path: 'src/app.ts', content: 'export const app = true;\n' },
+      ]),
+    ).rejects.toThrow(/changed during initialization/i);
+    await expect(readFile(join(selected, 'operator.txt'), 'utf8')).resolves.toBe('operator work\n');
+  });
+
+  it('does not follow an intermediate symlink added after reservation', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
+    const selected = join(parent, 'generated-app');
+    const sentinel = join(external, 'keep.txt');
+    const workspaces = manager(dataDir, {
+      beforeInitializeWrite: () => symlink(external, join(selected, 'src'), 'dir'),
+    });
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await writeFile(sentinel, 'operator work\n');
+
+    await expect(
+      workspaces.initializeProject('project-1', 'generated PRD', [
+        { path: 'src/app.ts', content: 'generated outside\n' },
+      ]),
+    ).rejects.toThrow(/changed after reservation/i);
+    await expect(readFile(sentinel, 'utf8')).resolves.toBe('operator work\n');
+    await expect(lstat(join(external, 'app.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
 
 describe('FileWorkspaceManager run inputs', () => {
   it('materializes a project knowledge input in the attempt context for a CLI child tool', async () => {

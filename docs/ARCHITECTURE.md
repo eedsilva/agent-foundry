@@ -152,11 +152,13 @@ sequenceDiagram
     participant A as ArtifactStore
     participant G as Git/Workspace
 
-    UI->>API: POST /projects {name, prd, workflowId}
+    UI->>API: POST /projects {name, prd, workflowId, projectDirectory}
     API->>PS: create(input)
-    PS->>G: ensure + write PRD.md
+    PS->>G: reserve projectDirectory
+    PS->>S: create Project + WorkflowRun failed during initialization
+    PS->>G: initialize workspace + write PRD.md
     PS->>A: put(prd)
-    PS->>S: create WorkflowRun queued
+    PS->>S: record Project + WorkflowRun queued
     PS->>Q: enqueue(run-project + runId)
     API-->>UI: 202 Project
 

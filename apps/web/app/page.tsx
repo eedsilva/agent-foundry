@@ -45,6 +45,7 @@ export const PIPELINE_NODES = [
 export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState('Issue Radar');
+  const [projectDirectory, setProjectDirectory] = useState('');
   const [prd, setPrd] = useState(SAMPLE_PRD);
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState('');
@@ -61,7 +62,12 @@ export default function HomePage() {
     setSubmitting(true);
     setError('');
     try {
-      const project = await createProject({ name, prd, workflowId: 'web-app-v1' });
+      const project = await createProject({
+        name,
+        prd,
+        projectDirectory,
+        workflowId: 'web-app-v1',
+      });
       router.push(`/project/${project.id}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -94,6 +100,20 @@ export default function HomePage() {
               required
               className={FIELD}
             />
+          </label>
+
+          <label className={LABEL}>
+            Diretório do projeto
+            <input
+              value={projectDirectory}
+              onChange={(event) => setProjectDirectory(event.target.value)}
+              placeholder="/Users/voce/Projetos/meu-app"
+              required
+              className={FIELD}
+            />
+            <span className="text-ink-subtle text-xs font-normal">
+              Caminho absoluto; pai existente; diretório novo ou vazio; fora de DATA_DIR.
+            </span>
           </label>
 
           <label className={LABEL}>

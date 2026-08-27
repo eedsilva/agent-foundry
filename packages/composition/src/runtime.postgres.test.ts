@@ -76,7 +76,10 @@ maybeDescribe('Postgres-backed runtime', () => {
 
   it('boots, round-trips a project through Postgres, and drives a mock run to completion', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-postgres-runtime-'));
-    temporaryDirectories.push(dataDir);
+    const projectDirectory = await mkdtemp(
+      join(tmpdir(), 'agent-foundry-postgres-runtime-project-'),
+    );
+    temporaryDirectories.push(dataDir, projectDirectory);
     const runtime = await createRuntime({
       ...process.env,
       REPO_ROOT: rootDir,
@@ -95,6 +98,7 @@ maybeDescribe('Postgres-backed runtime', () => {
       name: 'Postgres runtime sample',
       workflowId: 'web-app-v1',
       prd: 'Build a small persistent issue tracker with validation and deterministic tests.',
+      projectDirectory,
     });
     expect(await runtime.projects.get(project.id)).toMatchObject({ id: project.id });
 

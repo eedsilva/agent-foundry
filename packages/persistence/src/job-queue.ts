@@ -36,6 +36,7 @@ export class FileJobQueue implements JobQueue {
     const id = safeSegment(parsed.id);
     const pendingPath = join(this.dir('pending'), `${id}.json`);
     await Promise.all([ensureDir(this.dir('pending')), ensureDir(this.dir('processing'))]);
+    if (await this.hasEquivalentInitialRunJob(parsed)) return;
     if (await this.isProcessing(id)) return;
 
     // Create-if-absent preserves any retry/nack/reap file that won the
@@ -221,5 +222,27 @@ export class FileJobQueue implements JobQueue {
   private async isProcessing(jobId: string): Promise<boolean> {
     const prefix = `${safeSegment(jobId)}.`;
     return (await readdir(this.dir('processing'))).some((entry) => entry.startsWith(prefix));
+  }
+
+  private async hasEquivalentInitialRunJob(job: QueueJob): Promise<boolean> {
+    if (job.type !== 'run-project' || !job.runId || job.id !== `run-project-${job.runId}`) {
+      return false;
+    }
+    for (const directory of [this.dir('pending'), this.dir('processing')]) {
+      for (const entry of (await readdir(directory)).filter((name) => name.endsWith('.json'))) {
+        const candidate = QueueJobSchema.safeParse(
+          await readJsonOrNull<unknown>(join(directory, entry)),
+        );
+        if (
+          candidate.success &&
+          candidate.data.type === 'run-project' &&
+          candidate.data.projectId === job.projectId &&
+          candidate.data.runId === job.runId
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }

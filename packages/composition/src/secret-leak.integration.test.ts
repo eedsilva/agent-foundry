@@ -21,7 +21,8 @@ afterEach(async () => {
 describe('secret leak scan', () => {
   it('never leaks a real secret value into Git, the prompt, artifacts, or events — only the declared name and, for the preview process, the resolved value are ever exposed', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-secret-leak-'));
-    temporaryDirectories.push(dataDir);
+    const projectDirectory = await mkdtemp(join(tmpdir(), 'agent-foundry-secret-leak-project-'));
+    temporaryDirectories.push(dataDir, projectDirectory);
     const rootDir = resolve(import.meta.dirname, '../../..');
     const runtime = await createRuntime({
       ...process.env,
@@ -35,6 +36,7 @@ describe('secret leak scan', () => {
       name: 'Secret Leak Check',
       workflowId: 'web-app-v1',
       prd: 'Build a tiny app so this test has a real workflow to run through mock execution.',
+      projectDirectory,
     });
     await writeFile(join(dataDir, 'projects', project.id, '.env'), `FAKE_SECRET=${FAKE_SECRET}\n`);
 

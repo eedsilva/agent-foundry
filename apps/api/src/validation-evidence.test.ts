@@ -18,6 +18,12 @@ import { buildApp } from './app.js';
 const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
 const directories: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'validation-evidence-project-'));
+  directories.push(path);
+  return path;
+}
+
 async function controlledValidationPreflight(
   campaign: ValidationCampaignPreview,
 ): Promise<ValidationPreflightReport> {
@@ -76,6 +82,7 @@ async function createRun(
       name: `Evidence ${index}`,
       prd: 'Create a small TODO application with persistent storage and a visible list.',
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     },
   });
   expect(projectResponse.statusCode).toBe(202);
@@ -741,6 +748,7 @@ describe('validation evidence API', () => {
           name: 'Public validation workflow',
           prd: 'Create a small TODO application with persistent storage and a visible list.',
           workflowId: 'web-app-v1',
+          projectDirectory: await createProjectDirectory(),
         },
       });
       expect(projectResponse.statusCode).toBe(202);

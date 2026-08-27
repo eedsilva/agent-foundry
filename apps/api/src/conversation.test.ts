@@ -10,6 +10,12 @@ import { buildApp } from './app.js';
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-conversation-project-'));
+  dirs.push(path);
+  return path;
+}
+
 interface StartedApi {
   app: FastifyInstance;
   runtime: Runtime;
@@ -39,6 +45,7 @@ async function createProject(runtime: Runtime, name = 'Conversation API'): Promi
       name,
       prd: 'Persist ordered conversation data through the public API with safe replay and export.',
       workflowId: 'web-app-v1',
+      projectDirectory: await createProjectDirectory(),
     })
   ).id;
 }

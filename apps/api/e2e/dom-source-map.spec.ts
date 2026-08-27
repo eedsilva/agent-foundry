@@ -18,6 +18,12 @@ let webProcess: ChildProcess;
 let webBaseUrl: string;
 const dirs: string[] = [];
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-dom-source-map-project-'));
+  dirs.push(path);
+  return path;
+}
+
 test.beforeAll(async () => {
   const [dataDir, workflowsDir] = await Promise.all([
     mkdtemp(join(tmpdir(), 'agent-foundry-dom-source-map-e2e-data-')),
@@ -88,6 +94,7 @@ async function createProject(): Promise<string> {
       name: 'DOM source map E2E',
       prd: 'x'.repeat(60),
       workflowId: 'golden-flow-e2e-v1',
+      projectDirectory: await createProjectDirectory(),
     }),
   });
   expect(response.status).toBe(202);

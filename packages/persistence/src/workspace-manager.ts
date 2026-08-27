@@ -1,5 +1,18 @@
-import { open, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readlinkSync } from 'node:fs';
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readlink,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execa } from 'execa';
 import {
   ExecutionError,
@@ -11,24 +24,100 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import {
+  atomicCreateText,
   atomicWriteJson,
   atomicWriteText,
   ensureDir,
   exists,
   isNotFound,
   pathFor,
+  readJsonOrNull,
   safeSegment,
+  withRecoverableDirectoryLock,
 } from './fs-utils.js';
 
 export interface FileWorkspaceManagerOptions {
   gitAuthorName: string;
   gitAuthorEmail: string;
+  /** Test seam for post-validation initialization races. */
+  beforeInitializeWrite?: () => void | Promise<void>;
 }
 
 /** Files-tab display cap (#491) — generous for any real source/config file,
  * tight enough that a pathological workspace file can't be read fully into
  * memory and serialized back over HTTP unbounded. */
 const WORKSPACE_FILE_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_GITIGNORE = [
+  'node_modules/',
+  '.next/',
+  'dist/',
+  'coverage/',
+  '.env*',
+  '!.env.example',
+  '.orchestrator/',
+  '*.log',
+  // The Supabase CLI's state for the project's own local stack.
+  'supabase/.temp/',
+  '',
+].join('\n');
+
+type ProjectDirectoryReservation = {
+  projectId: string;
+  requestedPath?: string;
+  projectDirectory: string;
+  identity?: { device: string; inode: string };
+};
+
+function reservationId(projectDirectory: string): string {
+  return createHash('sha256').update(projectDirectory).digest('hex');
+}
+
+async function listProjectDirectoryReservations(
+  dataDir: string,
+): Promise<ProjectDirectoryReservation[]> {
+  const root = join(dataDir, 'project-directory-reservations');
+  const entries = await readdir(root).catch((error) => {
+    if (isNotFound(error)) return [];
+    throw error;
+  });
+  const reservations: ProjectDirectoryReservation[] = [];
+  for (const entry of entries.filter((name) => name.endsWith('.json'))) {
+    const reservation = await readJsonOrNull<ProjectDirectoryReservation>(join(root, entry));
+    if (reservation) reservations.push(reservation);
+  }
+  return reservations;
+}
+
+async function findProjectDirectoryReservation(
+  dataDir: string,
+  predicate: (reservation: ProjectDirectoryReservation) => boolean,
+): Promise<ProjectDirectoryReservation | null> {
+  return (await listProjectDirectoryReservations(dataDir)).find(predicate) ?? null;
+}
+
+async function matchesGeneratedTree(root: string, expected: Map<string, string>): Promise<boolean> {
+  const actual = new Set<string>();
+  const visit = async (directory: string, prefix = ''): Promise<boolean> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) return false;
+      if (entry.isDirectory()) {
+        if (![...expected.keys()].some((candidate) => candidate.startsWith(`${name}/`))) {
+          return false;
+        }
+        if (!(await visit(path, name))) return false;
+      } else if (entry.isFile()) {
+        if (expected.get(name) !== (await readFile(path, 'utf8'))) return false;
+        actual.add(name);
+      } else {
+        return false;
+      }
+    }
+    return true;
+  };
+  return (await visit(root)) && actual.size === expected.size;
+}
 
 /**
  * Recursive walk that prunes gitignored directories (node_modules, .next,
@@ -87,7 +176,247 @@ export class FileWorkspaceManager implements WorkspaceManager {
     if (worktree !== undefined) {
       return join(this.projectRoot(projectId), 'worktrees', safeSegment(worktree));
     }
-    return join(this.projectRoot(projectId), 'workspace');
+    const workspace = join(this.projectRoot(projectId), 'workspace');
+    try {
+      return readlinkSync(workspace);
+    } catch (error) {
+      if (isNotFound(error) || (error as NodeJS.ErrnoException).code === 'EINVAL') {
+        return workspace;
+      }
+      throw error;
+    }
+  }
+
+  async reserveProjectDirectory(projectId: string, projectDirectory: string): Promise<string> {
+    if (!isAbsolute(projectDirectory)) {
+      throw new ValidationError('Project directory must be an absolute path.');
+    }
+    const requested = resolve(projectDirectory);
+    const requestedParent = await realpath(dirname(requested)).catch((error) => {
+      if (isNotFound(error)) {
+        throw new ValidationError('Project directory parent must already exist.');
+      }
+      throw error;
+    });
+    const requestedCanonical = join(requestedParent, basename(requested));
+    const canonicalDataDir = await realpath(this.dataDir);
+    if (
+      requestedCanonical === canonicalDataDir ||
+      requestedCanonical.startsWith(`${canonicalDataDir}${sep}`)
+    ) {
+      throw new ValidationError('Project directory must be outside DATA_DIR.');
+    }
+    const existing = await lstat(requested).catch((error) => {
+      if (isNotFound(error)) return null;
+      throw error;
+    });
+    if (!existing) await ensureDir(requestedCanonical);
+    const canonical = await realpath(requestedCanonical);
+    if (canonical === canonicalDataDir || canonical.startsWith(`${canonicalDataDir}${sep}`)) {
+      throw new ValidationError('Project directory must be outside DATA_DIR.');
+    }
+    const id = reservationId(canonical);
+    const reservationPath = join(this.dataDir, 'project-directory-reservations', `${id}.json`);
+    const workspace = join(this.projectRoot(projectId), 'workspace');
+
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['project-directory-reservations', id, 'lock'],
+      async () => {
+        const reserved = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
+        const current = await lstat(canonical).catch((error) => {
+          if (isNotFound(error)) return null;
+          throw error;
+        });
+        if (!current) await ensureDir(canonical);
+        const identity = await lstat(canonical);
+        const alias = await findProjectDirectoryReservation(
+          this.dataDir,
+          (reservation) =>
+            reservation.requestedPath === requestedCanonical ||
+            reservation.projectDirectory === canonical ||
+            (reservation.identity?.device === String(identity.dev) &&
+              reservation.identity.inode === String(identity.ino)),
+        );
+        if (reserved || alias) {
+          throw new ValidationError(
+            `Project directory is already reserved by ${(reserved ?? alias)!.projectId}.`,
+          );
+        }
+        if (!identity.isDirectory() || identity.isSymbolicLink()) {
+          throw new ValidationError('Project directory must be a directory, not a symlink.');
+        }
+        if ((await readdir(canonical)).length > 0) {
+          throw new ValidationError('Project directory must be new or empty.');
+        }
+        await atomicWriteJson(reservationPath, {
+          projectId,
+          requestedPath: requestedCanonical,
+          projectDirectory: canonical,
+          identity: { device: String(identity.dev), inode: String(identity.ino) },
+        });
+        try {
+          await ensureDir(this.projectRoot(projectId));
+          await symlink(canonical, workspace, 'dir');
+        } catch (error) {
+          await rm(reservationPath, { force: true });
+          throw error;
+        }
+      },
+    );
+    return canonical;
+  }
+
+  async releaseProjectDirectory(projectId: string): Promise<void> {
+    const workspace = join(this.projectRoot(projectId), 'workspace');
+    let projectDirectory = await readlink(workspace).catch((error) => {
+      if (isNotFound(error)) return null;
+      throw error;
+    });
+    if (!projectDirectory) {
+      projectDirectory =
+        (
+          await findProjectDirectoryReservation(
+            this.dataDir,
+            (reservation) => reservation.projectId === projectId,
+          )
+        )?.projectDirectory ?? null;
+    }
+    if (!projectDirectory) return;
+    const id = reservationId(projectDirectory);
+    const reservationPath = join(this.dataDir, 'project-directory-reservations', `${id}.json`);
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['project-directory-reservations', id, 'lock'],
+      async () => {
+        const reserved = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
+        if (!reserved || reserved.projectId !== projectId) return;
+        if (!reserved.identity) {
+          throw new ValidationError(
+            'Project directory reservation cannot be released safely without identity metadata.',
+          );
+        }
+        const identity = await lstat(projectDirectory).catch((error) => {
+          if (isNotFound(error)) return null;
+          throw error;
+        });
+        if (
+          !identity?.isDirectory() ||
+          identity.isSymbolicLink() ||
+          String(identity.dev) !== reserved.identity.device ||
+          String(identity.ino) !== reserved.identity.inode
+        ) {
+          throw new ValidationError(
+            'Project directory identity changed before reservation release.',
+          );
+        }
+        if ((await readdir(projectDirectory)).length > 0) {
+          throw new ValidationError('Project directory changed before reservation release.');
+        }
+        await rm(workspace, { force: true });
+        await rm(reservationPath, { force: true });
+      },
+    );
+  }
+
+  async initializeProject(
+    projectId: string,
+    prd: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<void> {
+    const reservation = await findProjectDirectoryReservation(
+      this.dataDir,
+      (candidate) => candidate.projectId === projectId,
+    );
+    if (!reservation) throw new ValidationError('Project directory reservation was not found.');
+    const id = reservationId(reservation.projectDirectory);
+    const reservationPath = join(this.dataDir, 'project-directory-reservations', `${id}.json`);
+
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['project-directory-reservations', id, 'lock'],
+      async () => {
+        const current = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
+        if (!current || current.projectId !== projectId) {
+          throw new ValidationError('Project directory reservation changed before initialization.');
+        }
+        await this.assertReservedDirectory(current, true);
+        const workspace = current.projectDirectory;
+        const generated = [
+          { path: '.gitignore', content: DEFAULT_GITIGNORE },
+          { path: 'PRD.md', content: `${prd.trim()}\n` },
+          ...files,
+        ];
+        await this.options.beforeInitializeWrite?.();
+        const destinations = new Set<string>();
+        const createdDirectories = new Set<string>();
+        const expected = new Map(generated.map((file) => [file.path, file.content]));
+        for (const file of generated) {
+          if (isAbsolute(file.path)) throw new Error(`Unsafe scaffold path: ${file.path}`);
+          const segments = file.path.split('/');
+          const destination = pathFor(workspace, ...segments);
+          if (destinations.has(destination)) {
+            throw new ValidationError(`Duplicate generated path: ${file.path}`);
+          }
+          destinations.add(destination);
+          let parent = workspace;
+          for (const segment of segments.slice(0, -1)) {
+            parent = join(parent, segment);
+            if (!createdDirectories.has(parent)) {
+              try {
+                await mkdir(parent);
+                createdDirectories.add(parent);
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+                  throw new ValidationError(
+                    `Project directory changed after reservation: ${file.path}`,
+                  );
+                }
+                throw error;
+              }
+            }
+            const entry = await lstat(parent);
+            if (!entry.isDirectory() || entry.isSymbolicLink()) {
+              throw new ValidationError(
+                `Project directory changed after reservation: ${file.path}`,
+              );
+            }
+          }
+          await this.assertReservedDirectory(current, false);
+          if (!(await atomicCreateText(destination, file.content))) {
+            throw new ValidationError(`Project directory changed after reservation: ${file.path}`);
+          }
+        }
+        await this.assertReservedDirectory(current, false);
+        if (!(await matchesGeneratedTree(workspace, expected))) {
+          throw new ValidationError('Project directory changed during initialization.');
+        }
+      },
+    );
+  }
+
+  private async assertReservedDirectory(
+    reservation: ProjectDirectoryReservation,
+    requireEmpty: boolean,
+  ): Promise<void> {
+    if (!reservation.identity) {
+      throw new ValidationError('Project directory reservation lacks identity metadata.');
+    }
+    const identity = await lstat(reservation.projectDirectory).catch((error) => {
+      if (isNotFound(error)) return null;
+      throw error;
+    });
+    if (
+      !identity?.isDirectory() ||
+      identity.isSymbolicLink() ||
+      String(identity.dev) !== reservation.identity.device ||
+      String(identity.ino) !== reservation.identity.inode
+    ) {
+      throw new ValidationError('Project directory identity changed after reservation.');
+    }
+    if (requireEmpty && (await readdir(reservation.projectDirectory)).length > 0) {
+      throw new ValidationError('Project directory changed after reservation.');
+    }
   }
 
   async ensure(projectId: string): Promise<void> {
@@ -95,22 +424,7 @@ export class FileWorkspaceManager implements WorkspaceManager {
     await ensureDir(workspace);
     const gitignore = join(workspace, '.gitignore');
     if (!(await exists(gitignore))) {
-      await atomicWriteText(
-        gitignore,
-        [
-          'node_modules/',
-          '.next/',
-          'dist/',
-          'coverage/',
-          '.env*',
-          '!.env.example',
-          '.orchestrator/',
-          '*.log',
-          // The Supabase CLI's state for the project's own local stack.
-          'supabase/.temp/',
-          '',
-        ].join('\n'),
-      );
+      await atomicWriteText(gitignore, DEFAULT_GITIGNORE);
     }
   }
 

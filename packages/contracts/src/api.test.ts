@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ConversationPageResponseSchema,
+  CreateProjectRequestSchema,
   CreateAttachmentRequestSchema,
   CreateAttachmentResponseSchema,
   CreateMessageRequestSchema,
@@ -214,6 +215,25 @@ describe('conversation HTTP contracts (#36)', () => {
       }),
     ).toThrow();
     expect(UpdateOperationProposalResponseSchema.parse({ artifact }).artifact).toEqual(artifact);
+  });
+});
+
+describe('project directory contract (#599)', () => {
+  it('requires the operator-selected project directory for each new project', () => {
+    expect(() =>
+      CreateProjectRequestSchema.parse({
+        name: 'Builder',
+        prd: 'x'.repeat(50),
+      }),
+    ).toThrow(/projectDirectory/i);
+
+    expect(
+      CreateProjectRequestSchema.parse({
+        name: 'Builder',
+        prd: 'x'.repeat(50),
+        projectDirectory: '/Users/operator/Projects/builder',
+      }),
+    ).toMatchObject({ projectDirectory: '/Users/operator/Projects/builder' });
   });
 });
 

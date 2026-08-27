@@ -64,7 +64,12 @@ describe('Control Session client', () => {
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(jsonResponse({ project: { id: 'project-1' } }));
 
-    await createProject({ name: 'Project', prd: 'Valid PRD', workflowId: 'default' });
+    await createProject({
+      name: 'Project',
+      prd: 'Valid PRD',
+      projectDirectory: '/tmp/project',
+      workflowId: 'default',
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:4000/projects',

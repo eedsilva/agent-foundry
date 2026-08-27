@@ -13,6 +13,8 @@ export const ProjectSchema = z.object({
   name: z.string().min(1),
   workflowId: PathSegmentSchema,
   policyId: PathSegmentSchema.default('default'),
+  /** Operator-selected canonical source directory; absent only on legacy records. */
+  projectDirectory: z.string().min(1).optional(),
   status: ProjectStatusSchema,
   version: z.number().int().positive().default(1),
   createdAt: z.string().datetime(),
@@ -104,6 +106,7 @@ export const ProjectEventSchema = z
     type: z.enum([
       'project.created',
       'scaffold.applied',
+      'project.initialization_ready',
       'project.queued',
       'project.provisioning_started',
       'project.provisioned',

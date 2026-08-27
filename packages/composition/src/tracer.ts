@@ -172,6 +172,7 @@ async function startTracerRun(
   options: RunTracerScenarioOptions,
 ): Promise<{ runtime: Runtime; project: Project; runId: string }> {
   const dataDir = options.dataDir ?? (await mkdtemp(join(tmpdir(), `tracer-${scenario.id}-`)));
+  const projectDirectory = await mkdtemp(join(tmpdir(), `tracer-project-${scenario.id}-`));
   const runtime = await createRuntime({
     ...process.env,
     REPO_ROOT: FOUNDRY_ROOT,
@@ -201,6 +202,7 @@ async function startTracerRun(
     name: scenario.id,
     prd: scenario.prompt,
     workflowId: scenario.workflowId,
+    projectDirectory,
     ...(options.policyId ? { policyId: options.policyId } : {}),
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');

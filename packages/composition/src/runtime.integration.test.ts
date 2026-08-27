@@ -263,6 +263,12 @@ afterEach(async () => {
   );
 });
 
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-project-'));
+  temporaryDirectories.push(path);
+  return path;
+}
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -378,6 +384,7 @@ async function completeDefaultMockWorkflow(
       'Build a tiny issue tracker with create and complete flows.',
       'Persist issues, validate inputs, expose clear failure states, and add deterministic tests.',
     ].join('\n\n'),
+    projectDirectory: await createProjectDirectory(),
   });
 
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
@@ -422,6 +429,32 @@ describe('runtime composition', () => {
       FileKnowledgeFileRepository,
     );
     expect(runtime.generatedProjectRuntime).toBeUndefined();
+  });
+
+  it('re-publishes a missing file-mode job when the runtime restarts', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-queue-recovery-'));
+    temporaryDirectories.push(dataDir);
+    const env = {
+      ...process.env,
+      REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    };
+    const runtime = await createRuntime(env);
+    const project = await runtime.projectService.create({
+      name: 'Queue recovery fixture',
+      workflowId: 'web-app-v1',
+      prd: 'Recover the deterministic queue publication after restart.',
+      projectDirectory: await createProjectDirectory(),
+    });
+    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+    const jobId = `run-project-${project.currentRunId}`;
+    await rm(join(dataDir, 'queue', 'pending', `${jobId}.json`));
+
+    const restarted = await createRuntime(env);
+
+    await expect(restarted.queue.claim('recovery-worker')).resolves.toMatchObject({ id: jobId });
   });
 
   it('allows controlled real-mode tests to omit the generated project runtime', async () => {
@@ -496,6 +529,7 @@ describe('runtime composition', () => {
       name: 'Preview cleanup fixture',
       workflowId: 'web-app-v1',
       prd: 'Fail after provisioning so preview cleanup runs.',
+      projectDirectory: await createProjectDirectory(),
     });
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const workspacePath = runtime.workspaces.workspacePath(project.id);
@@ -653,6 +687,7 @@ describe('runtime composition', () => {
       name: 'Cross-paired conversation',
       workflowId: 'web-app-v1',
       prd: 'Build a persistent project whose exported conversation identity stays canonical.',
+      projectDirectory: await createProjectDirectory(),
     });
     const root = join(dataDir, 'projects', project.id, 'conversation');
     await mkdir(root);
@@ -683,6 +718,7 @@ describe('runtime composition', () => {
       name: 'Corrupt conversation storage',
       workflowId: 'web-app-v1',
       prd: 'Build a persistent project whose export fails closed on corrupt conversation storage.',
+      projectDirectory: await createProjectDirectory(),
     });
     await writeFile(join(conversationDataDir, 'projects'), 'corrupt path shape');
     const service = new ConversationService(
@@ -720,6 +756,7 @@ describe('runtime composition', () => {
       name: 'Feedback restart sample',
       workflowId: 'restart-approval-v1',
       prd: 'Build a small persistent issue tracker with validation and deterministic tests.',
+      projectDirectory: await createProjectDirectory(),
     });
     if (!project.currentRunId) throw new Error('Expected a persisted workflow run');
     const runId = project.currentRunId;
@@ -1014,6 +1051,7 @@ describe('runtime composition', () => {
       name: 'Full suite failure sample',
       workflowId: 'web-app-v1',
       prd: 'Build a small issue tracker with deterministic verification and release review.',
+      projectDirectory: await createProjectDirectory(),
     });
 
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
@@ -1056,6 +1094,7 @@ describe('runtime composition', () => {
       name: 'Fallback sample',
       workflowId: 'web-app-v1',
       prd: 'Build a small, persistent issue tracker with validation, filters, tests, type checking, clear failure states, and a production build.',
+      projectDirectory: await createProjectDirectory(),
     });
 
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
@@ -1103,6 +1142,7 @@ describe('runtime composition', () => {
       name: 'Run diagnostic sample',
       workflowId: 'web-app-v1',
       prd: 'Build a small, persistent issue tracker with validation, filters, tests, type checking, clear failure states, and a production build.',
+      projectDirectory: await createProjectDirectory(),
     });
     const runId = project.currentRunId;
     if (!runId) throw new Error('Expected project to reference its workflow run');
@@ -1141,6 +1181,7 @@ describe('runtime composition', () => {
       name: 'Failed run sample',
       workflowId: 'web-app-v1',
       prd: 'Build a small persistent issue tracker with clear validation, deterministic tests, diagnostics, and production build checks.',
+      projectDirectory: await createProjectDirectory(),
     });
 
     expect(await runtime.worker.runOnce()).toBe(true);

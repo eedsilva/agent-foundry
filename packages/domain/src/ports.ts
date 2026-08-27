@@ -129,7 +129,7 @@ export interface WorkflowRunRepository {
   get(runId: string): Promise<WorkflowRun | null>;
   list(projectId: string, limit?: number): Promise<WorkflowRun[]>;
   listNonTerminal(projectId: string): Promise<WorkflowRun[]>;
-  update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun>;
+  update(run: WorkflowRun, expectedVersion: number, tx?: Tx): Promise<WorkflowRun>;
 }
 
 export interface StepRunRepository {
@@ -528,12 +528,22 @@ export interface VerificationService {
 
 export interface WorkspaceManager {
   projectRoot(projectId: string): string;
+  /** Reserves an operator-selected directory for one project until its durable record exists. */
+  reserveProjectDirectory(projectId: string, projectDirectory: string): Promise<string>;
+  /** Releases an empty directory reserved before the project record was persisted. */
+  releaseProjectDirectory(projectId: string): Promise<void>;
   /**
    * With `worktree`, resolves to `<projectRoot>/worktrees/<worktree>` (see
    * `createWorktree`); otherwise the primary `<projectRoot>/workspace`
    * checkout, unchanged.
    */
   workspacePath(projectId: string, worktree?: string): string;
+  /** Materializes the first project tree without overwriting post-reservation edits. */
+  initializeProject(
+    projectId: string,
+    prd: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<void>;
   ensure(projectId: string): Promise<void>;
   cleanup(projectId: string): Promise<void>;
   writePrd(projectId: string, prd: string): Promise<void>;

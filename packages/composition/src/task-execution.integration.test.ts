@@ -198,10 +198,13 @@ async function startProject(
   runtime: Runtime,
   name: string,
 ): Promise<{ id: string; runId: string }> {
+  const projectDirectory = await mkdtemp(join(tmpdir(), `agent-foundry-${name}-project-`));
+  temporaryDirectories.push(projectDirectory);
   const project = await runtime.projectService.create({
     name,
     workflowId: 'task-loop-v1',
     prd: 'Build a small issue tracker with create and complete flows and deterministic tests.',
+    projectDirectory,
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
   return { id: project.id, runId: project.currentRunId };

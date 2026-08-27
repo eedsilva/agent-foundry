@@ -227,6 +227,12 @@ let browserCookies: { name: string; value: string; httpOnly: boolean }[] = [];
 let webProcess: ChildProcess;
 let webBaseUrl: string;
 const dirs: string[] = [];
+
+async function createProjectDirectory(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), 'agent-foundry-golden-flow-project-'));
+  dirs.push(path);
+  return path;
+}
 // #548: EXECUTOR_MODE: 'real' below spawns the real ClaudeCliExecutor /
 // CodexCliExecutor classes, which resolve the `claude` / `codex` command by
 // name on PATH. The suite ran no agent step before the UI-quality judge
@@ -358,6 +364,7 @@ async function createProject(policyId?: string): Promise<string> {
       name: 'Golden flow E2E',
       prd: 'x'.repeat(60),
       workflowId: 'golden-flow-e2e-v1',
+      projectDirectory: await createProjectDirectory(),
       ...(policyId ? { policyId } : {}),
     }),
   });
