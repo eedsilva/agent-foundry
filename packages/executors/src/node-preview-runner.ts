@@ -82,6 +82,10 @@ interface ProcessEntry {
 const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
 const DEFAULT_INSTALL_TIMEOUT_MS = 120_000;
 const POLL_INTERVAL_MS = 100;
+// How long killTracked waits for an already-dead process's exit handler to
+// drain before it assumes the death is its own (#665). Measured drain in the
+// race window is ~5ms; overshooting only falls back to the previous behaviour.
+const EXIT_DRAIN_GRACE_MS = 50;
 const DEFAULT_MAX_OUTPUT_BYTES = 5_000_000;
 // Separate from maxOutputBytes/DEFAULT_MAX_OUTPUT_BYTES on purpose: those bound
 // execa's maxBuffer and the in-memory stdout/stderr capture accumulator (needs
@@ -254,7 +258,24 @@ export class NodePreviewRunner implements PreviewRunner {
       if (persistedPid !== undefined) await terminatePersistedProcessTree(persistedPid);
       return;
     }
-    entry.stopping = true;
+    // Authorship, not intent. A process killed from outside (OOM, an
+    // operator's `kill -9`) can still be un-drained when stop() lands one
+    // event-loop turn later: `entry.exited` is false and `process.kill(pid, 0)`
+    // succeeds on the zombie, so both read as alive and this runner would claim
+    // a death it did not cause. Give the exit handler one bounded turn to say
+    // it already happened; if it does, markExited keeps the cause (#665).
+    // A process that is genuinely alive costs the full grace here, which is
+    // noise next to terminateProcessTree's own 2s SIGTERM grace below.
+    if (!entry.exited) {
+      await Promise.race([
+        Promise.resolve(entry.child).then(
+          () => {},
+          () => {},
+        ),
+        new Promise((resolve) => setTimeout(resolve, EXIT_DRAIN_GRACE_MS)),
+      ]);
+    }
+    entry.stopping = !entry.exited;
     if (entry.exited) killProcessTree(entry.child, 'SIGKILL');
     else await terminateProcessTree(entry.child);
     entry.flushOutput();
