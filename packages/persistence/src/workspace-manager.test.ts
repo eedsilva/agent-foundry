@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -13,13 +14,17 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
-import { FileWorkspaceManager } from './workspace-manager.js';
+import { FileWorkspaceManager, type FileWorkspaceManagerOptions } from './workspace-manager.js';
 
 describe('FileWorkspaceManager project-directory reservation (#599)', () => {
-  function manager(dataDir: string): FileWorkspaceManager {
+  function manager(
+    dataDir: string,
+    options: Partial<FileWorkspaceManagerOptions> = {},
+  ): FileWorkspaceManager {
     return new FileWorkspaceManager(dataDir, {
       gitAuthorName: 'Test Agent',
       gitAuthorEmail: 'test@example.com',
+      ...options,
     });
   }
 
@@ -155,6 +160,58 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     ).resolves.toBeUndefined();
 
     await expect(readFile(join(external, 'app.ts'), 'utf8')).resolves.toBe(generated);
+  });
+
+  it('restores the source when a symlink replaces a generated directory before rename', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
+    const selected = join(parent, 'generated-app');
+    let source = join(selected, 'src');
+    const workspaces = manager(dataDir, {
+      renameFile: async (from, to) => {
+        if (from === source) {
+          await rm(source, { recursive: true });
+          await symlink(external, source, 'dir');
+        }
+        return rename(from, to);
+      },
+    });
+    const generated = 'export const app = true;\n';
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await workspaces.applyScaffold('project-1', [{ path: 'src/app.ts', content: generated }]);
+    source = await realpath(source);
+    await writeFile(join(external, 'app.ts'), generated);
+    await expect(
+      workspaces.releaseProjectDirectory('project-1', [{ path: 'src/app.ts', content: generated }]),
+    ).rejects.toThrow(/changed while removing src/i);
+
+    await expect(readFile(join(external, 'app.ts'), 'utf8')).resolves.toBe(generated);
+    expect((await lstat(source)).isSymbolicLink()).toBe(true);
+  });
+
+  it('restores generated files when an external file arrives before rename', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    let source = join(selected, 'src');
+    const workspaces = manager(dataDir, {
+      renameFile: async (from, to) => {
+        if (from === source) await writeFile(join(source, 'operator.txt'), 'keep\n');
+        return rename(from, to);
+      },
+    });
+    const generated = 'export const app = true;\n';
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await workspaces.applyScaffold('project-1', [{ path: 'src/app.ts', content: generated }]);
+    source = await realpath(source);
+    await expect(
+      workspaces.releaseProjectDirectory('project-1', [{ path: 'src/app.ts', content: generated }]),
+    ).rejects.toThrow(/changed while removing src/i);
+
+    await expect(readFile(join(source, 'operator.txt'), 'utf8')).resolves.toBe('keep\n');
   });
 
   it('releases the marker when an external edit replaces a generated file with a directory', async () => {

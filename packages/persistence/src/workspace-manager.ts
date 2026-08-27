@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readlinkSync } from 'node:fs';
 import {
   lstat,
@@ -7,7 +7,7 @@ import {
   readlink,
   readdir,
   realpath,
-  rmdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -38,6 +38,8 @@ import {
 export interface FileWorkspaceManagerOptions {
   gitAuthorName: string;
   gitAuthorEmail: string;
+  /** Test seam for mutations that race the atomic rollback move. */
+  renameFile?: typeof rename;
 }
 
 /** Files-tab display cap (#491) — generous for any real source/config file,
@@ -64,32 +66,74 @@ function reservationId(projectDirectory: string): string {
   return createHash('sha256').update(projectDirectory).digest('hex');
 }
 
-async function hasSymlinkAncestor(root: string, path: string): Promise<boolean> {
-  const segments = relative(root, path).split(sep);
-  let current = root;
-  for (const segment of segments) {
-    current = join(current, segment);
-    const entry = await lstat(current).catch((error) => {
-      if (isNotFound(error)) return null;
-      throw error;
-    });
-    if (!entry) return false;
-    if (entry.isSymbolicLink()) return true;
+type GeneratedUnit = { name: string; files: Map<string, string> };
+
+async function matchesGeneratedUnit(path: string, files: Map<string, string>): Promise<boolean> {
+  const entry = await lstat(path).catch((error) => {
+    if (isNotFound(error)) return null;
+    throw error;
+  });
+  if (!entry || entry.isSymbolicLink()) return false;
+  if (entry.isFile()) {
+    return files.size === 1 && files.get('') === (await readFile(path, 'utf8'));
   }
-  return false;
+  if (!entry.isDirectory()) return false;
+  const actual = new Map<string, string>();
+  const visit = async (directory: string, prefix = ''): Promise<boolean> => {
+    for (const child of await readdir(directory, { withFileTypes: true })) {
+      const childPath = join(directory, child.name);
+      const childName = prefix ? `${prefix}/${child.name}` : child.name;
+      if (child.isSymbolicLink()) return false;
+      if (child.isDirectory()) {
+        if (!(await visit(childPath, childName))) return false;
+      } else if (child.isFile()) {
+        actual.set(childName, await readFile(childPath, 'utf8'));
+      } else {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!(await visit(path))) return false;
+  return (
+    actual.size === files.size &&
+    [...files].every(([name, content]) => actual.get(name) === content)
+  );
 }
 
-async function removeEmptyParents(root: string, path: string): Promise<void> {
-  for (let current = dirname(path); current !== root; current = dirname(current)) {
-    try {
-      if ((await lstat(current)).isSymbolicLink()) return;
-      await rmdir(current);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (isNotFound(error) || code === 'ENOTEMPTY' || code === 'ENOTDIR') return;
+async function removeGeneratedUnit(
+  projectDirectory: string,
+  projectId: string,
+  unit: GeneratedUnit,
+  renameFile = rename,
+) {
+  const source = join(projectDirectory, unit.name);
+  if (!(await matchesGeneratedUnit(source, unit.files))) return;
+  const tombstone = join(projectDirectory, `.${unit.name}.rollback-${randomUUID()}`);
+  const tombstoneExists = await lstat(tombstone).then(
+    () => true,
+    (error) => {
+      if (isNotFound(error)) return false;
       throw error;
-    }
+    },
+  );
+  if (tombstoneExists) {
+    throw new ValidationError(`Generated rollback tombstone already exists for ${unit.name}.`);
   }
+  await renameFile(source, tombstone);
+  if (await matchesGeneratedUnit(tombstone, unit.files)) {
+    await rm(tombstone, { recursive: true, force: true });
+    return;
+  }
+  const sourceExists = await lstat(source).then(
+    () => true,
+    (error) => {
+      if (isNotFound(error)) return false;
+      throw error;
+    },
+  );
+  if (!sourceExists) await renameFile(tombstone, source);
+  throw new ValidationError(`Generated rollback changed while removing ${unit.name}.`);
 }
 
 /**
@@ -246,21 +290,20 @@ export class FileWorkspaceManager implements WorkspaceManager {
       async () => {
         const reserved = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
         if (!reserved || reserved.projectId !== projectId) return;
+        const units = new Map<string, GeneratedUnit>();
         for (const { path, content } of [
           { path: '.gitignore', content: DEFAULT_GITIGNORE },
           ...generatedFiles,
         ]) {
-          const generatedFile = pathFor(projectDirectory, ...path.split('/'));
-          if (await hasSymlinkAncestor(projectDirectory, generatedFile)) continue;
-          const current = await readFile(generatedFile, 'utf8').catch((error) => {
-            const code = (error as NodeJS.ErrnoException).code;
-            if (isNotFound(error) || code === 'EISDIR' || code === 'EINVAL') return null;
-            throw error;
-          });
-          if (current !== content) continue;
-          if (await hasSymlinkAncestor(projectDirectory, generatedFile)) continue;
-          await rm(generatedFile, { force: true });
-          await removeEmptyParents(projectDirectory, generatedFile);
+          const segments = path.split('/');
+          const name = segments.shift();
+          if (!name) throw new ValidationError('Generated rollback path must not be empty.');
+          const unit = units.get(name) ?? { name, files: new Map<string, string>() };
+          unit.files.set(segments.join('/'), content);
+          units.set(name, unit);
+        }
+        for (const unit of units.values()) {
+          await removeGeneratedUnit(projectDirectory, projectId, unit, this.options.renameFile);
         }
         await rm(reservationPath, { force: true });
         await rm(workspace, { force: true });
