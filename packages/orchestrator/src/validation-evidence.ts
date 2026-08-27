@@ -1254,10 +1254,18 @@ function automaticFailureClass(
   // dropped it: a preview that never came up used to reach here as a bare
   // `Error` whose only clue was the message.
   const errorText = `${run.error?.name ?? ''} ${run.error?.code ?? ''}`.toLowerCase();
-  // 'infrastructure' covers BrowserInfrastructureError (#526, #528): the
-  // harness never reached the preview, so this is an environment fault, not
-  // a product defect — regardless of what the class happens to be named.
-  if (/(?:provision|environment|docker|supabase|preview|infrastructure)/.test(errorText)) {
+  // Every term here names a fault *origin*, never a subsystem. 'preview' used
+  // to be in this alternation and named a subsystem, so it promoted every
+  // identity that merely starts with 'Preview' — including PreviewStartError
+  // and PreviewInstallError, the two #659 worked to keep as product failures.
+  // Those only reached 'product' because BrowserVerificationCoordinator throws
+  // a bare `new Error(reason)` and drops the name; the moment any caller
+  // preserved the identity, a crashing generated app would have published as
+  // an environment fault (#667). 'infrastructure' still covers the
+  // environment-origin preview identities by origin, not by subsystem:
+  // BrowserInfrastructureError (#526, #528) and PreviewInfrastructureError /
+  // PREVIEW_INFRASTRUCTURE_UNAVAILABLE (#659) both carry it.
+  if (/(?:provision|environment|docker|supabase|infrastructure)/.test(errorText)) {
     return 'environment';
   }
   const externalAttempts = attempts.filter((attempt) => attempt.provider !== 'internal');
