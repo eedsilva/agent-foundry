@@ -86,14 +86,31 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
   assertNoModelInvocation(fixture);
 });
 
-test('blocks a missing Docker daemon without invoking a model', async (t) => {
+test('distinguishes missing Docker from Docker Desktop that is not running without invoking a model', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
   assert.equal(runDoctor(fixture, ['--json']).status, 0);
   await rm(join(fixture.bin, 'docker'));
 
-  const result = runDoctor(fixture, ['--json']);
-  assert.equal(result.status, 1);
-  assert.equal(JSON.parse(result.stdout).checks.find(({ name }) => name === 'docker').ok, false);
+  const missing = runDoctor(fixture, ['--json']);
+  assert.equal(missing.status, 1);
+  assert.deepEqual(
+    JSON.parse(missing.stdout).checks.find(({ name }) => name === 'docker'),
+    {
+      name: 'docker',
+      ok: false,
+      required: true,
+      message: 'install Docker Desktop and retry',
+    },
+  );
+
+  await writeFile(join(fixture.bin, 'docker'), '#!/usr/bin/env node\nprocess.exit(1);\n');
+  await chmod(join(fixture.bin, 'docker'), 0o755);
+  const unavailable = runDoctor(fixture, ['--json']);
+  assert.equal(unavailable.status, 1);
+  assert.equal(
+    JSON.parse(unavailable.stdout).checks.find(({ name }) => name === 'docker').message,
+    'start Docker Desktop and retry',
+  );
   assertNoModelInvocation(fixture);
 });
 
@@ -349,13 +366,14 @@ test('redacts existing and missing filesystem paths from JSON checks', async (t)
   assert.doesNotMatch(result.stdout, /private-user/);
 });
 
-test('derives configured-path remediations without exposing an external path', async (t) => {
+test('derives actionable configured-path remediations without exposing external paths', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
-  const result = runDoctor(fixture, ['--json'], {
-    HARNESS_DIR: 'configured-harness',
-    WORKFLOWS_DIR: 'configured-workflows',
+  const configuredPaths = {
+    HARNESS_DIR: '/private/configured-harness',
+    WORKFLOWS_DIR: '/private/configured-workflows',
     MODEL_CATALOG_PATH: '/private/configured-catalog.yaml',
-  });
+  };
+  const result = runDoctor(fixture, ['--json'], configuredPaths);
 
   assert.equal(result.status, 1);
   assert.deepEqual(
@@ -365,12 +383,19 @@ test('derives configured-path remediations without exposing an external path', a
       )
       .map(({ message }) => message),
     [
-      'restore configured-harness/manifest.json and retry',
-      'restore configured-workflows and retry',
-      'restore [outside workspace] and retry',
+      'restore the path in HARNESS_DIR and retry',
+      'restore the path in WORKFLOWS_DIR and retry',
+      'restore the path in MODEL_CATALOG_PATH and retry',
     ],
   );
-  assert.doesNotMatch(result.stdout, /private\/configured-catalog\.yaml/);
+  assert.doesNotMatch(result.stdout, /private\/configured-/);
+
+  const humanResult = runDoctor(fixture, [], configuredPaths);
+  assert.equal(humanResult.status, 1);
+  assert.match(humanResult.stdout, /restore the path in HARNESS_DIR and retry/);
+  assert.match(humanResult.stdout, /restore the path in WORKFLOWS_DIR and retry/);
+  assert.match(humanResult.stdout, /restore the path in MODEL_CATALOG_PATH and retry/);
+  assert.doesNotMatch(humanResult.stdout, /private\/configured-/);
 });
 
 test('redacts an existing externally configured catalog from human output', async (t) => {

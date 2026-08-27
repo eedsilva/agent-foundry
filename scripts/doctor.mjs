@@ -34,16 +34,25 @@ const checks = [
     resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
     true,
     root,
+    'HARNESS_DIR',
   ),
-  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root),
+  fileCheck(
+    'workflow directory',
+    resolve(root, env.WORKFLOWS_DIR ?? 'workflows'),
+    true,
+    root,
+    'WORKFLOWS_DIR',
+  ),
   fileCheck(
     'model catalog',
     resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
     true,
     root,
+    'MODEL_CATALOG_PATH',
   ),
   commandCheck('docker', ['info', '--format', '{{.ServerVersion}}'], realMode, {
-    missingMessage: 'start Docker Desktop and retry',
+    missingMessage: 'install Docker Desktop and retry',
+    unavailableMessage: 'start Docker Desktop and retry',
   }),
   ...storageChecks({ root, dataDirectory }),
   fileVaultCheck(process.platform, run),
@@ -245,7 +254,9 @@ function commandCheck(command, args, required, options = {}) {
       ok: false,
       required,
       message: required
-        ? (options.missingMessage ?? 'missing or not executable')
+        ? result.error?.code === 'ENOENT'
+          ? (options.missingMessage ?? 'missing or not executable')
+          : (options.unavailableMessage ?? options.missingMessage ?? 'missing or not executable')
         : 'not installed; acceptable in mock mode',
     };
   }
@@ -328,10 +339,13 @@ function parseVersion(value) {
   return { core: core.split('.').map(Number), prerelease };
 }
 
-function fileCheck(name, path, required, workspaceRoot) {
+function fileCheck(name, path, required, workspaceRoot, environmentVariable) {
   const ok = existsSync(path);
   const safePath = relativeCheckPath(workspaceRoot, path);
-  const remediation = `restore ${safePath} and retry`;
+  const remediation =
+    safePath === '[outside workspace]'
+      ? `restore the path in ${environmentVariable} and retry`
+      : `restore ${safePath} and retry`;
   const displayPath = safePath === '[outside workspace]' ? safePath : path;
   return {
     name,
