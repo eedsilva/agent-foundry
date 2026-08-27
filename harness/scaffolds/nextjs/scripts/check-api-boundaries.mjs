@@ -11,7 +11,10 @@ const CORS_REFERENCE = /access-control-allow-origin|['"]hono\/cors['"]|\bcors\s*
 const COOKIE_AUTH = /cookie/i;
 // No redacted structured logger exists in the scaffold, so reject every logging
 // method call regardless of receiver or argument names.
-const LOG_CALL = /\.(?:debug|error|info|log|trace|warn)\s*\(/gi;
+const LOG_CALL =
+  /(?:\.(?:debug|error|info|log|trace|warn)|\[\s*['"](?:debug|error|info|log|trace|warn)['"]\s*\])\s*(?:\?\.)?\s*\(/gi;
+const LOG_DESTRUCTURE =
+  /\b(?:const|let|var)\s*\{[^}]*\b(?:debug|error|info|log|trace|warn)\b[^}]*\}\s*=\s*console\b/gi;
 const offenders = [];
 
 if (existsSync(apiRoot)) walk(apiRoot);
@@ -34,6 +37,10 @@ function check(path, source) {
     if (COOKIE_AUTH.test(line)) offenders.push(`${location} — cookie-auth reference`);
   });
   for (const match of source.matchAll(LOG_CALL)) {
+    const line = source.slice(0, match.index).split(/\r?\n/).length;
+    offenders.push(`${path}:${line} — API logging is not permitted`);
+  }
+  for (const match of source.matchAll(LOG_DESTRUCTURE)) {
     const line = source.slice(0, match.index).split(/\r?\n/).length;
     offenders.push(`${path}:${line} — API logging is not permitted`);
   }
