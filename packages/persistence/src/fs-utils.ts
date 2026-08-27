@@ -60,11 +60,16 @@ export async function atomicWriteJson(path: string, value: unknown): Promise<voi
 
 /** Publishes a complete JSON file only when the destination does not exist. */
 export async function atomicCreateJson(path: string, value: unknown): Promise<boolean> {
+  return atomicCreateText(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/** Publishes complete text only when the destination does not exist. */
+export async function atomicCreateText(path: string, value: string): Promise<boolean> {
   await ensureDir(dirname(path));
   const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temp, 'wx');
   try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    await handle.writeFile(value, 'utf8');
     await handle.sync();
   } finally {
     await handle.close();

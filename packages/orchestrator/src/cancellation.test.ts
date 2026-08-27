@@ -386,6 +386,9 @@ class FakeWorkspaces implements WorkspaceManager {
   releaseProjectDirectory(): Promise<void> {
     return Promise.resolve();
   }
+  initializeProject(): Promise<void> {
+    return Promise.resolve();
+  }
   ensure(): Promise<void> {
     return Promise.resolve();
   }

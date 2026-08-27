@@ -105,6 +105,30 @@ describe('ProjectService.create', () => {
     );
   });
 
+  it('creates the missing failed run when file-mode run persistence fails once', async () => {
+    const harness = makeHarness();
+    const create = harness.runs.create.bind(harness.runs);
+    vi.spyOn(harness.runs, 'create')
+      .mockRejectedValueOnce(new Error('run store unavailable'))
+      .mockImplementation(create);
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('run store unavailable');
+
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({
+      status: 'failed',
+      error: { message: 'run store unavailable' },
+    });
+    expect(harness.enqueued).toHaveLength(0);
+  });
+
   it('retries initialization compensation when its first run update fails', async () => {
     const harness = makeHarness();
     vi.spyOn(harness.artifacts, 'put').mockRejectedValueOnce(
@@ -153,7 +177,24 @@ describe('ProjectService.create', () => {
     expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
   });
 
-  it('does not execute when job publication fails after queued state is recorded', async () => {
+  it('re-publishes a deterministic job for a queued run after restart', async () => {
+    const harness = makeHarness();
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    harness.enqueued.splice(0);
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(harness.enqueued).toEqual([
+      expect.objectContaining({ id: 'run-project-id-0002', runId: 'id-0002' }),
+    ]);
+  });
+
+  it('keeps initialization failure terminal when job publication fails', async () => {
     const harness = makeHarness();
     harness.failNextEnqueue(new Error('queue unavailable'));
 
@@ -170,12 +211,46 @@ describe('ProjectService.create', () => {
     expect(harness.executor.requests).toHaveLength(0);
     expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
     expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+    expect(harness.enqueued).toHaveLength(0);
+  });
+
+  it('re-publishes a queued run despite a historical execution failure event', async () => {
+    const harness = makeHarness();
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    harness.enqueued.splice(0);
+    await harness.events.append({
+      id: 'normal-failure',
+      projectId: 'id-0001',
+      runId: 'id-0002',
+      type: 'project.failed',
+      createdAt: '2026-07-14T12:00:00.000Z',
+      message: 'Normal execution failure.',
+      data: {},
+      dedupeKey: 'id-0002:project.failed',
+    });
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(harness.enqueued).toHaveLength(1);
+    expect(await harness.events.list('id-0001')).toContainEqual(
+      expect.objectContaining({ dedupeKey: 'id-0002:project.recovered_queued' }),
+    );
   });
 
   it('exposes a pre-persistence rollback failure without deleting its reservation', async () => {
     const harness = makeHarness();
-    vi.spyOn(harness.workspaces, 'writePrd').mockRejectedValueOnce(
-      new Error('workspace write failed'),
+    vi.spyOn(harness.projects, 'create').mockRejectedValueOnce(
+      new Error('project persistence failed'),
     );
     vi.spyOn(harness.workspaces, 'releaseProjectDirectory').mockRejectedValueOnce(
       new Error('reservation rollback failed'),
@@ -189,15 +264,77 @@ describe('ProjectService.create', () => {
         projectDirectory: '/operator/projects/issue-radar',
       }),
     ).rejects.toMatchObject({
-      message: 'workspace write failed',
+      message: 'project persistence failed',
       errors: [
-        expect.objectContaining({ message: 'workspace write failed' }),
+        expect.objectContaining({ message: 'project persistence failed' }),
         expect.objectContaining({ message: 'reservation rollback failed' }),
       ],
     });
 
     expect(harness.workspaces.cleanups).toEqual([]);
     expect(harness.workspaces.workspacePath('id-0001')).toBe('/operator/projects/issue-radar');
+  });
+
+  it('keeps the durable reservation and converges to failed when workspace setup fails', async () => {
+    const harness = makeHarness();
+    vi.spyOn(harness.workspaces, 'initializeProject').mockRejectedValueOnce(
+      new Error('workspace write failed'),
+    );
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('workspace write failed');
+
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+    expect(harness.workspaces.workspacePath('id-0001')).toBe('/operator/projects/issue-radar');
+    expect(harness.workspaces.cleanups).toEqual([]);
+  });
+
+  it('does not retry a run whose project initialization failed', async () => {
+    const harness = makeHarness();
+    vi.spyOn(harness.workspaces, 'initializeProject').mockRejectedValueOnce(
+      new Error('workspace write failed'),
+    );
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('workspace write failed');
+
+    await expect(harness.service.retry('id-0001')).rejects.toThrow(/initialization failed/i);
+    expect(harness.enqueued).toHaveLength(0);
+  });
+
+  it('does not retry a staged project after a crash persisted no run', async () => {
+    const harness = makeHarness();
+    const now = new Date().toISOString();
+    await harness.projects.create({
+      id: 'crashed-project',
+      name: 'Issue Radar',
+      workflowId: harness.workflow.id,
+      policyId: 'default',
+      status: 'failed',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      currentRunId: 'missing-run',
+      projectDirectory: '/operator/projects/issue-radar',
+      error: 'Project initialization was interrupted before queue publication.',
+    });
+
+    await expect(harness.service.retry('crashed-project')).rejects.toThrow(
+      /initialization failed/i,
+    );
+    expect(harness.enqueued).toHaveLength(0);
   });
 
   it('stops before project creation when validation preflight is blocked', async () => {

@@ -1,13 +1,13 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { readlinkSync } from 'node:fs';
 import {
   lstat,
+  mkdir,
   open,
   readFile,
   readlink,
   readdir,
   realpath,
-  rename,
   rm,
   symlink,
   writeFile,
@@ -24,6 +24,7 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import {
+  atomicCreateText,
   atomicWriteJson,
   atomicWriteText,
   ensureDir,
@@ -38,8 +39,8 @@ import {
 export interface FileWorkspaceManagerOptions {
   gitAuthorName: string;
   gitAuthorEmail: string;
-  /** Test seam for mutations that race the atomic rollback move. */
-  renameFile?: typeof rename;
+  /** Test seam for post-validation initialization races. */
+  beforeInitializeWrite?: () => void | Promise<void>;
 }
 
 /** Files-tab display cap (#491) — generous for any real source/config file,
@@ -60,80 +61,62 @@ const DEFAULT_GITIGNORE = [
   '',
 ].join('\n');
 
-type ProjectDirectoryReservation = { projectId: string; projectDirectory: string };
+type ProjectDirectoryReservation = {
+  projectId: string;
+  requestedPath?: string;
+  projectDirectory: string;
+  identity?: { device: string; inode: string };
+};
 
 function reservationId(projectDirectory: string): string {
   return createHash('sha256').update(projectDirectory).digest('hex');
 }
 
-type GeneratedUnit = { name: string; files: Map<string, string> };
-
-async function matchesGeneratedUnit(path: string, files: Map<string, string>): Promise<boolean> {
-  const entry = await lstat(path).catch((error) => {
-    if (isNotFound(error)) return null;
+async function listProjectDirectoryReservations(
+  dataDir: string,
+): Promise<ProjectDirectoryReservation[]> {
+  const root = join(dataDir, 'project-directory-reservations');
+  const entries = await readdir(root).catch((error) => {
+    if (isNotFound(error)) return [];
     throw error;
   });
-  if (!entry || entry.isSymbolicLink()) return false;
-  if (entry.isFile()) {
-    return files.size === 1 && files.get('') === (await readFile(path, 'utf8'));
+  const reservations: ProjectDirectoryReservation[] = [];
+  for (const entry of entries.filter((name) => name.endsWith('.json'))) {
+    const reservation = await readJsonOrNull<ProjectDirectoryReservation>(join(root, entry));
+    if (reservation) reservations.push(reservation);
   }
-  if (!entry.isDirectory()) return false;
-  const actual = new Map<string, string>();
+  return reservations;
+}
+
+async function findProjectDirectoryReservation(
+  dataDir: string,
+  predicate: (reservation: ProjectDirectoryReservation) => boolean,
+): Promise<ProjectDirectoryReservation | null> {
+  return (await listProjectDirectoryReservations(dataDir)).find(predicate) ?? null;
+}
+
+async function matchesGeneratedTree(root: string, expected: Map<string, string>): Promise<boolean> {
+  const actual = new Set<string>();
   const visit = async (directory: string, prefix = ''): Promise<boolean> => {
-    for (const child of await readdir(directory, { withFileTypes: true })) {
-      const childPath = join(directory, child.name);
-      const childName = prefix ? `${prefix}/${child.name}` : child.name;
-      if (child.isSymbolicLink()) return false;
-      if (child.isDirectory()) {
-        if (!(await visit(childPath, childName))) return false;
-      } else if (child.isFile()) {
-        actual.set(childName, await readFile(childPath, 'utf8'));
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) return false;
+      if (entry.isDirectory()) {
+        if (![...expected.keys()].some((candidate) => candidate.startsWith(`${name}/`))) {
+          return false;
+        }
+        if (!(await visit(path, name))) return false;
+      } else if (entry.isFile()) {
+        if (expected.get(name) !== (await readFile(path, 'utf8'))) return false;
+        actual.add(name);
       } else {
         return false;
       }
     }
     return true;
   };
-  if (!(await visit(path))) return false;
-  return (
-    actual.size === files.size &&
-    [...files].every(([name, content]) => actual.get(name) === content)
-  );
-}
-
-async function removeGeneratedUnit(
-  projectDirectory: string,
-  projectId: string,
-  unit: GeneratedUnit,
-  renameFile = rename,
-) {
-  const source = join(projectDirectory, unit.name);
-  const tombstone = join(projectDirectory, `.${unit.name}.rollback-${randomUUID()}`);
-  await renameFile(source, tombstone).catch((error) => {
-    if (isNotFound(error)) return;
-    throw error;
-  });
-  const tombstoneExists = await lstat(tombstone).then(
-    () => true,
-    (error) => {
-      if (isNotFound(error)) return false;
-      throw error;
-    },
-  );
-  if (!tombstoneExists) return;
-  if (await matchesGeneratedUnit(tombstone, unit.files)) {
-    await rm(tombstone, { recursive: true, force: true });
-    return;
-  }
-  const sourceExists = await lstat(source).then(
-    () => true,
-    (error) => {
-      if (isNotFound(error)) return false;
-      throw error;
-    },
-  );
-  if (!sourceExists) await renameFile(tombstone, source);
-  throw new ValidationError(`Generated rollback changed while removing ${unit.name}.`);
+  return (await visit(root)) && actual.size === expected.size;
 }
 
 /**
@@ -241,25 +224,37 @@ export class FileWorkspaceManager implements WorkspaceManager {
       ['project-directory-reservations', id, 'lock'],
       async () => {
         const reserved = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
-        if (reserved) {
-          throw new ValidationError(
-            `Project directory is already reserved by ${reserved.projectId}.`,
-          );
-        }
         const current = await lstat(canonical).catch((error) => {
           if (isNotFound(error)) return null;
           throw error;
         });
-        if (current) {
-          if (!current.isDirectory())
-            throw new ValidationError('Project directory must be a directory.');
-          if ((await readdir(canonical)).length > 0) {
-            throw new ValidationError('Project directory must be new or empty.');
-          }
-        } else {
-          await ensureDir(canonical);
+        if (!current) await ensureDir(canonical);
+        const identity = await lstat(canonical);
+        const alias = await findProjectDirectoryReservation(
+          this.dataDir,
+          (reservation) =>
+            reservation.requestedPath === requestedCanonical ||
+            reservation.projectDirectory === canonical ||
+            (reservation.identity?.device === String(identity.dev) &&
+              reservation.identity.inode === String(identity.ino)),
+        );
+        if (reserved || alias) {
+          throw new ValidationError(
+            `Project directory is already reserved by ${(reserved ?? alias)!.projectId}.`,
+          );
         }
-        await atomicWriteJson(reservationPath, { projectId, projectDirectory: canonical });
+        if (!identity.isDirectory() || identity.isSymbolicLink()) {
+          throw new ValidationError('Project directory must be a directory, not a symlink.');
+        }
+        if ((await readdir(canonical)).length > 0) {
+          throw new ValidationError('Project directory must be new or empty.');
+        }
+        await atomicWriteJson(reservationPath, {
+          projectId,
+          requestedPath: requestedCanonical,
+          projectDirectory: canonical,
+          identity: { device: String(identity.dev), inode: String(identity.ino) },
+        });
         try {
           await ensureDir(this.projectRoot(projectId));
           await symlink(canonical, workspace, 'dir');
@@ -272,15 +267,21 @@ export class FileWorkspaceManager implements WorkspaceManager {
     return canonical;
   }
 
-  async releaseProjectDirectory(
-    projectId: string,
-    generatedFiles: Array<{ path: string; content: string }> = [],
-  ): Promise<void> {
+  async releaseProjectDirectory(projectId: string): Promise<void> {
     const workspace = join(this.projectRoot(projectId), 'workspace');
-    const projectDirectory = await readlink(workspace).catch((error) => {
+    let projectDirectory = await readlink(workspace).catch((error) => {
       if (isNotFound(error)) return null;
       throw error;
     });
+    if (!projectDirectory) {
+      projectDirectory =
+        (
+          await findProjectDirectoryReservation(
+            this.dataDir,
+            (reservation) => reservation.projectId === projectId,
+          )
+        )?.projectDirectory ?? null;
+    }
     if (!projectDirectory) return;
     const id = reservationId(projectDirectory);
     const reservationPath = join(this.dataDir, 'project-directory-reservations', `${id}.json`);
@@ -290,25 +291,132 @@ export class FileWorkspaceManager implements WorkspaceManager {
       async () => {
         const reserved = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
         if (!reserved || reserved.projectId !== projectId) return;
-        const units = new Map<string, GeneratedUnit>();
-        for (const { path, content } of [
-          { path: '.gitignore', content: DEFAULT_GITIGNORE },
-          ...generatedFiles,
-        ]) {
-          const segments = path.split('/');
-          const name = segments.shift();
-          if (!name) throw new ValidationError('Generated rollback path must not be empty.');
-          const unit = units.get(name) ?? { name, files: new Map<string, string>() };
-          unit.files.set(segments.join('/'), content);
-          units.set(name, unit);
+        if (!reserved.identity) {
+          throw new ValidationError(
+            'Project directory reservation cannot be released safely without identity metadata.',
+          );
         }
-        for (const unit of units.values()) {
-          await removeGeneratedUnit(projectDirectory, projectId, unit, this.options.renameFile);
+        const identity = await lstat(projectDirectory).catch((error) => {
+          if (isNotFound(error)) return null;
+          throw error;
+        });
+        if (
+          !identity?.isDirectory() ||
+          identity.isSymbolicLink() ||
+          String(identity.dev) !== reserved.identity.device ||
+          String(identity.ino) !== reserved.identity.inode
+        ) {
+          throw new ValidationError(
+            'Project directory identity changed before reservation release.',
+          );
         }
-        await rm(reservationPath, { force: true });
+        if ((await readdir(projectDirectory)).length > 0) {
+          throw new ValidationError('Project directory changed before reservation release.');
+        }
         await rm(workspace, { force: true });
+        await rm(reservationPath, { force: true });
       },
     );
+  }
+
+  async initializeProject(
+    projectId: string,
+    prd: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<void> {
+    const reservation = await findProjectDirectoryReservation(
+      this.dataDir,
+      (candidate) => candidate.projectId === projectId,
+    );
+    if (!reservation) throw new ValidationError('Project directory reservation was not found.');
+    const id = reservationId(reservation.projectDirectory);
+    const reservationPath = join(this.dataDir, 'project-directory-reservations', `${id}.json`);
+
+    await withRecoverableDirectoryLock(
+      this.dataDir,
+      ['project-directory-reservations', id, 'lock'],
+      async () => {
+        const current = await readJsonOrNull<ProjectDirectoryReservation>(reservationPath);
+        if (!current || current.projectId !== projectId) {
+          throw new ValidationError('Project directory reservation changed before initialization.');
+        }
+        await this.assertReservedDirectory(current, true);
+        const workspace = current.projectDirectory;
+        const generated = [
+          { path: '.gitignore', content: DEFAULT_GITIGNORE },
+          { path: 'PRD.md', content: `${prd.trim()}\n` },
+          ...files,
+        ];
+        await this.options.beforeInitializeWrite?.();
+        const destinations = new Set<string>();
+        const createdDirectories = new Set<string>();
+        const expected = new Map(generated.map((file) => [file.path, file.content]));
+        for (const file of generated) {
+          if (isAbsolute(file.path)) throw new Error(`Unsafe scaffold path: ${file.path}`);
+          const segments = file.path.split('/');
+          const destination = pathFor(workspace, ...segments);
+          if (destinations.has(destination)) {
+            throw new ValidationError(`Duplicate generated path: ${file.path}`);
+          }
+          destinations.add(destination);
+          let parent = workspace;
+          for (const segment of segments.slice(0, -1)) {
+            parent = join(parent, segment);
+            if (!createdDirectories.has(parent)) {
+              try {
+                await mkdir(parent);
+                createdDirectories.add(parent);
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+                  throw new ValidationError(
+                    `Project directory changed after reservation: ${file.path}`,
+                  );
+                }
+                throw error;
+              }
+            }
+            const entry = await lstat(parent);
+            if (!entry.isDirectory() || entry.isSymbolicLink()) {
+              throw new ValidationError(
+                `Project directory changed after reservation: ${file.path}`,
+              );
+            }
+          }
+          await this.assertReservedDirectory(current, false);
+          if (!(await atomicCreateText(destination, file.content))) {
+            throw new ValidationError(`Project directory changed after reservation: ${file.path}`);
+          }
+        }
+        await this.assertReservedDirectory(current, false);
+        if (!(await matchesGeneratedTree(workspace, expected))) {
+          throw new ValidationError('Project directory changed during initialization.');
+        }
+      },
+    );
+  }
+
+  private async assertReservedDirectory(
+    reservation: ProjectDirectoryReservation,
+    requireEmpty: boolean,
+  ): Promise<void> {
+    if (!reservation.identity) {
+      throw new ValidationError('Project directory reservation lacks identity metadata.');
+    }
+    const identity = await lstat(reservation.projectDirectory).catch((error) => {
+      if (isNotFound(error)) return null;
+      throw error;
+    });
+    if (
+      !identity?.isDirectory() ||
+      identity.isSymbolicLink() ||
+      String(identity.dev) !== reservation.identity.device ||
+      String(identity.ino) !== reservation.identity.inode
+    ) {
+      throw new ValidationError('Project directory identity changed after reservation.');
+    }
+    if (requireEmpty && (await readdir(reservation.projectDirectory)).length > 0) {
+      throw new ValidationError('Project directory changed after reservation.');
+    }
   }
 
   async ensure(projectId: string): Promise<void> {

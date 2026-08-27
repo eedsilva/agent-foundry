@@ -431,6 +431,32 @@ describe('runtime composition', () => {
     expect(runtime.generatedProjectRuntime).toBeUndefined();
   });
 
+  it('re-publishes a missing file-mode job when the runtime restarts', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-queue-recovery-'));
+    temporaryDirectories.push(dataDir);
+    const env = {
+      ...process.env,
+      REPO_ROOT: resolve(import.meta.dirname, '../../..'),
+      DATA_DIR: dataDir,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+    };
+    const runtime = await createRuntime(env);
+    const project = await runtime.projectService.create({
+      name: 'Queue recovery fixture',
+      workflowId: 'web-app-v1',
+      prd: 'Recover the deterministic queue publication after restart.',
+      projectDirectory: await createProjectDirectory(),
+    });
+    if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+    const jobId = `run-project-${project.currentRunId}`;
+    await rm(join(dataDir, 'queue', 'pending', `${jobId}.json`));
+
+    const restarted = await createRuntime(env);
+
+    await expect(restarted.queue.claim('recovery-worker')).resolves.toMatchObject({ id: jobId });
+  });
+
   it('allows controlled real-mode tests to omit the generated project runtime', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-real-runtime-'));
     temporaryDirectories.push(dataDir);

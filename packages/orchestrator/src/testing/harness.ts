@@ -769,6 +769,16 @@ export class FakeWorkspaces implements WorkspaceManager {
     this.projectDirectories.delete(projectId);
     return Promise.resolve();
   }
+  initializeProject(
+    _projectId: string,
+    prd: string,
+    files: Array<{ path: string; content: string }>,
+  ): Promise<void> {
+    checkPower(this.power);
+    this.lastPrd = prd;
+    this.lastScaffoldFiles = files;
+    return Promise.resolve();
+  }
   ensure(): Promise<void> {
     return Promise.resolve();
   }

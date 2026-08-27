@@ -106,6 +106,7 @@ export const ProjectEventSchema = z
     type: z.enum([
       'project.created',
       'scaffold.applied',
+      'project.initialization_ready',
       'project.queued',
       'project.provisioning_started',
       'project.provisioned',

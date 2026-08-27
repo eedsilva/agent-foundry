@@ -454,6 +454,9 @@ export async function createRuntime(
     validationCampaign,
     readCurrentValidationPreflight,
   );
+  if (config.persistenceMode === 'file') {
+    await projectService.recoverQueuedProjects();
+  }
   const conversationService = new ConversationService(
     projects,
     runs,

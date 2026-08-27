@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -103,146 +104,76 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     await expect(lstat(selected)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('releases pre-persistence artifacts so the selected directory can be reused', async () => {
+  it('releases an empty pre-persistence reservation so the directory can be reused', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
     const selected = join(parent, 'generated-app');
     const workspaces = manager(dataDir);
 
     await workspaces.reserveProjectDirectory('project-1', selected);
-    await workspaces.ensure('project-1');
-    await workspaces.writePrd('project-1', 'Build the generated application.');
-    await workspaces.applyScaffold('project-1', [
-      { path: 'src/app.ts', content: 'export const app = true;\n' },
-    ]);
-    await workspaces.releaseProjectDirectory('project-1', [
-      { path: 'PRD.md', content: 'Build the generated application.\n' },
-      { path: 'src/app.ts', content: 'export const app = true;\n' },
-    ]);
+    await workspaces.releaseProjectDirectory('project-1');
+    await expect(
+      lstat(join(workspaces.projectRoot('project-1'), 'workspace')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
 
     await expect(workspaces.reserveProjectDirectory('project-2', selected)).resolves.toBe(
       await realpath(selected),
     );
   });
 
-  it('preserves the reservation when rollback finds an external edit', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
-    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
-    const selected = join(parent, 'generated-app');
-    const workspaces = manager(dataDir);
-
-    await workspaces.reserveProjectDirectory('project-1', selected);
-    await workspaces.writePrd('project-1', 'Generated PRD.');
-    await writeFile(join(selected, 'PRD.md'), 'Operator edit.\n');
-    await expect(
-      workspaces.releaseProjectDirectory('project-1', [
-        { path: 'PRD.md', content: 'Generated PRD.\n' },
-      ]),
-    ).rejects.toThrow(/changed while removing PRD.md/i);
-
-    await expect(readFile(join(selected, 'PRD.md'), 'utf8')).resolves.toBe('Operator edit.\n');
-    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
-      /already reserved/i,
-    );
-  });
-
-  it('does not follow an intermediate symlink while rolling back generated files', async () => {
+  it('preserves a non-empty directory and its reservation', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
     const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
     const selected = join(parent, 'generated-app');
     const workspaces = manager(dataDir);
-    const generated = 'export const app = true;\n';
 
     await workspaces.reserveProjectDirectory('project-1', selected);
-    await workspaces.applyScaffold('project-1', [{ path: 'src/app.ts', content: generated }]);
-    await rm(join(selected, 'src'), { recursive: true });
-    await writeFile(join(external, 'app.ts'), generated);
-    await symlink(external, join(selected, 'src'), 'dir');
+    await writeFile(join(external, 'operator.txt'), 'keep\n');
+    await symlink(external, join(selected, 'external'), 'dir');
+    await expect(workspaces.releaseProjectDirectory('project-1')).rejects.toThrow(
+      /changed before reservation release/i,
+    );
 
-    await expect(
-      workspaces.releaseProjectDirectory('project-1', [{ path: 'src/app.ts', content: generated }]),
-    ).rejects.toThrow(/changed while removing src/i);
-
-    await expect(readFile(join(external, 'app.ts'), 'utf8')).resolves.toBe(generated);
+    await expect(readFile(join(selected, 'external', 'operator.txt'), 'utf8')).resolves.toBe(
+      'keep\n',
+    );
     await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
       /already reserved/i,
     );
   });
 
-  it('restores the source when a symlink replaces a generated directory before rename', async () => {
+  it('refuses to release or reassign a reserved path whose directory identity changed', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
     const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
     const selected = join(parent, 'generated-app');
-    let source = join(selected, 'src');
-    const workspaces = manager(dataDir, {
-      renameFile: async (from, to) => {
-        if (from === source) {
-          await rm(source, { recursive: true });
-          await symlink(external, source, 'dir');
-        }
-        return rename(from, to);
-      },
-    });
-    const generated = 'export const app = true;\n';
+    const workspaces = manager(dataDir);
 
     await workspaces.reserveProjectDirectory('project-1', selected);
-    await workspaces.applyScaffold('project-1', [{ path: 'src/app.ts', content: generated }]);
-    source = await realpath(source);
-    await writeFile(join(external, 'app.ts'), generated);
-    await expect(
-      workspaces.releaseProjectDirectory('project-1', [{ path: 'src/app.ts', content: generated }]),
-    ).rejects.toThrow(/changed while removing src/i);
+    await rm(selected, { recursive: true });
+    await symlink(external, selected, 'dir');
 
-    await expect(readFile(join(external, 'app.ts'), 'utf8')).resolves.toBe(generated);
-    expect((await lstat(source)).isSymbolicLink()).toBe(true);
+    await expect(workspaces.releaseProjectDirectory('project-1')).rejects.toThrow(
+      /identity changed/i,
+    );
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
   });
 
-  it('restores generated files when an external file arrives before rename', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
-    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
-    const selected = join(parent, 'generated-app');
-    let source = join(selected, 'src');
-    const workspaces = manager(dataDir, {
-      renameFile: async (from, to) => {
-        if (from === source) await writeFile(join(source, 'operator.txt'), 'keep\n');
-        return rename(from, to);
-      },
-    });
-    const generated = 'export const app = true;\n';
-
-    await workspaces.reserveProjectDirectory('project-1', selected);
-    await workspaces.applyScaffold('project-1', [{ path: 'src/app.ts', content: generated }]);
-    source = await realpath(source);
-    await expect(
-      workspaces.releaseProjectDirectory('project-1', [{ path: 'src/app.ts', content: generated }]),
-    ).rejects.toThrow(/changed while removing src/i);
-
-    await expect(readFile(join(source, 'operator.txt'), 'utf8')).resolves.toBe('keep\n');
-  });
-
-  it('preserves the reservation when an external edit replaces a generated file with a directory', async () => {
+  it('finishes release after a crash removed the workspace symlink first', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
     const selected = join(parent, 'generated-app');
     const workspaces = manager(dataDir);
 
     await workspaces.reserveProjectDirectory('project-1', selected);
-    await workspaces.applyScaffold('project-1', [
-      { path: 'src/app.ts', content: 'export const app = true;\n' },
-    ]);
-    await rm(join(selected, 'src', 'app.ts'));
-    await mkdir(join(selected, 'src', 'app.ts'));
-    await expect(
-      workspaces.releaseProjectDirectory('project-1', [
-        { path: 'src/app.ts', content: 'export const app = true;\n' },
-      ]),
-    ).rejects.toThrow(/changed while removing src/i);
+    await rm(join(workspaces.projectRoot('project-1'), 'workspace'), { force: true });
+    await workspaces.releaseProjectDirectory('project-1');
 
-    expect((await lstat(join(selected, 'src', 'app.ts'))).isDirectory()).toBe(true);
-    await expect(workspaces.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
-      /already reserved/i,
+    await expect(workspaces.reserveProjectDirectory('project-2', selected)).resolves.toBe(
+      await realpath(selected),
     );
   });
 
@@ -258,6 +189,88 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     await expect(restarted.reserveProjectDirectory('project-2', selected)).rejects.toThrow(
       /already reserved/i,
     );
+  });
+
+  it('rejects a renamed directory that retains a reserved physical identity', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const renamed = join(parent, 'renamed-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await rename(selected, renamed);
+
+    await expect(workspaces.reserveProjectDirectory('project-2', renamed)).rejects.toThrow(
+      /already reserved/i,
+    );
+  });
+
+  it('handles a legacy reservation without crashing or reassigning its path', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const unrelated = join(parent, 'unrelated-app');
+    const workspaces = manager(dataDir);
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    const reservationRoot = join(dataDir, 'project-directory-reservations');
+    const [marker] = (await readdir(reservationRoot)).filter((entry) => entry.endsWith('.json'));
+    if (!marker) throw new Error('Expected reservation marker');
+    await writeFile(
+      join(reservationRoot, marker),
+      JSON.stringify({ projectId: 'project-1', projectDirectory: await realpath(selected) }),
+    );
+
+    await expect(workspaces.reserveProjectDirectory('project-2', unrelated)).resolves.toBe(
+      join(await realpath(parent), 'unrelated-app'),
+    );
+    await expect(workspaces.reserveProjectDirectory('project-3', selected)).rejects.toThrow(
+      /already reserved/i,
+    );
+    await expect(workspaces.releaseProjectDirectory('project-1')).rejects.toThrow(
+      /without identity metadata/i,
+    );
+  });
+
+  it('does not overwrite a file added after reservation during project initialization', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const selected = join(parent, 'generated-app');
+    const workspaces = manager(dataDir, {
+      beforeInitializeWrite: () => writeFile(join(selected, 'operator.txt'), 'operator work\n'),
+    });
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+
+    await expect(
+      workspaces.initializeProject('project-1', 'generated PRD', [
+        { path: 'src/app.ts', content: 'export const app = true;\n' },
+      ]),
+    ).rejects.toThrow(/changed during initialization/i);
+    await expect(readFile(join(selected, 'operator.txt'), 'utf8')).resolves.toBe('operator work\n');
+  });
+
+  it('does not follow an intermediate symlink added after reservation', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const external = await mkdtemp(join(tmpdir(), 'agent-foundry-external-'));
+    const selected = join(parent, 'generated-app');
+    const sentinel = join(external, 'keep.txt');
+    const workspaces = manager(dataDir, {
+      beforeInitializeWrite: () => symlink(external, join(selected, 'src'), 'dir'),
+    });
+
+    await workspaces.reserveProjectDirectory('project-1', selected);
+    await writeFile(sentinel, 'operator work\n');
+
+    await expect(
+      workspaces.initializeProject('project-1', 'generated PRD', [
+        { path: 'src/app.ts', content: 'generated outside\n' },
+      ]),
+    ).rejects.toThrow(/changed after reservation/i);
+    await expect(readFile(sentinel, 'utf8')).resolves.toBe('operator work\n');
+    await expect(lstat(join(external, 'app.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 
