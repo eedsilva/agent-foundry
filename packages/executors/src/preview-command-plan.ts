@@ -133,17 +133,20 @@ export async function runReproducibleInstall(
     return { ok: false, exitCode: 1, stdout: '', stderr: plan.install.reason };
   }
   try {
-    const result = await execa(plan.install.command, plan.install.args, {
+    const subprocess = execa(plan.install.command, plan.install.args, {
       cwd,
       timeout: options.timeoutMs,
       maxBuffer: options.maxOutputBytes,
       reject: false,
     });
-    // `reject: false` resolves even when the command never ran, and that case
-    // reports no exit code at all — the package manager the plan pins is
-    // missing from this host, which is an environment fault, not a workspace
-    // the install rejected (#659).
-    const neverRan = typeof result.exitCode !== 'number';
+    const result = await subprocess;
+    // `reject: false` resolves even when the command never ran. The pid is
+    // what says which happened: it exists as soon as the process does, and
+    // never for a package manager missing from this host — an environment
+    // fault, not a workspace the install rejected (#659). A missing exit code
+    // cannot serve, because an install killed by a signal reports none either
+    // and that one is not this host's fault to claim.
+    const neverRan = subprocess.pid === undefined;
     const exitCode = result.exitCode ?? 1;
     const versions = exitCode === 0 ? await probeVersions(plan.install.command) : undefined;
     return {
