@@ -6,6 +6,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 // that is unauthenticated the moment the orchestrator actually spawns it. Read
 // as data, not code: the doctor has to work on an unbuilt tree.
 import safeEnvAllowlist from '../packages/executors/src/safe-env-allowlist.json' with { type: 'json' };
+import { fileVaultCheck, storageChecks } from './lib/environment-preflight.mjs';
 
 const root = process.cwd();
 const env = { ...readDotEnv(resolve(root, '.env')), ...process.env };
@@ -14,28 +15,47 @@ const probeEnv = Object.fromEntries(
 );
 const executorMode = env.EXECUTOR_MODE ?? 'mock';
 const realMode = executorMode === 'real';
+const dataDirectory = resolve(root, env.DATA_DIR ?? '.data');
+const sourceRevision = sourceRevisionCheck();
 const checks = [
   commandCheck('node', ['--version'], true, { minimumVersion: '22.0.0' }),
   commandCheck('git', ['--version'], true),
+  sourceRevision,
   // `CodexCliExecutor` spawns `srt` (@anthropic-ai/sandbox-runtime), not
   // `codex`, as the real process in real mode (#637, docs/adr/0081) — the
   // `codex` probe below says nothing about whether the wrapper it actually
   // runs through is installed. Only required in real mode, same as the
   // provider probes: `srt` is never spawned in mock mode.
-  commandCheck('srt', ['--version'], realMode),
+  commandCheck('srt', ['--version'], realMode, {
+    missingMessage: 'install srt (@anthropic-ai/sandbox-runtime) and retry',
+  }),
   fileCheck(
     'harness manifest',
     resolve(root, env.HARNESS_DIR ?? 'harness', 'manifest.json'),
     true,
     root,
+    'HARNESS_DIR',
   ),
-  fileCheck('workflow directory', resolve(root, env.WORKFLOWS_DIR ?? 'workflows'), true, root),
+  fileCheck(
+    'workflow directory',
+    resolve(root, env.WORKFLOWS_DIR ?? 'workflows'),
+    true,
+    root,
+    'WORKFLOWS_DIR',
+  ),
   fileCheck(
     'model catalog',
     resolve(root, env.MODEL_CATALOG_PATH ?? 'models/catalog.yaml'),
     true,
     root,
+    'MODEL_CATALOG_PATH',
   ),
+  commandCheck('docker', ['info', '--format', '{{.ServerVersion}}'], realMode, {
+    missingMessage: 'install Docker Desktop and retry',
+    unavailableMessage: 'start Docker Desktop and retry',
+  }),
+  ...storageChecks({ root, dataDirectory }),
+  fileVaultCheck(process.platform, run),
 ];
 const probes = await Promise.all([
   providerProbe({
@@ -97,21 +117,36 @@ const probes = await Promise.all([
 
 const providerFailures = realMode ? probes.filter((probe) => probe.status !== 'ready') : [];
 const failures = [...checks.filter((check) => check.required && !check.ok), ...providerFailures];
+const report = {
+  schemaVersion: 1,
+  sourceRevision: sourceRevision.revision,
+  executorMode,
+  checks,
+  probes,
+};
+print(report);
+if (failures.length > 0) process.exitCode = 1;
 
-if (process.argv.slice(2).includes('--json')) {
-  console.log(JSON.stringify({ executorMode, checks: jsonChecks(checks), probes }, null, 2));
-} else {
+function print(report) {
+  if (process.argv.slice(2).includes('--json')) {
+    console.log(JSON.stringify({ ...report, checks: jsonChecks(report.checks) }, null, 2));
+    return;
+  }
   console.log(`Agent Foundry doctor · executor mode: ${executorMode}\n`);
-  for (const check of checks) {
+  for (const check of report.checks) {
     const icon = check.ok ? '✓' : check.required ? '✗' : '·';
     console.log(`${icon} ${check.name.padEnd(20)} ${check.message}`);
   }
-  for (const probe of probes) {
+  for (const probe of report.probes) {
     const required = realMode;
     const icon = probe.status === 'ready' ? '✓' : required ? '✗' : '·';
     console.log(`${icon} ${probe.provider.padEnd(20)} ${probe.message}`);
   }
 
+  const failures = [
+    ...report.checks.filter((check) => check.required && !check.ok),
+    ...(realMode ? report.probes.filter((probe) => probe.status !== 'ready') : []),
+  ];
   if (failures.length > 0) {
     console.error(`\n${failures.length} required check(s) failed.`);
   } else {
@@ -121,15 +156,15 @@ if (process.argv.slice(2).includes('--json')) {
   }
 }
 
-if (failures.length > 0) process.exitCode = 1;
-
 async function providerProbe(definition) {
   const versionResult = run(definition.provider, definition.versionArgs);
   if (versionResult.status !== 0) {
     return probeResult(definition, {
       status: 'unavailable',
       capabilities: emptyCapabilities(),
-      message: `${definition.label} CLI is unavailable.`,
+      message: realMode
+        ? `install ${definition.label} CLI and retry.`
+        : `${definition.label} CLI is unavailable.`,
     });
   }
 
@@ -174,7 +209,7 @@ async function providerProbe(definition) {
       status: 'unauthenticated',
       version,
       capabilities,
-      message: `${definition.label} is not authenticated.`,
+      message: `run ${definition.provider === 'codex' ? 'codex login' : 'claude auth login'} and retry.`,
     });
   }
   if (authenticationStatus !== true) {
@@ -218,7 +253,11 @@ function commandCheck(command, args, required, options = {}) {
       name: command,
       ok: false,
       required,
-      message: required ? 'missing or not executable' : 'not installed; acceptable in mock mode',
+      message: required
+        ? result.error?.code === 'ENOENT'
+          ? (options.missingMessage ?? 'missing or not executable')
+          : (options.unavailableMessage ?? options.missingMessage ?? 'missing or not executable')
+        : 'not installed; acceptable in mock mode',
     };
   }
 
@@ -245,6 +284,20 @@ function commandCheck(command, args, required, options = {}) {
   }
 
   return { name: command, ok: true, required, message: output || 'available' };
+}
+
+function sourceRevisionCheck() {
+  const result = run('git', ['rev-parse', 'HEAD']);
+  const revision = combinedOutput(result).trim();
+  if (result.status === 0 && /^[0-9a-f]{40}$/.test(revision)) {
+    return { name: 'source revision', ok: true, required: true, message: revision, revision };
+  }
+  return {
+    name: 'source revision',
+    ok: false,
+    required: true,
+    message: 'could not read the current Git revision; commit or repair the checkout and retry',
+  };
 }
 
 function extractVersion(output) {
@@ -286,15 +339,20 @@ function parseVersion(value) {
   return { core: core.split('.').map(Number), prerelease };
 }
 
-function fileCheck(name, path, required, workspaceRoot) {
+function fileCheck(name, path, required, workspaceRoot, environmentVariable) {
   const ok = existsSync(path);
   const safePath = relativeCheckPath(workspaceRoot, path);
+  const remediation =
+    safePath === '[outside workspace]'
+      ? `restore the path in ${environmentVariable} and retry`
+      : `restore ${safePath} and retry`;
+  const displayPath = safePath === '[outside workspace]' ? safePath : path;
   return {
     name,
     ok,
     required,
-    message: ok ? path : `missing: ${path}`,
-    jsonMessage: ok ? safePath : `missing: ${safePath}`,
+    message: ok ? displayPath : remediation,
+    jsonMessage: ok ? safePath : remediation,
   };
 }
 

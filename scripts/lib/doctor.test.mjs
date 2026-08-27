@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -50,9 +51,14 @@ test('prints ready provider probes as contract-shaped JSON without raw authentic
     'status',
     'version',
   ]);
+  assert.match(output.sourceRevision, /^[0-9a-f]{40}$/);
   assert.doesNotMatch(result.stdout, /private@example\.test|private-org|Logged in using ChatGPT/);
   assert.deepEqual(
-    output.checks.slice(3).map(({ message }) => message),
+    output.checks
+      .filter(({ name }) =>
+        ['harness manifest', 'workflow directory', 'model catalog'].includes(name),
+      )
+      .map(({ message }) => message),
     ['harness/manifest.json', 'workflows', 'models/catalog.yaml'],
   );
   assert.equal(result.stdout.includes(fixture.root), false);
@@ -77,7 +83,65 @@ test('classifies missing provider CLIs as unavailable', async (t) => {
       },
     })),
   );
+  assertNoModelInvocation(fixture);
 });
+
+test('distinguishes missing Docker from Docker Desktop that is not running without invoking a model', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  assert.equal(runDoctor(fixture, ['--json']).status, 0);
+  await rm(join(fixture.bin, 'docker'));
+
+  const missing = runDoctor(fixture, ['--json']);
+  assert.equal(missing.status, 1);
+  assert.deepEqual(
+    JSON.parse(missing.stdout).checks.find(({ name }) => name === 'docker'),
+    {
+      name: 'docker',
+      ok: false,
+      required: true,
+      message: 'install Docker Desktop and retry',
+    },
+  );
+
+  await writeFile(join(fixture.bin, 'docker'), '#!/usr/bin/env node\nprocess.exit(1);\n');
+  await chmod(join(fixture.bin, 'docker'), 0o755);
+  const unavailable = runDoctor(fixture, ['--json']);
+  assert.equal(unavailable.status, 1);
+  assert.equal(
+    JSON.parse(unavailable.stdout).checks.find(({ name }) => name === 'docker').message,
+    'start Docker Desktop and retry',
+  );
+  assertNoModelInvocation(fixture);
+});
+
+test('reruns preflight when a provider session changes without a new source revision', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  assert.equal(runDoctor(fixture, ['--json']).status, 0);
+  await writeFile(
+    join(fixture.root, 'provider-fixtures.json'),
+    JSON.stringify({
+      ...readyFixtures,
+      codex: { ...readyFixtures.codex, auth: { stdout: 'Not logged in\n' } },
+    }),
+  );
+
+  assert.equal(runDoctor(fixture, ['--json']).status, 1, 'same revision reruns checks');
+  assertNoModelInvocation(fixture);
+});
+
+for (const [label, degrade] of [
+  ['srt', (fixture) => rm(join(fixture.bin, 'srt'))],
+  ['model catalog', (fixture) => rm(join(fixture.root, 'models', 'catalog.yaml'))],
+]) {
+  test(`blocks a lost ${label} after a green preflight without invoking a model`, async (t) => {
+    const fixture = await createFixture(t, readyFixtures);
+    assert.equal(runDoctor(fixture, ['--json']).status, 0);
+    await degrade(fixture);
+
+    assert.equal(runDoctor(fixture, ['--json']).status, 1);
+    assertNoModelInvocation(fixture);
+  });
+}
 
 test('fails real mode when srt (the sandbox wrapper #637 spawns instead of codex) is missing, even with Codex itself ready', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
@@ -91,7 +155,7 @@ test('fails real mode when srt (the sandbox wrapper #637 spawns instead of codex
     name: 'srt',
     ok: false,
     required: true,
-    message: 'missing or not executable',
+    message: 'install srt (@anthropic-ai/sandbox-runtime) and retry',
   });
   // The Codex provider probe itself still reports ready — health() (not
   // doctor's own probe) is what CodexCliExecutor uses to combine the two;
@@ -127,7 +191,12 @@ test('classifies providers with absent sessions as unauthenticated', async (t) =
     JSON.parse(result.stdout).probes.map(({ status }) => status),
     ['unauthenticated', 'unauthenticated'],
   );
+  assert.deepEqual(
+    JSON.parse(result.stdout).probes.map(({ message }) => message),
+    ['run codex login and retry.', 'run claude auth login and retry.'],
+  );
   assert.doesNotMatch(result.stdout + result.stderr, /secret@test|private-user|Not logged in/);
+  assertNoModelInvocation(fixture);
 });
 
 test('reports individual incompatible capabilities when required flags disappear', async (t) => {
@@ -286,11 +355,61 @@ test('redacts existing and missing filesystem paths from JSON checks', async (t)
   assert.equal(result.status, 1);
   const output = JSON.parse(result.stdout);
   assert.deepEqual(
-    output.checks.slice(3).map(({ message }) => message),
-    ['harness/manifest.json', 'workflows', 'missing: models/catalog.yaml'],
+    output.checks
+      .filter(({ name }) =>
+        ['harness manifest', 'workflow directory', 'model catalog'].includes(name),
+      )
+      .map(({ message }) => message),
+    ['harness/manifest.json', 'workflows', 'restore models/catalog.yaml and retry'],
   );
   assert.equal(result.stdout.includes(fixture.root), false);
   assert.doesNotMatch(result.stdout, /private-user/);
+});
+
+test('derives actionable configured-path remediations without exposing external paths', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  const configuredPaths = {
+    HARNESS_DIR: '/private/configured-harness',
+    WORKFLOWS_DIR: '/private/configured-workflows',
+    MODEL_CATALOG_PATH: '/private/configured-catalog.yaml',
+  };
+  const result = runDoctor(fixture, ['--json'], configuredPaths);
+
+  assert.equal(result.status, 1);
+  assert.deepEqual(
+    JSON.parse(result.stdout)
+      .checks.filter(({ name }) =>
+        ['harness manifest', 'workflow directory', 'model catalog'].includes(name),
+      )
+      .map(({ message }) => message),
+    [
+      'restore the path in HARNESS_DIR and retry',
+      'restore the path in WORKFLOWS_DIR and retry',
+      'restore the path in MODEL_CATALOG_PATH and retry',
+    ],
+  );
+  assert.doesNotMatch(result.stdout, /private\/configured-/);
+
+  const humanResult = runDoctor(fixture, [], configuredPaths);
+  assert.equal(humanResult.status, 1);
+  assert.match(humanResult.stdout, /restore the path in HARNESS_DIR and retry/);
+  assert.match(humanResult.stdout, /restore the path in WORKFLOWS_DIR and retry/);
+  assert.match(humanResult.stdout, /restore the path in MODEL_CATALOG_PATH and retry/);
+  assert.doesNotMatch(humanResult.stdout, /private\/configured-/);
+});
+
+test('redacts an existing externally configured catalog from human output', async (t) => {
+  const fixture = await createFixture(t, readyFixtures);
+  const catalogRoot = await mkdtemp(join(tmpdir(), 'agent-foundry-external-catalog-'));
+  const catalog = join(catalogRoot, 'catalog.yaml');
+  t.after(() => rm(catalogRoot, { recursive: true, force: true }));
+  await writeFile(catalog, 'models: []\n');
+
+  const result = runDoctor(fixture, [], { MODEL_CATALOG_PATH: catalog });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /✓ model catalog\s+\[outside workspace\]/);
+  assert.equal(result.stdout.includes(catalog), false);
 });
 
 test('prints sanitized human provider status without auth payloads or identities', async (t) => {
@@ -342,7 +461,7 @@ test('reports unauthenticated when the identity variable is withheld from the pr
   assert.equal(result.status, 1);
   const probe = JSON.parse(result.stdout).probes.find(({ provider }) => provider === 'claude');
   assert.equal(probe.status, 'unauthenticated');
-  assert.equal(probe.message, 'Claude is not authenticated.');
+  assert.equal(probe.message, 'run claude auth login and retry.');
 });
 
 function readyProbe(provider, version, message, extraCapabilities = {}) {
@@ -366,7 +485,22 @@ async function createFixture(t, providers) {
   const bin = join(root, 'bin');
   await mkdir(bin);
   await symlink(process.execPath, join(bin, 'node'));
-  await symlink('/usr/bin/git', join(bin, 'git'));
+  await writeFile(join(root, 'git-revision'), `${'a'.repeat(40)}\n`);
+  await writeFile(
+    join(bin, 'git'),
+    "#!/usr/bin/env node\nimport { readFileSync } from 'node:fs';\nconst args = process.argv.slice(2).join(' ');\nif (args === '--version') process.stdout.write('git version 2.50.1\\n');\nelse if (args === 'rev-parse HEAD') process.stdout.write(readFileSync('git-revision', 'utf8'));\nelse process.exitCode = 1;\n",
+  );
+  await chmod(join(bin, 'git'), 0o755);
+  await writeFile(
+    join(bin, 'docker'),
+    "#!/usr/bin/env node\nif (process.argv.slice(2).join(' ') === 'info --format {{.ServerVersion}}') process.stdout.write('27.0.0\\n');\nelse process.exitCode = 1;\n",
+  );
+  await chmod(join(bin, 'docker'), 0o755);
+  await writeFile(
+    join(bin, 'fdesetup'),
+    "#!/usr/bin/env node\nif (process.argv[2] === 'status') process.stdout.write('FileVault is On.\\n');\nelse process.exitCode = 1;\n",
+  );
+  await chmod(join(bin, 'fdesetup'), 0o755);
   // Present by default so every existing fixture exercises the ready path;
   // tests for the missing-wrapper case (#637) remove it after createFixture,
   // the same pattern the missing-catalog-file test below already uses.
@@ -383,14 +517,20 @@ async function createFixture(t, providers) {
   // Read from cwd, not an env var: the doctor scopes the probe env to the same
   // spawn allowlist execution uses, so nothing bespoke survives into the child.
   const fakeCli = `#!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 const provider = basename(process.argv[1]);
 const args = process.argv.slice(2);
 const fixtures = JSON.parse(readFileSync('provider-fixtures.json', 'utf8'));
 const fixture = fixtures[provider];
 let command;
-if (args[0] === '--version') command = 'version';
+if (
+  (provider === 'codex' && args[0] === 'exec' && args[1] !== '--help') ||
+  (provider === 'claude' && args[0] === '--print')
+) {
+  appendFileSync('model-invocations', args.join(' ') + '\\n');
+  process.exit(98);
+} else if (args[0] === '--version') command = 'version';
 else if (provider === 'codex' && args.join(' ') === 'exec --help') command = 'help';
 else if (provider === 'codex' && args.join(' ') === 'login status') command = 'auth';
 else if (provider === 'claude' && args.join(' ') === '--help') command = 'help';
@@ -424,8 +564,9 @@ else process.exit(response.status ?? 0);
 function runDoctor(fixture, args = [], extraEnv = {}) {
   const env = {
     ...process.env,
-    PATH: `${fixture.bin}:/usr/bin:/bin`,
+    PATH: fixture.bin,
     EXECUTOR_MODE: 'real',
+    DATA_DIR: '.data',
     ...extraEnv,
   };
   // An explicit `undefined` withholds a variable the runner's own env may carry.
@@ -439,4 +580,8 @@ function runDoctor(fixture, args = [], extraEnv = {}) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function assertNoModelInvocation(fixture) {
+  assert.equal(existsSync(join(fixture.root, 'model-invocations')), false);
 }

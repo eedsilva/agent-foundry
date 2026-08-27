@@ -2,7 +2,7 @@
 // boots the stack if needed, creates the project, streams task progress to the
 // terminal, turns approval gates into interactive prompts, and opens the
 // preview in the browser when the run completes.
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -261,6 +261,7 @@ function openInBrowser(url: string): void {
 }
 
 async function main(): Promise<void> {
+  runEnvironmentPreflight();
   await ensureStack();
   await authenticateTerminal();
 
@@ -337,6 +338,18 @@ async function main(): Promise<void> {
     await new Promise(() => undefined); // keep serving until Ctrl+C
   } else {
     await shutdown(0);
+  }
+}
+
+function runEnvironmentPreflight(): void {
+  console.log('· Executando preflight do ambiente...');
+  const result = spawnSync(process.execPath, ['scripts/doctor.mjs'], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'inherit',
+  });
+  if (result.status !== 0) {
+    throw new Error('Preflight falhou. Corrija os itens acima antes de iniciar o Foundry.');
   }
 }
 
