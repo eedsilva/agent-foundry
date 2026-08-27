@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -2288,20 +2288,45 @@ describe('callers address one environment, not one project (#617)', () => {
   });
 
   it('allocates ports against every environment root, not just the legacy one', async () => {
-    const { runtime } = fixture();
+    // The allocator prefers a block derived from the compose project name, and
+    // two environments only ever contend for one when their preferences meet.
+    // Restating that hash here would pin the test to today's formula, so ask
+    // the allocator instead: in an empty data dir it hands project-b exactly
+    // the block it prefers.
+    const probeDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ports-'));
+    try {
+      const probe = new SupabaseGeneratedProjectRuntime({
+        dataDir: probeDir,
+        command: vi.fn<SupabaseCommand>(statusCommand),
+        now: () => new Date(NOW),
+        sqlClientFactory: fakeSqlClient({}, { urls: [], ended: false }),
+      });
+      const probed = await probe.initialize({ projectId: 'project-b' });
+      const preferred = await hostPorts(probed.workdir);
 
-    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
-    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
-    const legacy = await runtime.initialize({ projectId: 'project-b' });
+      const { runtime } = fixture();
+      const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+      const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+      // A candidate stack living outside projects/<id>/environment now holds
+      // the block project-b wants. Its config is copied, not hand-written, so
+      // the reader under test is the one production uses.
+      await copyFile(
+        join(probed.workdir, 'supabase', 'config.toml'),
+        join(candidate.workdir, 'supabase', 'config.toml'),
+      );
 
-    const blocks = await Promise.all(
-      [candidate, accepted, legacy].map((environment) => hostPorts(environment.workdir)),
-    );
-    // Par negativo: a stack outside projects/<id>/environment is invisible to
-    // a scan of that root alone, and invisible means the next environment is
-    // handed a port block already in use.
-    const allocated = blocks.flat();
-    expect(new Set(allocated).size).toBe(allocated.length);
+      const legacy = await runtime.initialize({ projectId: 'project-b' });
+      const allocated = await hostPorts(legacy.workdir);
+
+      // Par negativo: a scan limited to projects/<id>/environment cannot see
+      // the candidate, and invisible means project-b is handed a block already
+      // in use.
+      expect(allocated.filter((port) => preferred.includes(port))).toEqual([]);
+      const everything = [preferred, await hostPorts(accepted.workdir), allocated].flat();
+      expect(new Set(everything).size).toBe(everything.length);
+    } finally {
+      await rm(probeDir, { recursive: true, force: true });
+    }
   });
 
   it('stops exactly the environment it was given', async () => {
