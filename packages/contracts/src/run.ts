@@ -153,16 +153,21 @@ export type RunRetryDirective = z.infer<typeof RunRetryDirectiveSchema>;
 // ADR-0073 Call Budget, per running task (#604). Counts task-level attempts —
 // one `for-each-task` implement/repair StepRun per attempt — not raw
 // StepAttempts: a deterministic verify/build/lint/test step never shares this
-// stepId prefix, and a Technical Retry's extra StepAttempt inside one attempt
-// is a retry of that attempt, not a second budgeted call.
+// stepId prefix. Reservations are held until the provider dispatch begins;
+// Technical Retry has its own one-call class.
 export const TaskCallBudgetSchema = z
   .object({
     nodeId: PathSegmentSchema,
     taskId: PathSegmentSchema,
     implementUsed: z.number().int().nonnegative(),
+    implementReserved: z.number().int().nonnegative().optional(),
     implementLimit: z.number().int().positive(),
     repairUsed: z.number().int().nonnegative(),
+    repairReserved: z.number().int().nonnegative().optional(),
     repairLimit: z.number().int().nonnegative(),
+    technicalRetryUsed: z.number().int().nonnegative().optional(),
+    technicalRetryReserved: z.number().int().nonnegative().optional(),
+    technicalRetryLimit: z.number().int().positive().optional(),
   })
   .strict();
 export type TaskCallBudget = z.infer<typeof TaskCallBudgetSchema>;

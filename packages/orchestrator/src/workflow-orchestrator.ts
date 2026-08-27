@@ -72,6 +72,7 @@ import type {
   ApprovalDecisionRepository,
   ApprovalRequestRepository,
   ArtifactStore,
+  CallBudgetClass,
   Clock,
   EventStore,
   ExecutionPlane,
@@ -132,6 +133,8 @@ import {
   VersionConflictError,
   withSpan,
   calculateUsageCostUsd,
+  confirmTaskCallBudget,
+  releaseTaskCallBudget,
 } from '@agent-foundry/domain';
 import {
   campaignLimitMs,
@@ -158,6 +161,14 @@ import type { QualityObservationService } from './quality-observation-service.js
 import type { ValidationEvidencePublisher } from './validation-evidence.js';
 import { TaskGraphRunner } from './task-graph-runner.js';
 import { evaluateUiQuality, gateOnUiQuality } from './ui-quality-judge.js';
+
+type TaskCallReservation = {
+  runId: string;
+  nodeId: string;
+  taskId: string;
+  callClass: CallBudgetClass;
+  settled: boolean;
+};
 
 interface OrchestratorOptions {
   agentTimeoutMs: number;
@@ -1098,11 +1109,10 @@ export class WorkflowOrchestrator {
   }
 
   /**
-   * Grants the next ADR-0073 Call Budget unit for one task's `callClass`
-   * (#604), or throws `CallBudgetExhaustedError` when the task already used
-   * every unit. Runs inside `updateExecution`'s CAS retry loop, so this reads
-   * the freshest ledger on every attempt: two concurrent reservations on the
-   * last slot always resolve to exactly one grant, never both.
+   * Reserves the next ADR-0073 Call Budget unit for one task's `callClass`
+   * (#604), or throws `CallBudgetExhaustedError` when used plus pending calls
+   * reaches the limit. Confirmation happens immediately before provider
+   * dispatch; cancellation or setup failure releases the reservation.
    *
    * A run already cancelled (or cancelling) when this is called consumes
    * nothing — cancellation observed before the reservation is exactly "cancel
@@ -1112,10 +1122,10 @@ export class WorkflowOrchestrator {
     runId: string,
     nodeId: string,
     taskId: string,
-    callClass: 'implement' | 'repair',
+    callClass: TaskCallReservation['callClass'],
     limit: number,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<TaskCallReservation> {
     throwIfCancelled(signal, runId);
     await this.updateExecution(runId, (run) => {
       if (run.status === 'cancel_requested' || run.status === 'cancelled') {
@@ -1132,6 +1142,41 @@ export class WorkflowOrchestrator {
       );
       return { ...execution, callBudget };
     });
+    return { runId, nodeId, taskId, callClass, settled: false };
+  }
+
+  private async confirmTaskCall(reservation: TaskCallReservation, signal: AbortSignal) {
+    if (reservation.settled) return;
+    throwIfCancelled(signal, reservation.runId);
+    await this.updateExecution(reservation.runId, (run) => {
+      if (run.status === 'cancel_requested' || run.status === 'cancelled') {
+        throw new RunCancelledError(reservation.runId);
+      }
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      const callBudget = confirmTaskCallBudget(
+        execution.callBudget ?? {},
+        reservation.nodeId,
+        reservation.taskId,
+        reservation.callClass,
+      );
+      return { ...execution, callBudget };
+    });
+    reservation.settled = true;
+  }
+
+  private async releaseTaskCall(reservation: TaskCallReservation) {
+    if (reservation.settled) return;
+    await this.updateExecution(reservation.runId, (run) => {
+      const execution = run.execution ?? { activeElapsedMs: 0, consecutiveRepairs: 0 };
+      const callBudget = releaseTaskCallBudget(
+        execution.callBudget ?? {},
+        reservation.nodeId,
+        reservation.taskId,
+        reservation.callClass,
+      );
+      return { ...execution, callBudget };
+    });
+    reservation.settled = true;
   }
 
   private async listRunAttempts(runId: string): Promise<StepAttempt[]> {
@@ -3398,184 +3443,202 @@ export class WorkflowOrchestrator {
 
     // ADR-0073 Call Budget (#604): one reservation per implement/repair task
     // call, not per candidate — a fallback-model retry inside this same call
-    // is execution-plane routing, still the one call the task graph asked
-    // for. Only a `for-each-task` implement/repair step carries `taskId`;
-    // every other agent step (plan/check/quality-loop/etc.) is unbudgeted.
-    // An explicit `RunRetryDirective` dispatch is exempt: it is the
-    // operator's own decision after a ceiling (or any other pause) — the
-    // human authorizing another call *is* the "decision" #604's acceptance
-    // criteria asks for, not a second automatic spend to block.
-    const callClass: 'implement' | 'repair' | undefined =
+    // is execution-plane routing, still the one call the task graph asked for.
+    // A retry directive gets one explicit additional unit in the same class;
+    // repeated directives therefore cannot bypass the ledger.
+    const callClass: CallBudgetClass | undefined =
       step.taskKind === 'implementation'
         ? 'implement'
         : step.taskKind === 'repair'
           ? 'repair'
           : undefined;
-    if (callClass && taskId !== undefined && !isRetryTarget) {
-      await this.reserveTaskCall(
-        runId,
-        stepRun.nodeId,
-        taskId,
-        callClass,
-        step.maxAttempts,
-        signal,
-      );
-    }
+    const budgetTaskId = taskId;
+    const pendingReservations: TaskCallReservation[] = [];
+    let pendingReservation: TaskCallReservation | undefined;
 
-    // Explicit pins are already validated by the router.
-    const candidates = explicit ? [route.selected] : [route.selected, ...route.fallbacks];
-    const checkpoint = step.mutatesWorkspace
-      ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`, worktree)
-      : null;
-    if (checkpoint) {
-      await this.emit(
-        project.id,
-        'git.checkpoint',
-        `Checkpoint ${checkpoint.slice(0, 12)} created.`,
-        {
-          nodeId: step.id,
-          runId,
-          dedupeKey: `${runId}:checkpoint:${checkpoint}:${stepRun.id}`,
-          data: { checkpoint },
-        },
-      );
-    }
-
-    let lastError: unknown;
-    // Counts every physical attempt in this method — every candidate AND
-    // every Technical Retry replay — so `StepAttempt.sequence` is strictly
-    // increasing across the whole call. `index + 1` alone left a technical
-    // retry sharing its original candidate's sequence, ambiguous ordering
-    // between two distinct dispatches (#604).
-    let attemptSequence = 0;
-    for (let index = 0; index < candidates.length; index += 1) {
-      const candidate = candidates[index];
-      if (!candidate) continue;
-      // A provider/executor failure (ADR-0073's Technical Retry) gets one
-      // same-candidate replay after a checkpoint restore before this loop
-      // falls through to its own fallback-candidate advance below. It is a
-      // distinct allowance from the candidate ladder: it never changes
-      // `index`, so it applies even when there is only one candidate (the
-      // Economy Profile's normal case, with no fallback to advance into).
-      let technicalRetryUsed = false;
-      for (;;) {
-        throwIfCancelled(signal, runId);
-        attemptSequence += 1;
-        const isFallbackCandidate = index > 0;
-        if (isFallbackCandidate) recordStepRetry();
-        if (checkpoint && (isFallbackCandidate || technicalRetryUsed)) {
-          await this.workspaces.rollback(project.id, checkpoint, worktree);
-        }
-
-        const timestamp = this.clock.now().toISOString();
-        const attempt: StepAttempt = {
-          id: this.ids.next(),
-          runId,
-          stepRunId: stepRun.id,
-          sequence: attemptSequence,
-          executorKind: 'agent',
-          provider: candidate.model.provider,
-          model: candidate.model.model || candidate.model.id,
-          modelId: candidate.model.id,
-          status: 'running',
-          version: 1,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-          startedAt: timestamp,
-          ...(checkpoint ? { checkpoint } : {}),
-          routeDecision: route,
-          harness: {
-            version: harness.version,
-            files: harness.files.map((file) => ({ path: file.path, priority: file.priority })),
-          },
-          context: {
-            projectId: project.id,
-            workflowId: workflow.id,
-            nodeId: stepRun.nodeId,
-            stepId: step.id,
-            ...(loopIteration ? { iteration: loopIteration } : {}),
-          },
-          inputArtifacts: inputArtifacts.map(artifactReference),
-          outputArtifacts: [],
-        };
-        await this.reserveCampaignDispatch({
-          runId,
-          nodeId: stepRun.nodeId,
-          step,
-          ...(loopIteration !== undefined ? { iteration: loopIteration } : {}),
-          candidate,
-          ...(providerHealth ? { providerHealth } : {}),
-          sequence: index + 1,
-          targetedRetry,
-          signal,
-        });
-        await this.stepAttempts.create(attempt);
-
-        // A fallback candidate or a Technical Retry replay (attemptSequence >
-        // 1) is already known to be a retry when its span starts, so it's
-        // marked force_sample here for RECORD_AND_SAMPLED at head-sampling
-        // time. An ordinary first-attempt failure instead marks force_sample
-        // reactively (see executeAgentAttempt's catch) once it's known to
-        // fail — that now works too: KeepErrorsSampler records every span, so
-        // the reactive write isn't a no-op, and TailSpanProcessor's
-        // export-time predicate picks it up at onEnd regardless of the
-        // head-sampling outcome.
-        const outcome = await withSpan(
-          'foundry.attempt',
+    try {
+      // Explicit pins are already validated by the router.
+      const candidates = explicit ? [route.selected] : [route.selected, ...route.fallbacks];
+      const checkpoint = step.mutatesWorkspace
+        ? await this.workspaces.checkpoint(project.id, `${step.id}-${runId}`, worktree)
+        : null;
+      if (checkpoint) {
+        await this.emit(
+          project.id,
+          'git.checkpoint',
+          `Checkpoint ${checkpoint.slice(0, 12)} created.`,
           {
-            'foundry.attempt.id': attempt.id,
-            'foundry.attempt.sequence': attempt.sequence,
-            'foundry.model.id': candidate.model.id,
-            'foundry.provider': candidate.model.provider,
-            ...(attemptSequence > 1 ? { 'foundry.force_sample': true } : {}),
+            nodeId: step.id,
+            runId,
+            dedupeKey: `${runId}:checkpoint:${checkpoint}:${stepRun.id}`,
+            data: { checkpoint },
           },
-          (span) =>
-            this.executeAgentAttempt(
-              project,
-              workflow,
-              step,
-              runId,
-              stepRun,
-              signal,
-              checkpoint,
-              candidate,
-              candidates,
-              index,
-              attempt,
-              route,
-              campaign,
-              harness,
-              systemPrompt,
-              outputSchema,
-              inputArtifacts,
-              idempotencyKey,
-              profile,
-              span,
-              worktree,
-            ),
         );
-        if (outcome.status === 'succeeded') return outcome.artifact;
-        lastError = outcome.error;
-        if (outcome.error instanceof ExecutorFailureError && !technicalRetryUsed) {
-          technicalRetryUsed = true;
-          continue;
+      }
+
+      let lastError: unknown;
+      // Counts every physical attempt in this method — every candidate AND
+      // every Technical Retry replay — so `StepAttempt.sequence` is strictly
+      // increasing across the whole call.
+      let attemptSequence = 0;
+      let budgetCallReserved = false;
+      let technicalRetryReservationNeeded = false;
+      for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        if (!candidate) continue;
+        // A provider/executor failure (ADR-0073's Technical Retry) gets one
+        // same-candidate replay after a checkpoint restore before this loop
+        // falls through to its own fallback-candidate advance below.
+        let technicalRetryUsed = false;
+        for (;;) {
+          throwIfCancelled(signal, runId);
+          attemptSequence += 1;
+          const isFallbackCandidate = index > 0;
+          if (isFallbackCandidate) recordStepRetry();
+          if (checkpoint && (isFallbackCandidate || technicalRetryUsed)) {
+            await this.workspaces.rollback(project.id, checkpoint, worktree);
+          }
+
+          const timestamp = this.clock.now().toISOString();
+          const attempt: StepAttempt = {
+            id: this.ids.next(),
+            runId,
+            stepRunId: stepRun.id,
+            sequence: attemptSequence,
+            executorKind: 'agent',
+            provider: candidate.model.provider,
+            model: candidate.model.model || candidate.model.id,
+            modelId: candidate.model.id,
+            status: 'running',
+            version: 1,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            startedAt: timestamp,
+            ...(checkpoint ? { checkpoint } : {}),
+            routeDecision: route,
+            harness: {
+              version: harness.version,
+              files: harness.files.map((file) => ({ path: file.path, priority: file.priority })),
+            },
+            context: {
+              projectId: project.id,
+              workflowId: workflow.id,
+              nodeId: stepRun.nodeId,
+              stepId: step.id,
+              ...(loopIteration ? { iteration: loopIteration } : {}),
+            },
+            inputArtifacts: inputArtifacts.map(artifactReference),
+            outputArtifacts: [],
+          };
+          await this.reserveCampaignDispatch({
+            runId,
+            nodeId: stepRun.nodeId,
+            step,
+            ...(loopIteration !== undefined ? { iteration: loopIteration } : {}),
+            candidate,
+            ...(providerHealth ? { providerHealth } : {}),
+            sequence: index + 1,
+            targetedRetry,
+            signal,
+          });
+          if (callClass && budgetTaskId !== undefined && !budgetCallReserved) {
+            pendingReservation = await this.reserveTaskCall(
+              runId,
+              stepRun.nodeId,
+              budgetTaskId,
+              callClass,
+              step.maxAttempts + (isRetryTarget ? 1 : 0),
+              signal,
+            );
+            pendingReservations.push(pendingReservation);
+            budgetCallReserved = true;
+          }
+          if (technicalRetryReservationNeeded && callClass && budgetTaskId !== undefined) {
+            pendingReservation = await this.reserveTaskCall(
+              runId,
+              stepRun.nodeId,
+              budgetTaskId,
+              'technical-retry',
+              1,
+              signal,
+            );
+            pendingReservations.push(pendingReservation);
+            technicalRetryReservationNeeded = false;
+          }
+          await this.stepAttempts.create(attempt);
+
+          // A fallback candidate or a Technical Retry replay (attemptSequence >
+          // 1) is already known to be a retry when its span starts, so it's
+          // marked force_sample here for RECORD_AND_SAMPLED at head-sampling
+          // time. An ordinary first-attempt failure instead marks force_sample
+          // reactively (see executeAgentAttempt's catch) once it's known to
+          // fail — that now works too: KeepErrorsSampler records every span, so
+          // the reactive write isn't a no-op, and TailSpanProcessor's
+          // export-time predicate picks it up at onEnd regardless of the
+          // head-sampling outcome.
+          const outcome = await withSpan(
+            'foundry.attempt',
+            {
+              'foundry.attempt.id': attempt.id,
+              'foundry.attempt.sequence': attempt.sequence,
+              'foundry.model.id': candidate.model.id,
+              'foundry.provider': candidate.model.provider,
+              ...(attemptSequence > 1 ? { 'foundry.force_sample': true } : {}),
+            },
+            (span) =>
+              this.executeAgentAttempt(
+                project,
+                workflow,
+                step,
+                runId,
+                stepRun,
+                signal,
+                checkpoint,
+                candidate,
+                candidates,
+                index,
+                attempt,
+                route,
+                campaign,
+                harness,
+                systemPrompt,
+                outputSchema,
+                inputArtifacts,
+                idempotencyKey,
+                profile,
+                span,
+                worktree,
+                pendingReservation,
+              ),
+          );
+          if (outcome.status === 'succeeded') return outcome.artifact;
+          lastError = outcome.error;
+          if (outcome.error instanceof ExecutorFailureError && !technicalRetryUsed) {
+            technicalRetryUsed = true;
+            if (callClass && budgetTaskId !== undefined) {
+              technicalRetryReservationNeeded = true;
+            }
+            continue;
+          }
+          if (outcome.error instanceof ExecutorFailureError) {
+            // Second same-model technical failure: ADR-0073 requires this to
+            // pause for operator direction rather than silently advance to a
+            // different (possibly premium) model.
+            await this.reachCeiling(runId, 'technical-retry-exhausted', signal);
+          }
+          break;
         }
-        if (outcome.error instanceof ExecutorFailureError) {
-          // Second same-model technical failure: ADR-0073 requires this to
-          // pause for operator direction rather than silently advance to a
-          // different (possibly premium) model, so it converges the run the
-          // same way the emergency ceiling does instead of falling through
-          // to the candidate ladder below.
-          await this.reachCeiling(runId, 'technical-retry-exhausted', signal);
-        }
-        break;
+      }
+
+      if (checkpoint) await this.workspaces.rollback(project.id, checkpoint, worktree);
+      throw lastError instanceof Error
+        ? lastError
+        : new ExecutionError(`All candidates failed for step ${step.id}`);
+    } finally {
+      for (const reservation of pendingReservations) {
+        if (!reservation.settled) await this.releaseTaskCall(reservation);
       }
     }
-
-    if (checkpoint) await this.workspaces.rollback(project.id, checkpoint, worktree);
-    throw lastError instanceof Error
-      ? lastError
-      : new ExecutionError(`All candidates failed for step ${step.id}`);
   }
 
   private async executeAgentAttempt(
@@ -3600,6 +3663,7 @@ export class WorkflowOrchestrator {
     profile: TaskProfile,
     span: Span,
     worktree?: string,
+    reservation?: TaskCallReservation,
   ): Promise<
     { status: 'succeeded'; artifact: StoredArtifact } | { status: 'failed'; error: unknown }
   > {
@@ -3659,6 +3723,7 @@ export class WorkflowOrchestrator {
         workspaceRef,
         systemPrompt,
         worktree,
+        reservation,
       );
       if (result.usage || result.executedModel) {
         // Persist provider usage and executed identity while the attempt is
@@ -4110,6 +4175,7 @@ export class WorkflowOrchestrator {
     workspaceRef: string,
     systemPrompt: string | undefined,
     worktree?: string,
+    reservation?: TaskCallReservation,
   ): Promise<AgentExecutionResult> {
     await this.emit(project.id, 'agent.started', `${step.id} started on ${candidate.model.id}.`, {
       nodeId: step.id,
@@ -4117,6 +4183,7 @@ export class WorkflowOrchestrator {
       dedupeKey: `${runId}:attempt:${attemptId}:started`,
       data: { modelId: candidate.model.id, provider: candidate.model.provider, attemptId },
     });
+    if (reservation) await this.confirmTaskCall(reservation, signal);
     const executionResult = await this.executionPlane.submit(
       {
         protocolVersion: EXECUTION_PROTOCOL_VERSION,

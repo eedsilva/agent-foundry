@@ -196,7 +196,7 @@ export class CallBudgetExhaustedError extends Error {
     readonly runId: string,
     readonly nodeId: string,
     readonly taskId: string,
-    readonly callClass: 'implement' | 'repair',
+    readonly callClass: 'implement' | 'repair' | 'technical-retry',
   ) {
     super(`Task ${nodeId}/${taskId} exhausted its ${callClass} call budget for run ${runId}.`);
   }

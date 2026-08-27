@@ -19,10 +19,10 @@ interface HasReserveTaskCall {
     runId: string,
     nodeId: string,
     taskId: string,
-    callClass: 'implement' | 'repair',
+    callClass: 'implement' | 'repair' | 'technical-retry',
     limit: number,
     signal: AbortSignal,
-  ): Promise<void>;
+  ): Promise<unknown>;
 }
 
 const PLAN_STEP = {
@@ -130,10 +130,15 @@ describe('ADR-0073 Call Budget ledger (#604)', () => {
       'task-execution:T1': {
         nodeId: 'task-execution',
         taskId: 'T1',
-        implementUsed: 1,
+        implementUsed: 0,
+        implementReserved: 1,
         implementLimit: 1,
         repairUsed: 0,
+        repairReserved: 0,
         repairLimit: 0,
+        technicalRetryUsed: 0,
+        technicalRetryReserved: 0,
+        technicalRetryLimit: 1,
       },
     });
 
@@ -143,7 +148,7 @@ describe('ADR-0073 Call Budget ledger (#604)', () => {
     // Denial never re-reserves: the ledger is unchanged by the losing call.
     expect(
       (await harness.runs.get('run-1'))?.execution?.callBudget?.['task-execution:T1'],
-    ).toMatchObject({ implementUsed: 1 });
+    ).toMatchObject({ implementUsed: 0, implementReserved: 1 });
   });
 
   // Two reservations racing for the same task's last slot must resolve to
@@ -166,7 +171,7 @@ describe('ADR-0073 Call Budget ledger (#604)', () => {
     expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(CallBudgetExhaustedError);
     expect(
       (await harness.runs.get('run-1'))?.execution?.callBudget?.['task-execution:T1'],
-    ).toMatchObject({ implementUsed: 1 });
+    ).toMatchObject({ implementUsed: 0, implementReserved: 1 });
   });
 
   // Cancellation observed before the reservation is granted is "cancel before
@@ -211,10 +216,96 @@ describe('ADR-0073 Call Budget ledger (#604)', () => {
         nodeId: 'task-execution',
         taskId: 'T1',
         implementUsed: 1,
+        implementReserved: 0,
         implementLimit: 1,
         repairUsed: 0,
+        repairReserved: 0,
         repairLimit: 0,
+        technicalRetryUsed: 0,
+        technicalRetryReserved: 0,
+        technicalRetryLimit: 1,
       },
+    });
+  });
+
+  it('releases a reservation when cancellation lands before provider dispatch', async () => {
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_GRAPH_WORKFLOW,
+      agentOutput: planAgentOutput,
+    });
+    await seedRun(harness);
+    let cancellationRequested = false;
+    harness.runs.onAfterUpdate = async (run) => {
+      const budget = run.execution?.callBudget?.['task-execution:T1'];
+      if (!cancellationRequested && budget?.implementReserved === 1) {
+        cancellationRequested = true;
+        await harness.service.cancelRun('run-1');
+      }
+    };
+
+    await harness.orchestrator.runProject('project-1', TASK_GRAPH_WORKFLOW.id, 'run-1');
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.status).toBe('cancelled');
+    expect(harness.executor.started('implement.T1')).toBe(0);
+    expect(run?.execution?.callBudget?.['task-execution:T1']).toMatchObject({
+      implementUsed: 0,
+      implementReserved: 0,
+    });
+  });
+
+  it('records Technical Retry separately from the implementation call', async () => {
+    const harness = makeHarness(
+      { 'implement.T1': { kind: 'fail-once', error: () => new Error('technical failure') } },
+      undefined,
+      {
+        workflow: TASK_GRAPH_WORKFLOW,
+        agentOutput: planAgentOutput,
+      },
+    );
+    await seedRun(harness);
+
+    await harness.orchestrator.runProject('project-1', TASK_GRAPH_WORKFLOW.id, 'run-1');
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.status).toBe('completed');
+    expect(harness.executor.started('implement.T1')).toBe(2);
+    expect(run?.execution?.callBudget?.['task-execution:T1']).toMatchObject({
+      implementUsed: 1,
+      implementReserved: 0,
+      technicalRetryUsed: 1,
+      technicalRetryReserved: 0,
+      technicalRetryLimit: 1,
+    });
+  });
+
+  it('allows one explicit implementation retry and denies a repeated directive', async () => {
+    const harness = makeHarness({}, undefined, {
+      workflow: TASK_GRAPH_WORKFLOW,
+      agentOutput: planAgentOutput,
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', TASK_GRAPH_WORKFLOW.id, 'run-1');
+
+    let implement = harness.stepRuns.byStepId('run-1', 'implement.T1').at(-1);
+    if (!implement) throw new Error('implement step missing');
+    await harness.service.retryStep('run-1', implement.id, { mode: 'preserve' });
+    await harness.orchestrator.runProject('project-1', TASK_GRAPH_WORKFLOW.id, 'run-1');
+    expect(harness.executor.started('implement.T1')).toBe(2);
+
+    implement = harness.stepRuns.byStepId('run-1', 'implement.T1').at(-1);
+    if (!implement) throw new Error('retried implement step missing');
+    await harness.service.retryStep('run-1', implement.id, { mode: 'preserve' });
+    await expect(
+      harness.orchestrator.runProject('project-1', TASK_GRAPH_WORKFLOW.id, 'run-1'),
+    ).rejects.toBeInstanceOf(EmergencyCeilingError);
+
+    const run = await harness.runs.get('run-1');
+    expect(run?.execution?.ceiling?.reason).toBe('call-budget-exhausted');
+    expect(harness.executor.started('implement.T1')).toBe(2);
+    expect(run?.execution?.callBudget?.['task-execution:T1']).toMatchObject({
+      implementUsed: 2,
+      implementLimit: 2,
     });
   });
 
