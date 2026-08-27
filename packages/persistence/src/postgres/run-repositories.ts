@@ -75,12 +75,12 @@ export class PostgresWorkflowRunRepository implements WorkflowRunRepository {
     return rows.map((row) => WorkflowRunSchema.parse(row.data));
   }
 
-  async update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun> {
+  async update(run: WorkflowRun, expectedVersion: number, tx?: Tx): Promise<WorkflowRun> {
     if (run.version !== expectedVersion) {
       throw new VersionConflictError('workflow-run', run.id, expectedVersion, run.version);
     }
     const next = WorkflowRunSchema.parse({ ...run, version: expectedVersion + 1 });
-    await updateVersioned(this.sql, {
+    await updateVersioned(resolveDb(this.sql, tx), {
       table: 'workflow_runs',
       entity: 'workflow-run',
       id: run.id,

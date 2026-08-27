@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import type { Project, QueueJob, WorkflowRun } from '@agent-foundry/contracts';
+import { transitionWorkflowRun } from '@agent-foundry/domain';
 import { describePostgres } from './testing.js';
 import { PostgresTransactionRunner } from './transaction-runner.js';
 import { PostgresProjectRepository } from './project-repository.js';
@@ -120,5 +121,42 @@ describePostgres('transactional seam atomicity', (ctx) => {
     expect(await events.list('project-1')).toHaveLength(1);
     const [jobRow] = await sql<{ id: string }[]>`select id from jobs where id = 'job-1'`;
     expect(jobRow?.id).toBe('job-1');
+  });
+
+  it('rolls back project and run failure states together', async () => {
+    const sql = ctx.db();
+    const runner = new PostgresTransactionRunner(sql);
+    const projects = new PostgresProjectRepository(sql);
+    const runs = new PostgresWorkflowRunRepository(sql);
+    const queuedProject = project();
+    const queuedRun = run();
+    await projects.create(queuedProject);
+    await runs.create(queuedRun);
+
+    await expect(
+      runner.run(async (tx) => {
+        await projects.update(
+          {
+            ...queuedProject,
+            status: 'failed',
+            error: 'artifact store unavailable',
+            updatedAt: '2026-07-14T12:01:00.000Z',
+          },
+          queuedProject.version,
+          tx,
+        );
+        await runs.update(
+          transitionWorkflowRun(queuedRun, 'failed', new Date('2026-07-14T12:01:00.000Z'), {
+            error: { name: 'ProjectInitializationError', message: 'artifact store unavailable' },
+          }),
+          queuedRun.version,
+          tx,
+        );
+        throw new Error('state update failed');
+      }),
+    ).rejects.toThrow('state update failed');
+
+    expect(await projects.get(queuedProject.id)).toEqual(queuedProject);
+    expect(await runs.get(queuedRun.id)).toEqual(queuedRun);
   });
 });

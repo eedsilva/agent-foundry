@@ -41,6 +41,30 @@ describe('FileWorkspaceManager project-directory reservation (#599)', () => {
     expect(workspaces.workspacePath(`project-${winnerIndex + 1}`)).toBe(await realpath(selected));
   });
 
+  it('serializes concurrent aliases that resolve to the same directory', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
+    const parent = await mkdtemp(join(tmpdir(), 'agent-foundry-projects-'));
+    const upper = join(parent, 'Generated-App');
+    const lower = join(parent, 'generated-app');
+    const probe = join(parent, 'case-probe');
+    await mkdir(probe);
+    const aliasesSame = await lstat(join(parent, 'CASE-PROBE')).then(
+      () => true,
+      () => false,
+    );
+    await rm(probe, { recursive: true });
+    if (!aliasesSame) return;
+    const workspaces = manager(dataDir);
+
+    const attempts = await Promise.allSettled([
+      workspaces.reserveProjectDirectory('project-1', upper),
+      workspaces.reserveProjectDirectory('project-2', lower),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    expect(await realpath(upper)).toBe(await realpath(lower));
+  });
+
   it('rejects a non-empty directory without changing it', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-data-'));
     const selected = await mkdtemp(join(tmpdir(), 'agent-foundry-project-'));

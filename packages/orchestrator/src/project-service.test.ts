@@ -54,6 +54,61 @@ describe('ProjectService.create', () => {
     expect(harness.enqueued).toHaveLength(1);
   });
 
+  it('marks the project and run failed when initial artifact persistence fails', async () => {
+    const harness = makeHarness();
+    vi.spyOn(harness.artifacts, 'put').mockRejectedValueOnce(
+      new Error('artifact store unavailable'),
+    );
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toThrow('artifact store unavailable');
+
+    expect(await harness.projects.get('id-0001')).toMatchObject({
+      status: 'failed',
+      error: 'artifact store unavailable',
+    });
+    expect(await harness.runs.get('id-0002')).toMatchObject({
+      status: 'failed',
+      error: { name: 'ProjectInitializationError', message: 'artifact store unavailable' },
+    });
+    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.workspaces.workspacePath('id-0001')).toBe('/operator/projects/issue-radar');
+  });
+
+  it('exposes a pre-persistence rollback failure without deleting its reservation', async () => {
+    const harness = makeHarness();
+    vi.spyOn(harness.workspaces, 'writePrd').mockRejectedValueOnce(
+      new Error('workspace write failed'),
+    );
+    vi.spyOn(harness.workspaces, 'releaseProjectDirectory').mockRejectedValueOnce(
+      new Error('reservation rollback failed'),
+    );
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'Build it',
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toMatchObject({
+      message: 'workspace write failed',
+      errors: [
+        expect.objectContaining({ message: 'workspace write failed' }),
+        expect.objectContaining({ message: 'reservation rollback failed' }),
+      ],
+    });
+
+    expect(harness.workspaces.cleanups).toEqual([]);
+    expect(harness.workspaces.workspacePath('id-0001')).toBe('/operator/projects/issue-radar');
+  });
+
   it('stops before project creation when validation preflight is blocked', async () => {
     const campaign = ValidationCampaignPreviewSchema.parse({
       schemaVersion: '1',

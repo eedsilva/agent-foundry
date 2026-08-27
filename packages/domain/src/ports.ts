@@ -129,7 +129,7 @@ export interface WorkflowRunRepository {
   get(runId: string): Promise<WorkflowRun | null>;
   list(projectId: string, limit?: number): Promise<WorkflowRun[]>;
   listNonTerminal(projectId: string): Promise<WorkflowRun[]>;
-  update(run: WorkflowRun, expectedVersion: number): Promise<WorkflowRun>;
+  update(run: WorkflowRun, expectedVersion: number, tx?: Tx): Promise<WorkflowRun>;
 }
 
 export interface StepRunRepository {

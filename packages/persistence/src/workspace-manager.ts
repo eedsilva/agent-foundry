@@ -148,22 +148,26 @@ export class FileWorkspaceManager implements WorkspaceManager {
       throw new ValidationError('Project directory must be an absolute path.');
     }
     const requested = resolve(projectDirectory);
+    const requestedParent = await realpath(dirname(requested)).catch((error) => {
+      if (isNotFound(error)) {
+        throw new ValidationError('Project directory parent must already exist.');
+      }
+      throw error;
+    });
+    const requestedCanonical = join(requestedParent, basename(requested));
+    const canonicalDataDir = await realpath(this.dataDir);
+    if (
+      requestedCanonical === canonicalDataDir ||
+      requestedCanonical.startsWith(`${canonicalDataDir}${sep}`)
+    ) {
+      throw new ValidationError('Project directory must be outside DATA_DIR.');
+    }
     const existing = await lstat(requested).catch((error) => {
       if (isNotFound(error)) return null;
       throw error;
     });
-    const canonical = existing
-      ? await realpath(requested)
-      : join(
-          await realpath(dirname(requested)).catch((error) => {
-            if (isNotFound(error)) {
-              throw new ValidationError('Project directory parent must already exist.');
-            }
-            throw error;
-          }),
-          basename(requested),
-        );
-    const canonicalDataDir = await realpath(this.dataDir);
+    if (!existing) await ensureDir(requestedCanonical);
+    const canonical = await realpath(requestedCanonical);
     if (canonical === canonicalDataDir || canonical.startsWith(`${canonicalDataDir}${sep}`)) {
       throw new ValidationError('Project directory must be outside DATA_DIR.');
     }

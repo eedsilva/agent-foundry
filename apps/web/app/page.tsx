@@ -111,6 +111,9 @@ export default function HomePage() {
               required
               className={FIELD}
             />
+            <span className="text-ink-subtle text-xs font-normal">
+              Caminho absoluto; pai existente; diretório novo ou vazio; fora de DATA_DIR.
+            </span>
           </label>
 
           <label className={LABEL}>

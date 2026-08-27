@@ -61,6 +61,7 @@ import {
   ApprovalConflictError,
   latestArtifactsByName,
   NotFoundError,
+  errorMessage,
   ResumeBlockedError,
   ValidationError,
   VersionConflictError,
@@ -237,13 +238,25 @@ export class ProjectService {
       persisted = true;
     } catch (error) {
       if (!persisted) {
-        await this.workspaces
-          .releaseProjectDirectory(project.id, [
+        const rollbackErrors: unknown[] = [];
+        try {
+          await this.workspaces.releaseProjectDirectory(project.id, [
             { path: 'PRD.md', content: `${input.prd.trim()}\n` },
             ...scaffoldFiles,
-          ])
-          .catch(() => undefined);
-        await this.workspaces.cleanup(project.id).catch(() => undefined);
+          ]);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+        if (rollbackErrors.length === 0) {
+          try {
+            await this.workspaces.cleanup(project.id);
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+        }
+        if (rollbackErrors.length > 0) {
+          throw new AggregateError([error, ...rollbackErrors], errorMessage(error));
+        }
       }
       throw error;
     }
@@ -252,41 +265,73 @@ export class ProjectService {
     // has a FK to `projects(id)`, and ArtifactStore.put isn't part of the
     // transactional seam (see the design note at the top of this task in the
     // plan) -- the project row must already be visible on its own connection.
-    await this.artifacts.put({
-      projectId: project.id,
-      name: 'prd',
-      content: input.prd,
-      contentType: 'text/markdown',
-      createdBy: 'user',
-      runId,
-    });
-    if (scaffoldFiles.length > 0) {
+    try {
       await this.artifacts.put({
         projectId: project.id,
-        name: 'scaffold-manifest',
-        content: scaffoldFiles.map((file) => file.path),
-        contentType: 'application/json',
-        createdBy: `scaffold:${workflow.stack}`,
+        name: 'prd',
+        content: input.prd,
+        contentType: 'text/markdown',
+        createdBy: 'user',
         runId,
       });
-    }
-    if (runPreflight) {
-      await this.artifacts.put({
-        projectId: project.id,
-        name: 'validation-preflight',
-        content: redactValidationPreflightReport(runPreflight),
-        createdBy: `validation-preflight:${runPreflight.environmentId}`,
-        runId,
-      });
-    }
+      if (scaffoldFiles.length > 0) {
+        await this.artifacts.put({
+          projectId: project.id,
+          name: 'scaffold-manifest',
+          content: scaffoldFiles.map((file) => file.path),
+          contentType: 'application/json',
+          createdBy: `scaffold:${workflow.stack}`,
+          runId,
+        });
+      }
+      if (runPreflight) {
+        await this.artifacts.put({
+          projectId: project.id,
+          name: 'validation-preflight',
+          content: redactValidationPreflightReport(runPreflight),
+          createdBy: `validation-preflight:${runPreflight.environmentId}`,
+          runId,
+        });
+      }
 
-    await this.transactionRunner.run(async (tx) => {
-      await this.queue.enqueue(job, tx);
-      await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
-        runId,
-        tx,
+      await this.transactionRunner.run(async (tx) => {
+        await this.queue.enqueue(job, tx);
+        await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
+          runId,
+          tx,
+        });
       });
-    });
+    } catch (error) {
+      const message = errorMessage(error);
+      try {
+        await this.transactionRunner.run(async (tx) => {
+          const failedRun = await this.runs.update(
+            transitionWorkflowRun(run, 'failed', this.clock.now(), {
+              error: { name: 'ProjectInitializationError', message },
+            }),
+            run.version,
+            tx,
+          );
+          await this.projects.update(
+            {
+              ...project,
+              status: 'failed',
+              error: message,
+              updatedAt: this.clock.now().toISOString(),
+            },
+            project.version,
+            tx,
+          );
+          await this.appendEvent(project.id, 'project.failed', message, {
+            runId: failedRun.id,
+            tx,
+          });
+        });
+      } catch (stateError) {
+        throw new AggregateError([error, stateError], message);
+      }
+      throw error;
+    }
 
     return project;
   }
