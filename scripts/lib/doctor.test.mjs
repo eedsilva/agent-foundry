@@ -375,8 +375,9 @@ test('derives configured-path remediations without exposing an external path', a
 
 test('redacts an existing externally configured catalog from human output', async (t) => {
   const fixture = await createFixture(t, readyFixtures);
-  const catalog = join(tmpdir(), `agent-foundry-external-catalog-${Date.now()}.yaml`);
-  t.after(() => rm(catalog, { force: true }));
+  const catalogRoot = await mkdtemp(join(tmpdir(), 'agent-foundry-external-catalog-'));
+  const catalog = join(catalogRoot, 'catalog.yaml');
+  t.after(() => rm(catalogRoot, { recursive: true, force: true }));
   await writeFile(catalog, 'models: []\n');
 
   const result = runDoctor(fixture, [], { MODEL_CATALOG_PATH: catalog });
