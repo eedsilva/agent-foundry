@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createValidationCampaignExecution,
+  PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+  PREVIEW_INFRASTRUCTURE_ERROR_NAME,
   ValidationCampaignPreviewSchema,
   ValidationEvidenceBundleSchema,
   WorkflowDefinitionSchema,
@@ -1217,6 +1219,60 @@ describe('validation evidence publication', () => {
           name: 'BrowserInfrastructureError',
           message:
             'browser verification never reached the app: Preview at http://127.0.0.1:59999 is unreachable: connect ECONNREFUSED',
+        },
+        updatedAt: harness.clock.now().toISOString(),
+      },
+      run.version,
+    );
+
+    const result = await evidence.publish('run-1', request('environment-blocked'));
+
+    expect(result.bundle.outcome).toBe('environment-blocked');
+  });
+
+  it.each([
+    ["the generated app's dev server", 'PreviewStartError', 'PREVIEW_START_FAILED'],
+    ["the generated app's dependencies", 'PreviewInstallError', 'PREVIEW_INSTALL_FAILED'],
+  ])(
+    'classifies a product-origin preview failure as product, not environment: %s (#667)',
+    async (_case, name, code) => {
+      const { harness, evidence } = await setup();
+      const run = await harness.runs.get('run-1');
+      if (!run) throw new Error('run-1 was not seeded');
+      await harness.runs.update(
+        {
+          ...run,
+          status: 'failed',
+          // A defect in the generated app. Classifying it 'environment'
+          // excuses it instead of repairing it — #659 pointing the other way.
+          error: { name, code, message: 'Dev server exited immediately twice.' },
+          updatedAt: harness.clock.now().toISOString(),
+        },
+        run.version,
+      );
+
+      const result = await evidence.publish('run-1', request('product-failed'));
+
+      expect(result.bundle.outcome).toBe('product-failed');
+    },
+  );
+
+  it('keeps an unavailable preview classified as environment (#659, #667)', async () => {
+    const { harness, evidence } = await setup();
+    const run = await harness.runs.get('run-1');
+    if (!run) throw new Error('run-1 was not seeded');
+    await harness.runs.update(
+      {
+        ...run,
+        status: 'failed',
+        // The runner marked this environment-origin. Dropping 'preview' from
+        // the classifier must not take this with it: 'infrastructure' is in
+        // both halves of the identity and is what carries the origin.
+        error: {
+          name: PREVIEW_INFRASTRUCTURE_ERROR_NAME,
+          code: PREVIEW_INFRASTRUCTURE_ERROR_CODE,
+          message:
+            'docker create failed: failed to connect to the docker API at unix:///var/run/docker.sock',
         },
         updatedAt: harness.clock.now().toISOString(),
       },
