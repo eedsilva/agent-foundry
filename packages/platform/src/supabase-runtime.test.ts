@@ -2253,23 +2253,27 @@ describe('explicit environment identity (#616)', () => {
 
   it('keeps a persisted identity in the file every lifecycle write rewrites', async () => {
     const { runtime } = fixture();
-    const initialized = await runtime.initialize({ projectId: 'project-a' });
-    await writeFile(
-      metadataPath('project-a'),
-      `${JSON.stringify({ ...initialized, identity: IDENTITY }, null, 2)}\n`,
+    const path = join(
+      dataDir,
+      'projects',
+      'project-a',
+      'environments',
+      IDENTITY.environmentId,
+      'environment',
+      'environment.json',
     );
+    await runtime.initialize({ projectId: 'project-a', identity: IDENTITY });
+    const target = { projectId: 'project-a', environmentId: IDENTITY.environmentId };
 
-    const inspected = await runtime.inspect('project-a');
-    const stopped = await runtime.stop('project-a');
-    const restarted = await runtime.initialize({ projectId: 'project-a' });
+    const inspected = await runtime.inspect(target);
+    const stopped = await runtime.stop(target);
+    const restarted = await runtime.initialize({ projectId: 'project-a', identity: IDENTITY });
 
     expect(inspected?.identity).toEqual(IDENTITY);
     expect(stopped.identity).toEqual(IDENTITY);
     expect(restarted.identity).toEqual(IDENTITY);
     // The artifact, not the return value: what a later process actually reads.
-    expect(JSON.parse(await readFile(metadataPath('project-a'), 'utf8')).identity).toEqual(
-      IDENTITY,
-    );
+    expect(JSON.parse(await readFile(path, 'utf8')).identity).toEqual(IDENTITY);
   });
 
   it('reads and rewrites a record written before identity existed without inventing one', async () => {
@@ -2300,6 +2304,17 @@ describe('explicit environment identity (#616)', () => {
     );
 
     await expect(runtime.inspect('project-a')).rejects.toThrow();
+  });
+
+  it('refuses classified identity metadata at the unaddressed legacy root', async () => {
+    const { runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    await writeFile(
+      metadataPath('project-a'),
+      `${JSON.stringify({ ...initialized, identity: IDENTITY }, null, 2)}\n`,
+    );
+
+    await expect(runtime.inspect('project-a')).rejects.toThrow(/identity/i);
   });
 });
 

@@ -922,8 +922,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     try {
       const environment = AppEnvironmentSchema.parse(JSON.parse(await readFile(path, 'utf8')));
       if (
-        resolved.environmentId !== undefined &&
-        environment.identity?.environmentId !== resolved.environmentId
+        (resolved.environmentId === undefined && environment.identity !== undefined) ||
+        (resolved.environmentId !== undefined &&
+          environment.identity?.environmentId !== resolved.environmentId)
       ) {
         throw new ValidationError(
           `Project environment "${targetKey(resolved)}" metadata names a different identity.`,

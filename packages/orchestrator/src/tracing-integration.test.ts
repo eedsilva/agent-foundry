@@ -76,19 +76,24 @@ describe('orchestrator span coverage', () => {
   });
 
   it('replays the same environment and version on a resumed run that provisioned earlier (#617)', async () => {
+    const initialize = vi.fn(async () => ({}) as never);
+    const listEnvironments = vi.fn();
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize, listEnvironments } as never,
+    });
+    await seedRun(harness);
+    await harness.workspaces.ensureGit();
+    const head = await harness.workspaces.head('project-1');
+    if (!head) throw new Error('test workspace has no HEAD');
+    const version = await harness.versions.baselineForRun('project-1', 'run-1', head);
     const identity = {
       class: 'candidate',
       projectId: 'project-1',
       environmentId: 'run-1',
       runCandidateId: 'run-1',
-      projectVersionId: 'version-7',
+      projectVersionId: version.id,
     } as const;
-    const initialize = vi.fn(async () => ({}) as never);
-    const listEnvironments = vi.fn(async () => [{ identity }] as never);
-    const harness = makeHarness({}, undefined, {
-      generatedProjectRuntime: { initialize, listEnvironments } as never,
-    });
-    await seedRun(harness);
+    listEnvironments.mockResolvedValue([{ identity }] as never);
     await harness.events.append({
       id: 'event-provisioned',
       projectId: 'project-1',
@@ -113,7 +118,7 @@ describe('orchestrator span coverage', () => {
         projectId: 'project-1',
         environmentId: 'run-1',
         runCandidateId: 'run-1',
-        projectVersionId: 'version-7',
+        projectVersionId: version.id,
       },
     });
     const runSpan = exporter.getFinishedSpans().find((span) => span.name === 'foundry.run');
@@ -121,7 +126,7 @@ describe('orchestrator span coverage', () => {
       'foundry.project.id': 'project-1',
       'foundry.environment.id': 'run-1',
       'foundry.environment.class': 'candidate',
-      'foundry.project.version.id': 'version-7',
+      'foundry.project.version.id': version.id,
     });
   });
 
@@ -152,6 +157,38 @@ describe('orchestrator span coverage', () => {
 
     await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
       /persisted environment/i,
+    );
+    expect(initialize).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when recovered metadata names no ProjectVersion in the ledger', async () => {
+    const identity = {
+      class: 'candidate',
+      projectId: 'project-1',
+      environmentId: 'run-1',
+      runCandidateId: 'run-1',
+      projectVersionId: 'version-missing',
+    } as const;
+    const initialize = vi.fn(async () => ({}) as never);
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: {
+        initialize,
+        listEnvironments: async () => [{ identity }],
+      } as never,
+    });
+    await seedRun(harness);
+    await harness.events.append({
+      id: 'event-provisioned-missing-version',
+      projectId: 'project-1',
+      runId: 'run-1',
+      type: 'project.provisioned',
+      createdAt: harness.clock.now().toISOString(),
+      message: 'Project provisioning completed.',
+      data: { environment: identity },
+    });
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /ProjectVersion/i,
     );
     expect(initialize).not.toHaveBeenCalled();
   });

@@ -693,13 +693,13 @@ export class WorkflowOrchestrator {
         const persistedEnvironment = (await this.generatedProjectRuntime?.listEnvironments())?.find(
           (environment) => isDeepStrictEqual(environment.identity, recoveredIdentity),
         );
-        if (
-          this.generatedProjectRuntime &&
-          (!persistedEnvironment ||
-            !isDeepStrictEqual(persistedEnvironment.identity, recoveredIdentity))
-        ) {
+        const persistedVersion = (await this.versions?.list(projectId))?.find(
+          (version) =>
+            version.id === recoveredIdentity.projectVersionId && version.runId === activeRunId,
+        );
+        if ((this.generatedProjectRuntime && !persistedEnvironment) || !persistedVersion) {
           throw new ValidationError(
-            `Run ${activeRunId} has no matching persisted environment for recovery.`,
+            `Run ${activeRunId} has no matching persisted environment and ProjectVersion for recovery.`,
           );
         }
         await this.generatedProjectRuntime?.initialize({

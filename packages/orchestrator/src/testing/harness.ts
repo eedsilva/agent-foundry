@@ -1598,6 +1598,7 @@ export function makeHarness(
     ids,
     executor,
     workflow,
+    versions,
     orchestrator,
     service,
     enqueued,

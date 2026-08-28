@@ -50,10 +50,11 @@ export class ProjectVersionService {
    * The ProjectVersion a run's Supabase stack is bound to (#617). ADR 0080
    * requires a candidate environment to name the exact commit it runs, so
    * recovery "never starts an application with a mismatched commit and
-   * environment". Provisioning happens before any mutating step, so each new
-   * run gets exactly one baseline entry for the commit `ensureGit` exposed.
+   * environment". Provisioning happens before any mutating step, so a brand
+   * new project has no ledger entry yet and gets exactly one baseline entry
+   * for the scaffold commit `ensureGit` already created.
    *
-   * A run that already has history must produce a ledger entry belonging
+   * A project that already has history must produce a ledger entry belonging
    * to this run *and* naming the current HEAD: that is the replay case, and
    * reusing it appends nothing. Anything else — a foreign run's entry, or an
    * entry whose commit is no longer HEAD — fails closed here, before any
@@ -62,13 +63,12 @@ export class ProjectVersionService {
    */
   async baselineForRun(projectId: string, runId: string, head: string): Promise<ProjectVersion> {
     const history = await this.versions.list(projectId);
-    const runHistory = history.filter((version) => version.runId === runId);
-    if (runHistory.length === 0) {
+    if (history.length === 0) {
       const version = await this.buildVersion(projectId, 'run', { runId, commit: head });
       await this.versions.create(version);
       return version;
     }
-    const match = runHistory.find((version) => version.commit === head);
+    const match = history.find((version) => version.runId === runId && version.commit === head);
     if (match) return match;
     throw new ValidationError(
       `Project ${projectId} has version history but no entry for run ${runId} at HEAD ${head}; ` +
