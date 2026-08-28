@@ -19,6 +19,7 @@ import {
   FunctionArtifactSchema,
   FunctionInvocationResultSchema,
   FunctionVersionSchema,
+  EnvironmentIdentitySchema,
   MigrationApprovalSchema,
   MigrationBackupSchema,
   MigrationPreviewSchema,
@@ -26,7 +27,9 @@ import {
   POSTGRES_DATA_TYPE,
   type AppEnvironment,
   type DestructiveEnvironmentConfirmation,
+  type EnvironmentIdentity,
   type EnvironmentLifecycleOperation,
+  type EnvironmentTarget,
   type FunctionArtifact,
   type FunctionInvocationResult,
   type FunctionVersion,
@@ -142,30 +145,64 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
   }
 
-  async initialize(input: { projectId: string }): Promise<AppEnvironment> {
-    const projectId = parsePathSegment('project ID', input.projectId);
-    const inFlight = this.#initializations.get(projectId);
+  async initialize(input: {
+    projectId: string;
+    /** When present, the environment is addressed and recorded explicitly.
+     * Absent keeps the legacy single-environment root; nothing infers a class
+     * for it (#616). */
+    identity?: EnvironmentIdentity;
+  }): Promise<AppEnvironment> {
+    const identity = input.identity ? EnvironmentIdentitySchema.parse(input.identity) : undefined;
+    if (identity && identity.projectId !== input.projectId) {
+      throw new ValidationError('Environment identity must name the same project as the request.');
+    }
+    const resolved = resolveTarget(
+      identity
+        ? { projectId: input.projectId, environmentId: identity.environmentId }
+        : input.projectId,
+    );
+    const key = targetKey(resolved);
+    const inFlight = this.#initializations.get(key);
     if (inFlight) return inFlight;
-    const initialization = this.#initialize(projectId).finally(() => {
-      this.#initializations.delete(projectId);
+    const initialization = this.#initialize(resolved, identity).finally(() => {
+      this.#initializations.delete(key);
     });
-    this.#initializations.set(projectId, initialization);
+    this.#initializations.set(key, initialization);
     return initialization;
   }
 
-  async #initialize(projectId: string): Promise<AppEnvironment> {
-    const existing = await this.#read(projectId);
+  async #initialize(
+    resolved: ResolvedTarget,
+    identity?: EnvironmentIdentity,
+  ): Promise<AppEnvironment> {
+    const projectId = resolved.projectId;
+    const existing = await this.#read(resolved);
     // The reaper (#292) calls stop() on idle environments, and initialize()
     // is the only lifecycle call on the production run path — start() has no
     // production caller. A stopped environment must be brought back up here,
     // or the project is permanently unusable after it goes idle. start()
     // itself is a no-op when already healthy, so this composes safely.
-    if (existing)
-      return existing.health.state === 'stopped' ? this.start(projectId) : this.#touch(existing);
+    if (existing && identity && JSON.stringify(existing.identity) !== JSON.stringify(identity)) {
+      if (existing.identity?.class !== 'manual-preview' || identity.class !== 'manual-preview') {
+        throw new ValidationError(
+          `Project environment "${targetKey(resolved)}" is bound to a different identity.`,
+        );
+      }
+      await this.#stopWithTimeout(existing.workdir);
+      try {
+        await rm(environmentRoot(this.#dataDir, resolved), { recursive: true, force: true });
+      } catch (error) {
+        throw operationError('initialize', error);
+      }
+    } else if (existing) {
+      return existing.health.state === 'stopped'
+        ? this.start(targetFrom(resolved))
+        : this.#touch(existing);
+    }
 
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,
-      projectId,
+      resolved,
     );
     let retainedWorkdir = true;
     try {
@@ -231,6 +268,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
           health: { state: 'healthy', checkedAt: timestamp },
           createdAt: timestamp,
           updatedAt: timestamp,
+          ...(identity ? { identity } : {}),
         },
         result.stdout,
         'healthy',
@@ -243,7 +281,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       // as any other CLI failure (R4, #560) instead of silently skipping
       // #writeAppSecrets and leaving the preview to fail far downstream.
       const credentials = credentialsFromStatus(result.stdout);
-      await wait('initialize', this.#writeAppSecrets(projectId, credentials));
+      await wait('initialize', this.#writeAppSecrets(resolved, credentials));
       await wait('initialize', persist(environment));
       return environment;
     } catch (error) {
@@ -287,8 +325,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
   }
 
-  async start(projectId: string): Promise<AppEnvironment> {
-    const environment = await this.#require(projectId);
+  async start(target: EnvironmentTarget): Promise<AppEnvironment> {
+    const environment = await this.#require(target);
     if (environment.health.state === 'healthy') return environment;
     await this.#execute(
       'start',
@@ -321,8 +359,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     return started;
   }
 
-  async stop(projectId: string): Promise<AppEnvironment> {
-    const environment = await this.#require(projectId);
+  async stop(target: EnvironmentTarget): Promise<AppEnvironment> {
+    const environment = await this.#require(target);
     if (environment.health.state === 'stopped') return environment;
     await this.#execute('stop', 'stop', '--workdir', environment.workdir);
     const timestamp = this.#now().toISOString();
@@ -335,8 +373,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     return stopped;
   }
 
-  async inspect(projectId: string): Promise<AppEnvironment | null> {
-    const environment = await this.#read(projectId);
+  async inspect(target: EnvironmentTarget): Promise<AppEnvironment | null> {
+    const environment = await this.#read(target);
     if (!environment) return null;
     const result = await this.#execute(
       'inspect',
@@ -359,18 +397,10 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async listEnvironments(): Promise<AppEnvironment[]> {
-    let entries;
-    try {
-      entries = await readdir(join(this.#dataDir, 'projects'), { withFileTypes: true });
-    } catch (error) {
-      if (isNotFound(error)) return [];
-      throw error;
-    }
     const environments: AppEnvironment[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+    for (const target of await environmentTargets(this.#dataDir)) {
       try {
-        const environment = await this.#read(entry.name);
+        const environment = await this.#read(targetFrom(target));
         if (environment) environments.push(environment);
       } catch {
         // Corrupt metadata or an invalid project-id path segment must not
@@ -382,17 +412,21 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async previewMigration(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     migrationPath: string;
   }): Promise<MigrationPreview> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     return migrationPreview(environment.workdir, input.migrationPath);
   }
 
   async backupMigration(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     backupPath: string;
   }): Promise<MigrationBackup> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     const path = await containedOutputFile(environment.workdir, input.backupPath);
     const suffix = randomUUID();
     const schemaPath = `${path}.${suffix}.schema.sql`;
@@ -428,6 +462,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       await atomicWrite(path, backup);
       const manifest = MigrationBackupSchema.parse({
         path: input.backupPath,
+        ...(environment.identity?.environmentId
+          ? { environmentId: environment.identity.environmentId }
+          : {}),
         checksum: sha256(backup),
         schemaChecksum: sha256(schema),
         dataChecksum: sha256(data),
@@ -437,6 +474,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       const manifestPath = backupManifestPath(
         this.#dataDir,
         environment.projectId,
+        environment.identity?.environmentId,
         manifest.manifestId,
       );
       await mkdir(dirname(manifestPath), { recursive: true });
@@ -449,10 +487,12 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async migrate(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     migrationPath: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     await migrationFile(environment.workdir, input.migrationPath);
     const destructive = (await migrationPreviews(environment.workdir)).filter(
       (preview) => preview.destructiveStatements.length,
@@ -472,10 +512,12 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async applyWorkspaceMigrations(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     workspaceMigrationsDir: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment | null> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     let names: string[];
     try {
       names = (await readdir(input.workspaceMigrationsDir))
@@ -512,6 +554,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       try {
         return await this.migrate({
           projectId: input.projectId,
+          ...(input.environmentId ? { environmentId: input.environmentId } : {}),
           migrationPath: `supabase/migrations/${fresh.at(-1)!}`,
           ...(input.approval ? { approval: input.approval } : {}),
         });
@@ -582,9 +625,11 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
    */
   async verifySchema(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     tables: SchemaTable[];
   }): Promise<SchemaVerification> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     const sql = this.#sqlClientFactory(await this.#databaseUrl(environment));
     try {
       const [tableRows, columnRows, rlsRows, policyRows] = await Promise.all([
@@ -656,15 +701,20 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
   }
 
-  async seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment> {
-    const environment = await this.#require(input.projectId);
+  async seed(input: {
+    projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
+    seedPath: string;
+  }): Promise<AppEnvironment> {
+    const environment = await this.#require(targetFrom(input));
     await requireContainedFile(environment.workdir, input.seedPath);
     await this.#execute('seed', 'seed', '--workdir', environment.workdir, '--yes');
     return this.#touch(environment);
   }
 
-  async health(projectId: string): Promise<AppEnvironment> {
-    const environment = await this.#require(projectId);
+  async health(target: EnvironmentTarget): Promise<AppEnvironment> {
+    const environment = await this.#require(target);
     const result = await this.#execute(
       'health',
       'status',
@@ -687,20 +737,25 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async reset(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<AppEnvironment> {
     requireDestructiveConfirmation(input.confirmation, this.#now());
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     await this.#execute('reset', 'db', 'reset', '--workdir', environment.workdir, '--yes');
     return this.#touch(environment);
   }
 
   async cleanup(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<void> {
     requireDestructiveConfirmation(input.confirmation, this.#now());
-    const environment = await this.#read(input.projectId);
+    const target = resolveTarget(targetFrom(input));
+    const environment = await this.#read(target);
     if (!environment) return;
     await this.#execute(
       'cleanup',
@@ -710,15 +765,20 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       '--no-backup',
       '--yes',
     );
-    await rm(environment.workdir, { recursive: true, force: true });
+    await rm(target.environmentId ? environmentRoot(this.#dataDir, target) : environment.workdir, {
+      recursive: true,
+      force: true,
+    });
   }
 
   async deployFunction(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     functionPath: string;
     artifact: FunctionArtifact;
   }): Promise<FunctionVersion> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     const artifact = FunctionArtifactSchema.parse(input.artifact);
     if (input.functionPath !== `supabase/functions/${artifact.name}`) {
       throw new ValidationError('Function source path must match supabase/functions/<name>.');
@@ -737,41 +797,38 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       artifact,
       createdAt: this.#now().toISOString(),
     });
-    await storeFunctionVersion(this.#dataDir, environment.projectId, version, files);
-    await activateFunctionVersion(
-      this.#dataDir,
-      environment.workdir,
-      environment.projectId,
-      version,
-      files,
-    );
+    const root = this.#root(input);
+    await storeFunctionVersion(root, version, files);
+    await activateFunctionVersion(root, environment.workdir, version, files);
     await this.#touch(environment);
     return version;
   }
 
   async listFunctionVersions(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     functionName: string;
   }): Promise<FunctionVersion[]> {
-    const environment = await this.#require(input.projectId);
+    // Kept for its side effect: an unknown environment must fail as such
+    // rather than come back as an empty version list.
+    await this.#require(targetFrom(input));
     const functionName = parsePathSegment('function name', input.functionName);
-    return readFunctionVersions(this.#dataDir, environment.projectId, functionName);
+    return readFunctionVersions(this.#root(input), functionName);
   }
 
   async rollbackFunction(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     functionName: string;
     versionId: string;
   }): Promise<FunctionVersion> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     const functionName = parsePathSegment('function name', input.functionName);
     const versionId = parsePathSegment('version ID', input.versionId);
-    const manifestPath = functionVersionManifestPath(
-      this.#dataDir,
-      environment.projectId,
-      functionName,
-      versionId,
-    );
+    const root = this.#root(input);
+    const manifestPath = functionVersionManifestPath(root, functionName, versionId);
     let version: FunctionVersion;
     try {
       version = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
@@ -782,44 +839,33 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       throw error;
     }
     const files = await collectFunctionFiles(
-      functionVersionFilesDir(this.#dataDir, environment.projectId, functionName, versionId),
+      functionVersionFilesDir(root, functionName, versionId),
     );
     if (functionChecksum(files) !== version.checksum) {
       throw new ValidationError('Stored function version failed checksum verification.');
     }
-    await activateFunctionVersion(
-      this.#dataDir,
-      environment.workdir,
-      environment.projectId,
-      version,
-      files,
-    );
+    await activateFunctionVersion(root, environment.workdir, version, files);
     await this.#touch(environment);
     return version;
   }
 
   async invokeFunction(input: {
     projectId: string;
+    /** Addresses one environment of the project; absent means the legacy root. */
+    environmentId?: string;
     functionName: string;
     body?: string;
     headers?: Record<string, string>;
   }): Promise<FunctionInvocationResult> {
-    const environment = await this.#require(input.projectId);
+    const environment = await this.#require(targetFrom(input));
     const functionName = parsePathSegment('function name', input.functionName);
+    const root = this.#root(input);
     let current: FunctionVersion;
     try {
       const pointer = JSON.parse(
-        await readFile(
-          currentFunctionVersionPath(this.#dataDir, environment.projectId, functionName),
-          'utf8',
-        ),
+        await readFile(currentFunctionVersionPath(root, functionName), 'utf8'),
       ) as { versionId: string };
-      const manifestPath = functionVersionManifestPath(
-        this.#dataDir,
-        environment.projectId,
-        functionName,
-        pointer.versionId,
-      );
+      const manifestPath = functionVersionManifestPath(root, functionName, pointer.versionId);
       current = FunctionVersionSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')));
     } catch (error) {
       if (isNotFound(error)) {
@@ -837,7 +883,20 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
     return withSpan(
       'function.invoke',
-      { 'function.name': functionName, 'project.id': environment.projectId },
+      {
+        'function.name': functionName,
+        'project.id': environment.projectId,
+        'foundry.project.id': environment.projectId,
+        ...(environment.identity
+          ? {
+              'foundry.environment.id': environment.identity.environmentId,
+              'foundry.environment.class': environment.identity.class,
+              ...(environment.identity.class === 'manual-preview'
+                ? { 'foundry.environment.migration.digest': environment.identity.migrationDigest }
+                : { 'foundry.project.version.id': environment.identity.projectVersionId }),
+            }
+          : {}),
+      },
       async (span) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), current.artifact.timeoutMs);
@@ -874,15 +933,24 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     );
   }
 
-  async #read(projectId: string): Promise<AppEnvironment | null> {
-    const safeId = parsePathSegment('project ID', projectId);
-    const path = metadataPath(this.#dataDir, safeId);
+  async #read(target: EnvironmentTarget | ResolvedTarget): Promise<AppEnvironment | null> {
+    const resolved = resolveTarget(target);
+    const path = metadataPath(this.#dataDir, resolved);
     try {
       const environment = AppEnvironmentSchema.parse(JSON.parse(await readFile(path, 'utf8')));
+      if (
+        (resolved.environmentId === undefined && environment.identity !== undefined) ||
+        (resolved.environmentId !== undefined &&
+          environment.identity?.environmentId !== resolved.environmentId)
+      ) {
+        throw new ValidationError(
+          `Project environment "${targetKey(resolved)}" metadata names a different identity.`,
+        );
+      }
       return AppEnvironmentSchema.parse({
         ...environment,
-        projectId: safeId,
-        ...projectResources(this.#dataDir, safeId),
+        projectId: resolved.projectId,
+        ...projectResources(this.#dataDir, resolved),
       });
     } catch (error) {
       if (isNotFound(error)) return null;
@@ -890,10 +958,19 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
   }
 
-  async #require(projectId: string): Promise<AppEnvironment> {
-    const environment = await this.#read(projectId);
+  /** Root of the addressed environment's own state on disk. Everything a
+   * caller stores per environment — today the function version history —
+   * hangs off it, never off the bare project. */
+  #root(input: { projectId: string; environmentId?: string }): string {
+    return environmentRoot(this.#dataDir, resolveTarget(targetFrom(input)));
+  }
+
+  async #require(target: EnvironmentTarget | ResolvedTarget): Promise<AppEnvironment> {
+    const environment = await this.#read(target);
     if (!environment)
-      throw new ValidationError(`Project environment "${projectId}" is not initialized.`);
+      throw new ValidationError(
+        `Project environment "${targetKey(resolveTarget(target))}" is not initialized.`,
+      );
     return environment;
   }
 
@@ -938,15 +1015,21 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   /**
-   * Writes the generated app's Supabase connection credentials into its
-   * per-project .env (ADR 0033/0034) so NodePreviewRunner's SecretStore
-   * resolves them into the dev-server subprocess. Merges with, rather than
-   * overwrites, any operator-set secrets already in that file.
+   * Writes the generated app's Supabase connection credentials into the
+   * addressed environment's own .env (ADR 0033/0034) so NodePreviewRunner's
+   * SecretStore resolves them into the dev-server subprocess. Merges with,
+   * rather than overwrites, any operator-set secrets already in that file.
+   * The file hangs off environmentRoot(), so two classes of one project never
+   * overwrite each other's credentials (#617); FileSecretStore still layers
+   * the project-level file underneath for the operator's own secrets.
    */
-  async #writeAppSecrets(projectId: string, credentials: SupabaseAppCredentials): Promise<void> {
-    // dirname(path) (dataDir/projects/projectId) already exists: #initialize
+  async #writeAppSecrets(
+    resolved: ResolvedTarget,
+    credentials: SupabaseAppCredentials,
+  ): Promise<void> {
+    // dirname(path) (the environment root) already exists: #initialize
     // mkdir's workdir, a child of it, before this is ever called.
-    const path = projectEnvPath(this.#dataDir, projectId);
+    const path = environmentEnvPath(this.#dataDir, resolved);
     let existing = '';
     try {
       existing = await readFile(path, 'utf8');
@@ -982,29 +1065,74 @@ function parsePathSegment(label: string, value: string): string {
   return result.data;
 }
 
-function environmentDir(dataDir: string, projectId: string): string {
-  return join(dataDir, 'projects', projectId, 'environment');
+/** Resolved address of one environment. `environmentId` absent means the
+ * legacy single-environment root, which is unknown class, never `accepted`. */
+interface ResolvedTarget {
+  projectId: string;
+  environmentId?: string;
 }
 
-function projectResources(dataDir: string, projectId: string) {
-  const composeProjectName = `supabase_${projectId}`;
+function resolveTarget(target: EnvironmentTarget | ResolvedTarget): ResolvedTarget {
+  if (typeof target === 'string') return { projectId: parsePathSegment('project ID', target) };
+  const projectId = parsePathSegment('project ID', target.projectId);
+  return target.environmentId === undefined
+    ? { projectId }
+    : { projectId, environmentId: parsePathSegment('environment ID', target.environmentId) };
+}
+
+/** Key for in-process maps and for the message a caller reads. Distinct per
+ * environment, so two classes of one project never share an in-flight
+ * initialization. */
+function targetKey(target: ResolvedTarget): string {
+  return target.environmentId ? `${target.projectId}/${target.environmentId}` : target.projectId;
+}
+
+function targetFrom(input: { projectId: string; environmentId?: string }): EnvironmentTarget {
+  return input.environmentId !== undefined
+    ? { projectId: input.projectId, environmentId: input.environmentId }
+    : input.projectId;
+}
+
+/** ADR 0080 requires directory, compose project, network, and volume to be
+ * candidate-aware, and everything one environment owns hangs off this root:
+ * its Supabase workdir and its function version history. A legacy address
+ * keeps `projects/<id>`, so an existing install resolves unchanged; an
+ * explicit environment gets `projects/<id>/environments/<environmentId>`,
+ * which can never collide with the legacy root or with a sibling. */
+function environmentRoot(dataDir: string, target: ResolvedTarget): string {
+  return target.environmentId
+    ? join(dataDir, 'projects', target.projectId, 'environments', target.environmentId)
+    : join(dataDir, 'projects', target.projectId);
+}
+
+function environmentDir(dataDir: string, target: ResolvedTarget): string {
+  return join(environmentRoot(dataDir, target), 'environment');
+}
+
+function projectResources(dataDir: string, target: ResolvedTarget) {
+  const composeProjectName = target.environmentId
+    ? `supabase_env_${sha256(`${target.projectId}\0${target.environmentId}`)}`
+    : `supabase_${target.projectId}`;
   return {
     composeProjectName,
-    workdir: environmentDir(dataDir, projectId),
+    workdir: environmentDir(dataDir, target),
     network: `${composeProjectName}_network`,
     volumes: [`${composeProjectName}_db_data`],
   };
 }
 
-function metadataPath(dataDir: string, projectId: string): string {
-  return join(environmentDir(dataDir, projectId), 'environment.json');
+function metadataPath(dataDir: string, target: ResolvedTarget): string {
+  return join(environmentDir(dataDir, target), 'environment.json');
 }
 
-// A sibling of environmentDir, matching WorkspaceManager.projectRoot
-// (packages/persistence/src/workspace-manager.ts) — outside the git-tracked
-// workspace/ directory by construction (ADR 0033).
-function projectEnvPath(dataDir: string, projectId: string): string {
-  return join(dataDir, 'projects', projectId, '.env');
+// A sibling of the environment's own workdir — outside the git-tracked
+// workspace/ directory by construction (ADR 0033). A legacy address keeps
+// <projectRoot>/.env, matching WorkspaceManager.projectRoot
+// (packages/persistence/src/workspace-manager.ts); an explicit environment
+// gets its own file, which FileSecretStore reads for exactly that
+// environmentId (packages/persistence/src/secret-store.ts).
+function environmentEnvPath(dataDir: string, target: ResolvedTarget): string {
+  return join(environmentRoot(dataDir, target), '.env');
 }
 
 /** `supabase status --output json`'s DB_URL — never `start`'s stdout, which
@@ -1221,48 +1349,36 @@ function functionChecksum(files: FunctionFile[]): string {
   return sha256(Buffer.concat(parts));
 }
 
-function functionVersionsDir(dataDir: string, projectId: string, functionName: string): string {
-  return join(dataDir, 'projects', projectId, 'functions', functionName, 'versions');
+// Function state is keyed by the environment root, not by the project: a
+// candidate deploy must not rewrite the accepted stack's version list or its
+// current pointer (#617). The legacy root is still `projects/<id>`, so an
+// existing install's `functions/` directory resolves unchanged.
+function functionVersionsDir(root: string, functionName: string): string {
+  return join(root, 'functions', functionName, 'versions');
 }
 
 function functionVersionManifestPath(
-  dataDir: string,
-  projectId: string,
+  root: string,
   functionName: string,
   versionId: string,
 ): string {
-  return join(functionVersionsDir(dataDir, projectId, functionName), `${versionId}.json`);
+  return join(functionVersionsDir(root, functionName), `${versionId}.json`);
 }
 
-function functionVersionFilesDir(
-  dataDir: string,
-  projectId: string,
-  functionName: string,
-  versionId: string,
-): string {
-  return join(functionVersionsDir(dataDir, projectId, functionName), versionId);
+function functionVersionFilesDir(root: string, functionName: string, versionId: string): string {
+  return join(functionVersionsDir(root, functionName), versionId);
 }
 
-function currentFunctionVersionPath(
-  dataDir: string,
-  projectId: string,
-  functionName: string,
-): string {
-  return join(dataDir, 'projects', projectId, 'functions', functionName, 'current.json');
+function currentFunctionVersionPath(root: string, functionName: string): string {
+  return join(root, 'functions', functionName, 'current.json');
 }
 
 async function storeFunctionVersion(
-  dataDir: string,
-  projectId: string,
+  root: string,
   version: FunctionVersion,
   files: FunctionFile[],
 ): Promise<void> {
-  const versionDir = functionVersionFilesDir(
-    dataDir,
-    projectId,
-    version.functionName,
-    version.versionId,
-  );
+  const versionDir = functionVersionFilesDir(root, version.functionName, version.versionId);
   await mkdir(versionDir, { recursive: true });
   await Promise.all(
     files.map(async (file) => {
@@ -1272,17 +1388,16 @@ async function storeFunctionVersion(
     }),
   );
   await atomicWrite(
-    functionVersionManifestPath(dataDir, projectId, version.functionName, version.versionId),
+    functionVersionManifestPath(root, version.functionName, version.versionId),
     `${JSON.stringify(version, null, 2)}\n`,
   );
 }
 
 async function readFunctionVersions(
-  dataDir: string,
-  projectId: string,
+  root: string,
   functionName: string,
 ): Promise<FunctionVersion[]> {
-  const dir = functionVersionsDir(dataDir, projectId, functionName);
+  const dir = functionVersionsDir(root, functionName);
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -1315,9 +1430,8 @@ function liveFunctionDir(workdir: string, functionName: string): string {
 }
 
 async function activateFunctionVersion(
-  dataDir: string,
+  root: string,
   workdir: string,
-  projectId: string,
   version: FunctionVersion,
   files: FunctionFile[],
 ): Promise<void> {
@@ -1333,7 +1447,7 @@ async function activateFunctionVersion(
   );
   await writeFunctionConfigSection(workdir, version.functionName, version.artifact);
   await atomicWrite(
-    currentFunctionVersionPath(dataDir, projectId, version.functionName),
+    currentFunctionVersionPath(root, version.functionName),
     `${JSON.stringify({ versionId: version.versionId }, null, 2)}\n`,
   );
 }
@@ -1468,7 +1582,14 @@ async function requireMigrationApproval(
   }
   let manifest: MigrationBackup;
   try {
-    const path = backupManifestPath(dataDir, environment.projectId, parsed.backup.manifestId);
+    const environmentId = environment.identity?.environmentId;
+    if (parsed.backup.environmentId !== environmentId) throw new Error('environment mismatch');
+    const path = backupManifestPath(
+      dataDir,
+      environment.projectId,
+      environmentId,
+      parsed.backup.manifestId,
+    );
     manifest = MigrationBackupSchema.parse(JSON.parse(await readFile(path, 'utf8')));
   } catch {
     throw new ValidationError(
@@ -1495,12 +1616,18 @@ async function requireMigrationApproval(
   }
 }
 
-function backupManifestPath(dataDir: string, projectId: string, manifestId: string): string {
+function backupManifestPath(
+  dataDir: string,
+  projectId: string,
+  environmentId: string | undefined,
+  manifestId: string,
+): string {
+  const projectRoot = join(dataDir, 'migration-backups', parsePathSegment('project ID', projectId));
   return join(
-    dataDir,
-    'migration-backups',
-    parsePathSegment('project ID', projectId),
-    `${parsePathSegment('project ID', manifestId)}.json`,
+    environmentId
+      ? join(projectRoot, 'environments', parsePathSegment('environment ID', environmentId))
+      : projectRoot,
+    `${parsePathSegment('manifest ID', manifestId)}.json`,
   );
 }
 
@@ -1649,28 +1776,53 @@ async function allocatePorts(
   throw new Error('No isolated Supabase host port block is available.');
 }
 
-async function usedPorts(dataDir: string, excludingWorkdir: string): Promise<Set<number>> {
-  const used = new Set<number>();
+/** Every environment on disk, legacy root and explicit roots alike. Port
+ * allocation and the environment listing both need the whole set: a candidate
+ * stack living outside `projects/<id>/environment` is invisible to a scan of
+ * that root alone, and invisible means it gets handed a port block already in
+ * use (#617). */
+async function environmentTargets(dataDir: string): Promise<ResolvedTarget[]> {
   let projects;
   try {
     projects = await readdir(join(dataDir, 'projects'), { withFileTypes: true });
   } catch (error) {
-    if (isNotFound(error)) return used;
+    if (isNotFound(error)) return [];
     throw error;
   }
+  const targets: ResolvedTarget[] = [];
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    targets.push({ projectId: project.name });
+    let environments;
+    try {
+      environments = await readdir(join(dataDir, 'projects', project.name, 'environments'), {
+        withFileTypes: true,
+      });
+    } catch (error) {
+      if (isNotFound(error)) continue;
+      throw error;
+    }
+    for (const environment of environments) {
+      if (!environment.isDirectory()) continue;
+      targets.push({ projectId: project.name, environmentId: environment.name });
+    }
+  }
+  return targets;
+}
+
+async function usedPorts(dataDir: string, excludingWorkdir: string): Promise<Set<number>> {
+  const used = new Set<number>();
   await Promise.all(
-    projects
-      .filter((entry) => entry.isDirectory())
-      .map(async (entry) => {
-        const workdir = environmentDir(dataDir, entry.name);
-        if (workdir === excludingWorkdir) return;
-        try {
-          const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
-          for (const port of configuredHostPorts(config)) used.add(port);
-        } catch (error) {
-          if (!isNotFound(error)) throw error;
-        }
-      }),
+    (await environmentTargets(dataDir)).map(async (target) => {
+      const workdir = environmentDir(dataDir, target);
+      if (workdir === excludingWorkdir) return;
+      try {
+        const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
+        for (const port of configuredHostPorts(config)) used.add(port);
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }),
   );
   return used;
 }

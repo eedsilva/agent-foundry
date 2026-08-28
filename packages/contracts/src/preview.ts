@@ -73,6 +73,9 @@ export type PreviewTtl = z.infer<typeof PreviewTtlSchema>;
 export const PreviewWorkspaceRefSchema = z
   .object({
     projectId: PathSegmentSchema,
+    /** Which environment's credentials this preview runs against (#617).
+     * Absent means the legacy single-environment root, never a class. */
+    environmentId: PathSegmentSchema.optional(),
     workspacePath: z.string().min(1),
     gitRef: z.string().min(1).optional(),
   })

@@ -284,6 +284,38 @@ describe('NodePreviewRunner', () => {
     expect(await canConnect(port)).toBe(false);
   }, 10_000);
 
+  it('resolves secrets for the environment the session names, not the bare project', async () => {
+    const asked: Array<[string, string | undefined]> = [];
+    const secretStore = {
+      resolveAll: async (projectId: string, environmentId?: string) => {
+        asked.push([projectId, environmentId]);
+        return { ANON_KEY: `key-for-${environmentId ?? 'legacy'}` };
+      },
+    };
+    const runner = new NodePreviewRunner({ secretStore });
+    let session = await newSession('sess-secret-environment');
+    session = {
+      ...session,
+      workspaceRef: { ...session.workspaceRef, environmentId: 'candidate-7f3a' },
+      commandPlan: {
+        packageManager: 'npm',
+        install: { ok: true, command: 'npm', args: ['ci'] },
+        build: { ok: true, command: 'npm', args: ['run', 'build'] },
+        dev: { ok: true, command: 'node', args: [FIXTURE_SCRIPT] },
+        detectedAt: new Date().toISOString(),
+      },
+    };
+    session = await startTracked(runner, session);
+
+    const response = await fetch(`http://127.0.0.1:${session.process!.port!}/echo-env`);
+    const env = await response.json();
+
+    // A preview booted against the candidate stack must never run with the
+    // accepted stack's credentials (ADR 0080 / #617).
+    expect(asked).toEqual([['proj-1', 'candidate-7f3a']]);
+    expect(env.ANON_KEY).toBe('key-for-candidate-7f3a');
+  }, 10_000);
+
   it('injects resolved secret values into the dev server process, scoped to a safe base env', async () => {
     const originalDatabaseUrl = process.env.DATABASE_URL;
     process.env.DATABASE_URL = 'postgres://control-plane-only-leak-canary';

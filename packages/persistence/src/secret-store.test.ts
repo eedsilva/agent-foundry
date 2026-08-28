@@ -22,6 +22,58 @@ describe('FileSecretStore', () => {
     });
   });
 
+  it("reads one environment's own secrets over the shared project file", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-secrets-'));
+    const projectRoot = join(dataDir, 'projects', 'project-1');
+    const acceptedRoot = join(projectRoot, 'environments', 'env-accepted');
+    const candidateRoot = join(projectRoot, 'environments', 'env-candidate');
+    await mkdir(acceptedRoot, { recursive: true });
+    await mkdir(candidateRoot, { recursive: true });
+    await writeFile(join(projectRoot, '.env'), 'OPERATOR_KEY=set-by-hand\nANON_KEY=accepted-key\n');
+    await writeFile(join(acceptedRoot, '.env'), 'ANON_KEY=accepted-key\n');
+    await writeFile(join(candidateRoot, '.env'), 'ANON_KEY=candidate-key\n');
+    const store = new FileSecretStore({ projectRoot: () => projectRoot });
+
+    // The candidate preview must never resolve the sibling's credential, and
+    // the operator's own project-level secret still reaches both.
+    await expect(store.resolveAll('project-1', 'env-candidate')).resolves.toEqual({
+      OPERATOR_KEY: 'set-by-hand',
+      ANON_KEY: 'candidate-key',
+    });
+    await expect(store.resolveAll('project-1', 'env-accepted')).resolves.toEqual({
+      OPERATOR_KEY: 'set-by-hand',
+      ANON_KEY: 'accepted-key',
+    });
+    await expect(store.names('project-1', 'env-candidate')).resolves.toEqual([
+      'OPERATOR_KEY',
+      'ANON_KEY',
+    ]);
+  });
+
+  it('rejects an environment id that escapes the project root', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-secrets-'));
+    const projectRoot = join(dataDir, 'projects', 'project-1');
+    const victimRoot = join(dataDir, 'projects', 'victim');
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(victimRoot, { recursive: true });
+    await writeFile(join(victimRoot, '.env'), 'LEAK=proved\n');
+    const store = new FileSecretStore({ projectRoot: () => projectRoot });
+
+    await expect(store.resolveAll('project-1', '../../victim')).rejects.toThrow();
+  });
+
+  it('fails closed when an explicitly addressed environment has no secrets file', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-secrets-'));
+    const projectRoot = join(dataDir, 'projects', 'project-1');
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(join(projectRoot, '.env'), 'NEXT_PUBLIC_SUPABASE_ANON_KEY=legacy-key\n');
+    const store = new FileSecretStore({ projectRoot: () => projectRoot });
+
+    await expect(store.resolveAll('project-1', 'candidate-1')).rejects.toThrow(
+      /candidate-1.*secrets/i,
+    );
+  });
+
   it('returns empty results when the project has no .env file yet', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-secrets-'));
     const store = new FileSecretStore({ projectRoot: () => join(dataDir, 'projects', 'p2') });

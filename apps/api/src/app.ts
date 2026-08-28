@@ -997,8 +997,16 @@ export async function buildApp(
     const project = await runtime.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     await runtime.workspaces.ensure(projectId);
+    const environmentId = project.currentRunId
+      ? (await runtime.orchestrator.environmentTargetForRun(projectId, project.currentRunId))
+          .environmentId
+      : undefined;
     const { session, url } = await runtime.previewService.start({
-      workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+      workspaceRef: {
+        projectId,
+        ...(environmentId ? { environmentId } : {}),
+        workspacePath: runtime.workspaces.workspacePath(projectId),
+      },
       ...(project.currentRunId ? { runId: project.currentRunId } : {}),
     });
     return reply.status(202).send({ session, url });
@@ -1006,9 +1014,19 @@ export async function buildApp(
 
   app.get('/projects/:projectId/preview/active', async (request) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const project = await runtime.projects.get(projectId);
+    if (!project) throw new NotFoundError(`Project ${projectId} not found`);
+    const environmentId = project.currentRunId
+      ? (await runtime.orchestrator.environmentTargetForRun(projectId, project.currentRunId))
+          .environmentId
+      : undefined;
     const active = await runtime.previewSessions.listActive();
     const projectSessions = active
-      .filter((record) => record.session.workspaceRef.projectId === projectId)
+      .filter(
+        (record) =>
+          record.session.workspaceRef.projectId === projectId &&
+          record.session.workspaceRef.environmentId === environmentId,
+      )
       .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
     return { session: projectSessions[0]?.session ?? null };
   });

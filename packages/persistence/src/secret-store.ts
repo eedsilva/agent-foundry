@@ -1,26 +1,67 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse as parseDotEnv } from 'dotenv';
-import type { SecretStore, WorkspaceManager } from '@agent-foundry/domain';
+import { PathSegmentSchema } from '@agent-foundry/contracts';
+import { ValidationError, type SecretStore, type WorkspaceManager } from '@agent-foundry/domain';
+
+const ENVIRONMENT_MANAGED_KEYS = [
+  'NEXT_PUBLIC_SUPABASE_URL',
+  'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+] as const;
 
 export class FileSecretStore implements SecretStore {
   constructor(private readonly workspaces: Pick<WorkspaceManager, 'projectRoot'>) {}
 
-  async names(projectId: string): Promise<string[]> {
-    return Object.keys(await this.readEnvFile(projectId));
+  async names(projectId: string, environmentId?: string): Promise<string[]> {
+    return Object.keys(await this.readEnvFiles(projectId, environmentId));
   }
 
-  async resolveAll(projectId: string): Promise<Record<string, string>> {
-    return this.readEnvFile(projectId);
+  async resolveAll(projectId: string, environmentId?: string): Promise<Record<string, string>> {
+    return this.readEnvFiles(projectId, environmentId);
   }
 
-  private async readEnvFile(projectId: string): Promise<Record<string, string>> {
-    const path = join(this.workspaces.projectRoot(projectId), '.env');
+  /**
+   * Project-level secrets are the operator's (nothing writes them
+   * automatically); the addressed environment's own file carries the
+   * credentials SupabaseGeneratedProjectRuntime wrote for that stack, so it
+   * wins on conflict. A candidate preview therefore never resolves the
+   * accepted stack's keys, which is the isolation ADR 0080 requires (#617).
+   */
+  private async readEnvFiles(
+    projectId: string,
+    environmentId?: string,
+  ): Promise<Record<string, string>> {
+    const projectRoot = this.workspaces.projectRoot(projectId);
+    const project = await this.readEnvFile(join(projectRoot, '.env'));
+    if (environmentId === undefined) return project;
+    const environment = PathSegmentSchema.parse(environmentId);
+    const hasLegacyRuntimeSecrets = ENVIRONMENT_MANAGED_KEYS.some(
+      (key) => project[key] !== undefined,
+    );
+    const environmentSecrets = await this.readEnvFile(
+      join(projectRoot, 'environments', environment, '.env'),
+      hasLegacyRuntimeSecrets ? `Environment ${environment} secrets are missing.` : undefined,
+    );
+    for (const key of ENVIRONMENT_MANAGED_KEYS) delete project[key];
+    return {
+      ...project,
+      ...environmentSecrets,
+    };
+  }
+
+  private async readEnvFile(
+    path: string,
+    missingMessage?: string,
+  ): Promise<Record<string, string>> {
     let raw: string;
     try {
       raw = await readFile(path, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (missingMessage) throw new ValidationError(missingMessage);
+        return {};
+      }
       throw error;
     }
     return parseDotEnv(raw);

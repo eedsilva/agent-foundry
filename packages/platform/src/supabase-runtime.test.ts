@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dirname, join, resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { EnvironmentOperationError, MigrationApprovalRequiredError } from '@agent-foundry/domain';
 import {
   destructiveStatements,
@@ -787,7 +791,16 @@ enabled = false`);
       return statusCommand(...args);
     });
     const { runtime } = fixture(command);
-    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const environment = await runtime.initialize({
+      projectId: 'project-a',
+      identity: {
+        class: 'candidate',
+        projectId: 'project-a',
+        environmentId: 'candidate-a',
+        runCandidateId: 'run-a',
+        projectVersionId: 'version-a',
+      },
+    });
     const workspaceDir = join(dataDir, 'workspace-migrations');
     await mkdir(workspaceDir, { recursive: true });
     await writeFile(
@@ -802,6 +815,7 @@ enabled = false`);
     await expect(
       runtime.applyWorkspaceMigrations({
         projectId: 'project-a',
+        environmentId: 'candidate-a',
         workspaceMigrationsDir: workspaceDir,
       }),
     ).resolves.toMatchObject({ projectId: 'project-a' });
@@ -1204,6 +1218,72 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
     expect(command).not.toHaveBeenCalled();
   });
 
+  it('does not accept one environment backup as another environment provenance', async () => {
+    const command = dumpingCommand();
+    const { runtime } = fixture(command);
+    const candidate = await runtime.initialize({
+      projectId: 'project-a',
+      identity: {
+        class: 'candidate',
+        projectId: 'project-a',
+        environmentId: 'candidate-a',
+        runCandidateId: 'run-a',
+        projectVersionId: 'version-a',
+      },
+    });
+    const accepted = await runtime.initialize({
+      projectId: 'project-a',
+      identity: {
+        class: 'accepted',
+        projectId: 'project-a',
+        environmentId: 'accepted-a',
+        projectVersionId: 'version-b',
+      },
+    });
+    await mkdir(join(candidate.workdir, 'supabase', 'backups'), { recursive: true });
+    const backup = await runtime.backupMigration({
+      projectId: 'project-a',
+      environmentId: 'candidate-a',
+      backupPath: 'supabase/backups/candidate.sql',
+    });
+    expect(backup).toMatchObject({ environmentId: 'candidate-a' });
+    await expect(
+      readFile(
+        join(
+          dataDir,
+          'migration-backups',
+          'project-a',
+          'environments',
+          'candidate-a',
+          `${backup.manifestId}.json`,
+        ),
+        'utf8',
+      ),
+    ).resolves.toContain('candidate-a');
+
+    const migrationPath = await writeMigration(
+      accepted.workdir,
+      '20260723120700_drop_tasks.sql',
+      'DROP TABLE tasks;',
+    );
+    const preview = await runtime.previewMigration({
+      projectId: 'project-a',
+      environmentId: 'accepted-a',
+      migrationPath,
+    });
+    command.mockClear();
+
+    await expect(
+      runtime.migrate({
+        projectId: 'project-a',
+        environmentId: 'accepted-a',
+        migrationPath,
+        approval: { migrationChecksum: preview.checksum, backup },
+      }),
+    ).rejects.toThrow(/provenance/i);
+    expect(command).not.toHaveBeenCalled();
+  });
+
   it('runs seed only for a path contained by the project workdir', async () => {
     const { command, runtime } = fixture();
     const environment = await runtime.initialize({ projectId: 'project-a' });
@@ -1269,6 +1349,37 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
     );
     await expect(stat(first.workdir)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(stat(second.workdir)).resolves.toBeDefined();
+  });
+
+  it('removes one explicit environment root without touching its sibling', async () => {
+    const { runtime } = fixture();
+    const identity = (environmentId: string) =>
+      ({
+        class: 'candidate',
+        projectId: 'project-a',
+        environmentId,
+        runCandidateId: `run-${environmentId}`,
+        projectVersionId: `version-${environmentId}`,
+      }) as const;
+    const first = await runtime.initialize({
+      projectId: 'project-a',
+      identity: identity('candidate-a'),
+    });
+    const second = await runtime.initialize({
+      projectId: 'project-a',
+      identity: identity('candidate-b'),
+    });
+    const firstRoot = dirname(first.workdir);
+    await expect(stat(join(firstRoot, '.env'))).resolves.toBeDefined();
+
+    await runtime.cleanup({
+      projectId: 'project-a',
+      environmentId: 'candidate-a',
+      confirmation: { confirmed: true, backupCreatedAt: '2026-07-22T11:00:00.000Z' },
+    });
+
+    await expect(stat(firstRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(dirname(second.workdir))).resolves.toBeDefined();
   });
 
   it('never trusts persisted metadata to redirect cleanup outside the project environment', async () => {
@@ -1705,6 +1816,14 @@ describe('function deployment', () => {
 describe('function invocation', () => {
   let server: Server;
   let apiPort: number;
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+
+  beforeAll(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    provider.register();
+  });
 
   beforeEach(async () => {
     server = createServer((req, res) => {
@@ -1743,6 +1862,12 @@ describe('function invocation', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    exporter.reset();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    trace.disable();
   });
 
   function invokeCommand(...args: string[]) {
@@ -1772,6 +1897,46 @@ describe('function invocation', () => {
       body: 'hi',
       durationMs: expect.any(Number),
       timedOut: false,
+    });
+  });
+
+  it('records project, environment, class and source version on the invocation span', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const identity = {
+      class: 'candidate',
+      projectId: 'invoke-candidate',
+      environmentId: 'candidate-1',
+      runCandidateId: 'run-1',
+      projectVersionId: 'version-1',
+    } as const;
+    const environment = await runtime.initialize({ projectId: identity.projectId, identity });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'hello');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+    await runtime.deployFunction({
+      projectId: identity.projectId,
+      environmentId: identity.environmentId,
+      functionPath: 'supabase/functions/hello',
+      artifact: FUNCTION_ARTIFACT,
+    });
+
+    await runtime.invokeFunction({
+      projectId: identity.projectId,
+      environmentId: identity.environmentId,
+      functionName: 'hello',
+    });
+
+    expect(
+      exporter.getFinishedSpans().find((span) => span.name === 'function.invoke')?.attributes,
+    ).toMatchObject({
+      'foundry.project.id': identity.projectId,
+      'foundry.environment.id': identity.environmentId,
+      'foundry.environment.class': identity.class,
+      'foundry.project.version.id': identity.projectVersionId,
     });
   });
 
@@ -2176,23 +2341,27 @@ describe('explicit environment identity (#616)', () => {
 
   it('keeps a persisted identity in the file every lifecycle write rewrites', async () => {
     const { runtime } = fixture();
-    const initialized = await runtime.initialize({ projectId: 'project-a' });
-    await writeFile(
-      metadataPath('project-a'),
-      `${JSON.stringify({ ...initialized, identity: IDENTITY }, null, 2)}\n`,
+    const path = join(
+      dataDir,
+      'projects',
+      'project-a',
+      'environments',
+      IDENTITY.environmentId,
+      'environment',
+      'environment.json',
     );
+    await runtime.initialize({ projectId: 'project-a', identity: IDENTITY });
+    const target = { projectId: 'project-a', environmentId: IDENTITY.environmentId };
 
-    const inspected = await runtime.inspect('project-a');
-    const stopped = await runtime.stop('project-a');
-    const restarted = await runtime.initialize({ projectId: 'project-a' });
+    const inspected = await runtime.inspect(target);
+    const stopped = await runtime.stop(target);
+    const restarted = await runtime.initialize({ projectId: 'project-a', identity: IDENTITY });
 
     expect(inspected?.identity).toEqual(IDENTITY);
     expect(stopped.identity).toEqual(IDENTITY);
     expect(restarted.identity).toEqual(IDENTITY);
     // The artifact, not the return value: what a later process actually reads.
-    expect(JSON.parse(await readFile(metadataPath('project-a'), 'utf8')).identity).toEqual(
-      IDENTITY,
-    );
+    expect(JSON.parse(await readFile(path, 'utf8')).identity).toEqual(IDENTITY);
   });
 
   it('reads and rewrites a record written before identity existed without inventing one', async () => {
@@ -2223,5 +2392,375 @@ describe('explicit environment identity (#616)', () => {
     );
 
     await expect(runtime.inspect('project-a')).rejects.toThrow();
+  });
+
+  it('refuses classified identity metadata at the unaddressed legacy root', async () => {
+    const { runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a' });
+    await writeFile(
+      metadataPath('project-a'),
+      `${JSON.stringify({ ...initialized, identity: IDENTITY }, null, 2)}\n`,
+    );
+
+    await expect(runtime.inspect('project-a')).rejects.toThrow(/identity/i);
+  });
+});
+
+describe('callers address one environment, not one project (#617)', () => {
+  const CANDIDATE = {
+    class: 'candidate',
+    projectId: 'project-a',
+    environmentId: 'candidate-7f3a',
+    runCandidateId: 'run-candidate-42',
+    projectVersionId: 'version-19',
+  } as const;
+
+  const ACCEPTED = {
+    class: 'accepted',
+    projectId: 'project-a',
+    environmentId: 'accepted-0b21',
+    projectVersionId: 'version-20',
+  } as const;
+
+  const environmentMetadata = (projectId: string, environmentId: string) =>
+    join(
+      dataDir,
+      'projects',
+      projectId,
+      'environments',
+      environmentId,
+      'environment',
+      'environment.json',
+    );
+
+  async function hostPorts(workdir: string): Promise<number[]> {
+    const config = await readFile(join(workdir, 'supabase', 'config.toml'), 'utf8');
+    return HOST_PORT_FIELDS.map(([section, key]) => configPort(config, section, key));
+  }
+
+  it('keeps one class Supabase credentials out of the other class .env', async () => {
+    const { runtime } = fixture();
+    const envPath = (environmentId: string) =>
+      join(dataDir, 'projects', 'project-a', 'environments', environmentId, '.env');
+
+    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    const candidateEnv = await readFile(envPath(CANDIDATE.environmentId), 'utf8');
+    const acceptedEnv = await readFile(envPath(ACCEPTED.environmentId), 'utf8');
+    expect(candidateEnv).toContain(`NEXT_PUBLIC_SUPABASE_URL=${candidate.endpoints.api}`);
+    expect(acceptedEnv).toContain(`NEXT_PUBLIC_SUPABASE_URL=${accepted.endpoints.api}`);
+    // The sibling's API endpoint is what a shared file would have left behind:
+    // the last initialize() wins and the other class's preview reads it.
+    expect(candidateEnv).not.toContain(accepted.endpoints.api);
+    expect(acceptedEnv).not.toContain(candidate.endpoints.api);
+    // Nothing addressed by identity may write the legacy shared file.
+    await expect(
+      readFile(join(dataDir, 'projects', 'project-a', '.env'), 'utf8'),
+    ).rejects.toThrow();
+  });
+
+  it('gives two classes of one project separate directory, compose project, network and volume', async () => {
+    const { runtime } = fixture();
+
+    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    expect(candidate.workdir).not.toBe(accepted.workdir);
+    expect(candidate.composeProjectName).not.toBe(accepted.composeProjectName);
+    expect(candidate.network).not.toBe(accepted.network);
+    expect(candidate.volumes).not.toEqual(accepted.volumes);
+    expect(candidate.identity).toEqual(CANDIDATE);
+    expect(accepted.identity).toEqual(ACCEPTED);
+    // The compose project name is what the container runtime keys on, and it
+    // reaches the CLI as config.toml's project_id — same name, same stack.
+    expect(projectIdsAtStart).toEqual([candidate.composeProjectName, accepted.composeProjectName]);
+
+    // Par negativo: bringing the second one up left the first one's record
+    // intact on disk — not overwritten, not erased.
+    const persistedCandidate = JSON.parse(
+      await readFile(environmentMetadata('project-a', CANDIDATE.environmentId), 'utf8'),
+    );
+    expect(persistedCandidate.identity).toEqual(CANDIDATE);
+    expect(persistedCandidate.workdir).toBe(candidate.workdir);
+    expect(
+      JSON.parse(await readFile(environmentMetadata('project-a', ACCEPTED.environmentId), 'utf8'))
+        .identity,
+    ).toEqual(ACCEPTED);
+  });
+
+  it('does not alias a legacy project and an explicit environment in Compose', async () => {
+    const { runtime } = fixture();
+
+    const legacy = await runtime.initialize({ projectId: 'a_b' });
+    const explicit = await runtime.initialize({
+      projectId: 'a',
+      identity: {
+        class: 'candidate',
+        projectId: 'a',
+        environmentId: 'b',
+        runCandidateId: 'run-a',
+        projectVersionId: 'version-a',
+      },
+    });
+
+    expect(explicit.composeProjectName).not.toBe(legacy.composeProjectName);
+    expect(explicit.network).not.toBe(legacy.network);
+    expect(explicit.volumes).not.toEqual(legacy.volumes);
+  });
+
+  it('fails closed before touching a stack bound to another project version', async () => {
+    let now = NOW;
+    const { command, runtime } = fixture(undefined, { now: () => new Date(now) });
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const path = environmentMetadata('project-a', CANDIDATE.environmentId);
+    const before = await readFile(path, 'utf8');
+    command.mockClear();
+    now = new Date(NOW.getTime() + 1_000);
+
+    await expect(
+      runtime.initialize({
+        projectId: 'project-a',
+        identity: { ...CANDIDATE, projectVersionId: 'version-20' },
+      }),
+    ).rejects.toThrow(/identity/i);
+
+    expect(command).not.toHaveBeenCalled();
+    await expect(readFile(path, 'utf8')).resolves.toBe(before);
+  });
+
+  it('rejects explicit operations with an empty environment id before any command', async () => {
+    const { command, runtime } = fixture();
+    const legacy = await runtime.initialize({ projectId: 'project-a' });
+    const migrationPath = await writeMigration(
+      legacy.workdir,
+      '20260723120000_create_tasks.sql',
+      'CREATE TABLE tasks (id bigint PRIMARY KEY);',
+    );
+    command.mockClear();
+
+    await expect(
+      runtime.previewMigration({ projectId: 'project-a', environmentId: '', migrationPath }),
+    ).rejects.toThrow();
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('rejects metadata whose identity names a sibling environment', async () => {
+    const { command, runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const path = environmentMetadata('project-a', CANDIDATE.environmentId);
+    const persisted = JSON.parse(await readFile(path, 'utf8'));
+    await writeFile(
+      path,
+      `${JSON.stringify(
+        { ...persisted, identity: { ...CANDIDATE, environmentId: 'candidate-sibling' } },
+        null,
+        2,
+      )}\n`,
+    );
+    command.mockClear();
+
+    await expect(
+      runtime.stop({ projectId: 'project-a', environmentId: CANDIDATE.environmentId }),
+    ).rejects.toThrow(/identity/i);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('reuses the same identity when it arrives from another JavaScript realm', async () => {
+    const { command, runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    command.mockClear();
+
+    const sameIdentity = runInNewContext(`(${JSON.stringify(CANDIDATE)})`) as typeof CANDIDATE;
+
+    await expect(
+      runtime.initialize({ projectId: 'project-a', identity: sameIdentity }),
+    ).resolves.toEqual(initialized);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('recreates a manual preview when its migration digest changes', async () => {
+    const { command, runtime } = fixture();
+    const identity = {
+      class: 'manual-preview',
+      projectId: 'project-a',
+      environmentId: 'preflight',
+      migrationDigest: checksum('first'),
+    } as const;
+    const first = await runtime.initialize({ projectId: 'project-a', identity });
+    const functionDir = join(first.workdir, 'supabase', 'functions', 'hello');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("old");\n');
+    const oldVersion = await runtime.deployFunction({
+      projectId: 'project-a',
+      environmentId: identity.environmentId,
+      functionPath: 'supabase/functions/hello',
+      artifact: FUNCTION_ARTIFACT,
+    });
+    command.mockClear();
+
+    const recreated = await runtime.initialize({
+      projectId: 'project-a',
+      identity: { ...identity, migrationDigest: checksum('second') },
+    });
+
+    expect(recreated.identity).toMatchObject({
+      class: 'manual-preview',
+      migrationDigest: checksum('second'),
+    });
+    expect(command.mock.calls.some(([operation]) => operation === 'stop')).toBe(true);
+    expect(command.mock.calls.some(([operation]) => operation === 'init')).toBe(true);
+    await expect(
+      runtime.listFunctionVersions({
+        projectId: 'project-a',
+        environmentId: identity.environmentId,
+        functionName: 'hello',
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      runtime.rollbackFunction({
+        projectId: 'project-a',
+        environmentId: identity.environmentId,
+        functionName: 'hello',
+        versionId: oldVersion.versionId,
+      }),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it('allocates ports against every environment root, not just the legacy one', async () => {
+    // The allocator prefers a block derived from the compose project name, and
+    // two environments only ever contend for one when their preferences meet.
+    // Restating that hash here would pin the test to today's formula, so ask
+    // the allocator instead: in an empty data dir it hands project-b exactly
+    // the block it prefers.
+    const probeDir = await mkdtemp(join(tmpdir(), 'agent-foundry-ports-'));
+    try {
+      const probe = new SupabaseGeneratedProjectRuntime({
+        dataDir: probeDir,
+        command: vi.fn<SupabaseCommand>(statusCommand),
+        now: () => new Date(NOW),
+        sqlClientFactory: fakeSqlClient({}, { urls: [], ended: false }),
+      });
+      const probed = await probe.initialize({ projectId: 'project-b' });
+      const preferred = await hostPorts(probed.workdir);
+
+      const { runtime } = fixture();
+      const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+      const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+      // A candidate stack living outside projects/<id>/environment now holds
+      // the block project-b wants. Its config is copied, not hand-written, so
+      // the reader under test is the one production uses.
+      await copyFile(
+        join(probed.workdir, 'supabase', 'config.toml'),
+        join(candidate.workdir, 'supabase', 'config.toml'),
+      );
+
+      const legacy = await runtime.initialize({ projectId: 'project-b' });
+      const allocated = await hostPorts(legacy.workdir);
+
+      // Par negativo: a scan limited to projects/<id>/environment cannot see
+      // the candidate, and invisible means project-b is handed a block already
+      // in use.
+      expect(allocated.filter((port) => preferred.includes(port))).toEqual([]);
+      const everything = [preferred, await hostPorts(accepted.workdir), allocated].flat();
+      expect(new Set(everything).size).toBe(everything.length);
+    } finally {
+      await rm(probeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops exactly the environment it was given', async () => {
+    const { runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    const stopped = await runtime.stop({
+      projectId: 'project-a',
+      environmentId: CANDIDATE.environmentId,
+    });
+
+    expect(stopped.identity).toEqual(CANDIDATE);
+    expect(stopped.health.state).toBe('stopped');
+    // Par negativo: the sibling is still running, in the artifact a later
+    // process reads, not only in the return value.
+    const sibling = await runtime.inspect({
+      projectId: 'project-a',
+      environmentId: ACCEPTED.environmentId,
+    });
+    expect(sibling?.identity).toEqual(ACCEPTED);
+    expect(sibling?.health.state).not.toBe('stopped');
+    expect(
+      JSON.parse(await readFile(environmentMetadata('project-a', ACCEPTED.environmentId), 'utf8'))
+        .health.state,
+    ).not.toBe('stopped');
+  });
+
+  it('lists legacy and explicit environments together', async () => {
+    const { runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    await runtime.initialize({ projectId: 'project-b' });
+
+    const environments = await runtime.listEnvironments();
+
+    expect(
+      environments.map((environment) => environment.identity?.environmentId ?? null).sort(),
+    ).toEqual([CANDIDATE.environmentId, null].sort());
+  });
+
+  it('keeps one class function history out of the other', async () => {
+    const { runtime } = fixture();
+    const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const accepted = await runtime.initialize({ projectId: 'project-a', identity: ACCEPTED });
+
+    const deploy = async (workdir: string, environmentId: string, body: string) => {
+      const dir = join(workdir, 'supabase', 'functions', 'hello');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'index.ts'), body);
+      return runtime.deployFunction({
+        projectId: 'project-a',
+        environmentId,
+        functionPath: 'supabase/functions/hello',
+        artifact: FUNCTION_ARTIFACT,
+      });
+    };
+    const versions = async (environmentId: string) =>
+      (
+        await runtime.listFunctionVersions({
+          projectId: 'project-a',
+          environmentId,
+          functionName: 'hello',
+        })
+      ).map((version) => version.versionId);
+
+    const candidateVersion = await deploy(
+      candidate.workdir,
+      CANDIDATE.environmentId,
+      'export default () => new Response("candidate");\n',
+    );
+    const acceptedVersion = await deploy(
+      accepted.workdir,
+      ACCEPTED.environmentId,
+      'export default () => new Response("accepted");\n',
+    );
+
+    // Par negativo: keyed by project id, both deploys land in one history and
+    // the second one silently becomes the first one's current version.
+    expect(await versions(CANDIDATE.environmentId)).toEqual([candidateVersion.versionId]);
+    expect(await versions(ACCEPTED.environmentId)).toEqual([acceptedVersion.versionId]);
+    await expect(
+      runtime.rollbackFunction({
+        projectId: 'project-a',
+        environmentId: ACCEPTED.environmentId,
+        functionName: 'hello',
+        versionId: candidateVersion.versionId,
+      }),
+    ).rejects.toThrow(/was not found/);
+  });
+
+  it('refuses an identity that names another project', async () => {
+    const { runtime } = fixture();
+    await expect(
+      runtime.initialize({ projectId: 'project-b', identity: CANDIDATE }),
+    ).rejects.toThrow(/same project/);
   });
 });

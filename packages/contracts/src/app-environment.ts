@@ -48,6 +48,8 @@ export type MigrationPreview = z.infer<typeof MigrationPreviewSchema>;
 export const MigrationBackupSchema = z
   .object({
     path: z.string().min(1),
+    /** Environment that produced the dump; absent only for the legacy project root. */
+    environmentId: PathSegmentSchema.optional(),
     checksum: Sha256Schema,
     schemaChecksum: Sha256Schema,
     dataChecksum: Sha256Schema,
@@ -166,3 +168,13 @@ export const AppEnvironmentSchema = z
     }
   });
 export type AppEnvironment = z.infer<typeof AppEnvironmentSchema>;
+
+/**
+ * How a caller addresses one environment. A bare project id is the legacy
+ * address ADR 0080 replaces: it names the single pre-#617 environment root and
+ * stays valid because "remove legacy compatibility" is out of scope for #617.
+ * The object form names the exact environment, which is what lets two classes
+ * of the same project coexist without sharing a directory, compose project,
+ * network, or volume.
+ */
+export type EnvironmentTarget = string | { projectId: string; environmentId: string };

@@ -154,6 +154,15 @@ describe('preview cleanup on run failure (#579)', () => {
       { previews },
     );
     await seedRun(harness);
+    await harness.events.append({
+      id: 'legacy-other-run',
+      projectId: 'project-1',
+      runId: 'run-1',
+      type: 'project.provisioned',
+      createdAt: NOW,
+      message: 'Legacy project provisioning completed.',
+      data: {},
+    });
 
     await expect(
       harness.orchestrator.runProject('project-1', undefined, 'run-1'),
@@ -184,6 +193,15 @@ describe('preview cleanup on run failure (#579)', () => {
       { previews },
     );
     await seedRun(harness);
+    await harness.events.append({
+      id: 'legacy-manual-preview',
+      projectId: 'project-1',
+      runId: 'run-1',
+      type: 'project.provisioned',
+      createdAt: NOW,
+      message: 'Legacy project provisioning completed.',
+      data: {},
+    });
 
     await expect(
       harness.orchestrator.runProject('project-1', undefined, 'run-1'),

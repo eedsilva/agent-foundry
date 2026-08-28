@@ -835,13 +835,15 @@ describe('validation evidence publication', () => {
         },
       ],
     });
+    const secretStore = new FakeSecretStore({
+      NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-secret',
+    });
+    const resolveAll = vi.spyOn(secretStore, 'resolveAll');
     const harness = makeHarness({}, undefined, {
       workflow,
       validationCampaign: campaign,
-      secretStore: new FakeSecretStore({
-        NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
-        SUPABASE_SERVICE_ROLE_KEY: 'service-role-secret',
-      }),
+      secretStore,
       verification: () => ({
         schemaVersion: '1',
         approved: true,
@@ -997,6 +999,7 @@ describe('validation evidence publication', () => {
       NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-secret',
     });
+    expect(resolveAll).toHaveBeenCalledWith('project-1', 'run-1');
     expect(harness.artifacts.named('database.evidence')).toHaveLength(1);
   });
 

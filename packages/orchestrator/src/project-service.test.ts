@@ -35,6 +35,23 @@ describe('ProjectService.get', () => {
   });
 });
 
+describe('ProjectService.retry', () => {
+  it('is a no-op while the current run is still queued', async () => {
+    const harness = makeHarness();
+    const created = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+
+    const retried = await harness.service.retry(created.id);
+
+    expect(retried.currentRunId).toBe(created.currentRunId);
+    expect(harness.enqueued).toHaveLength(1);
+  });
+});
+
 describe('ProjectService.create', () => {
   it('persists the operator-selected canonical project directory before queueing', async () => {
     const harness = makeHarness();
@@ -549,7 +566,18 @@ describe('ProjectService.create', () => {
     });
     await worker.runOnce();
 
-    expect(initialize).toHaveBeenCalledWith({ projectId: 'id-0001' });
+    // Provisioning names the candidate stack it creates, never the bare
+    // project (#617): the run owns the environment and the ledger entry.
+    expect(initialize).toHaveBeenCalledWith({
+      projectId: 'id-0001',
+      identity: {
+        class: 'candidate',
+        projectId: 'id-0001',
+        environmentId: 'id-0002',
+        runCandidateId: 'id-0002',
+        projectVersionId: expect.any(String),
+      },
+    });
     expect((await harness.events.list('id-0001')).map((event) => event.type)).toEqual(
       expect.arrayContaining(['project.provisioning_started', 'project.provisioned']),
     );
@@ -712,6 +740,7 @@ describe('ProjectService.create workspace boot', () => {
     expect(start).toHaveBeenCalledWith({
       workspaceRef: {
         projectId: 'id-0001',
+        environmentId: 'id-0002',
         workspacePath: harness.workspaces.workspacePath('id-0001'),
       },
       runId: 'id-0002',
@@ -726,6 +755,15 @@ describe('ProjectService.create workspace boot', () => {
               command: 'pnpm',
               args: ['install', '--frozen-lockfile'],
               versions: { node: 'v22.22.3', packageManager: '10.30.1' },
+            },
+            // Recorded so a resumed run reports the same environment and
+            // source version without re-resolving a moved HEAD (#617).
+            environment: {
+              class: 'candidate',
+              projectId: 'id-0001',
+              environmentId: 'id-0002',
+              runCandidateId: 'id-0002',
+              projectVersionId: expect.any(String),
             },
           },
         }),
@@ -941,7 +979,18 @@ describe('ProjectService.create workspace boot', () => {
   it('does not boot a second preview when the project already has a live session', async () => {
     const start = vi.fn();
     const harness = makeHarness({}, makeStores(), {
-      previews: { start, activeForProject: async () => previewSession() },
+      previews: {
+        start,
+        activeForProject: async () =>
+          previewSession({
+            runId: 'id-0002',
+            workspaceRef: {
+              projectId: 'id-0001',
+              environmentId: 'id-0002',
+              workspacePath: '/tmp/ws',
+            },
+          }),
+      },
     });
 
     await harness.service.create({
@@ -958,8 +1007,45 @@ describe('ProjectService.create workspace boot', () => {
     ).toBe(true);
   });
 
+  it('boots the candidate preview when only a legacy project preview is live', async () => {
+    const start = vi.fn(async (input: { workspaceRef: PreviewWorkspaceRef; runId?: string }) => ({
+      session: previewSession({
+        workspaceRef: input.workspaceRef,
+        ...(input.runId ? { runId: input.runId } : {}),
+      }),
+      url: 'http://127.0.0.1/preview/preview-1/?token=t',
+    }));
+    const harness = makeHarness({}, makeStores(), {
+      previews: {
+        start,
+        activeForProject: async (_projectId, environmentId) =>
+          environmentId === undefined ? previewSession() : undefined,
+      },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
+    });
+    await runWorker(harness);
+
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'id-0002',
+        workspaceRef: expect.objectContaining({ environmentId: 'id-0002' }),
+      }),
+    );
+  });
+
   it('retries a failed step without reprovisioning the generated runtime', async () => {
-    const initialize = vi.fn(async () => ENVIRONMENT);
+    let initialized: AppEnvironment | undefined;
+    const initialize = vi.fn(
+      async (input: { projectId: string; identity?: AppEnvironment['identity'] }) =>
+        (initialized = { ...ENVIRONMENT, ...(input.identity ? { identity: input.identity } : {}) }),
+    );
+    const listEnvironments = vi.fn(async () => (initialized ? [initialized] : []));
     const unused = () => Promise.reject(new Error('unused test runtime operation'));
     const harness = makeHarness(
       // A plain executor failure is now ADR-0073's Technical Retry (#604): a
@@ -976,7 +1062,7 @@ describe('ProjectService.create workspace boot', () => {
           start: unused,
           stop: unused,
           inspect: unused,
-          listEnvironments: unused,
+          listEnvironments,
           previewMigration: unused,
           applyWorkspaceMigrations: unused,
           verifySchema: unused,
@@ -1016,7 +1102,10 @@ describe('ProjectService.create workspace boot', () => {
     harness.queueForWorker(harness.enqueued[0]!);
     await worker.runOnce();
 
-    expect(initialize).toHaveBeenCalledTimes(1);
+    // The retry verifies the persisted binding, then uses initialize's
+    // idempotent recovery path; it must not ask for a different environment.
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(initialize.mock.calls[1]).toEqual(initialize.mock.calls[0]);
     expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'completed' });
   });
 });

@@ -449,7 +449,7 @@ export class ProjectService {
 
   async retry(projectId: string, input?: RetryProjectRequest): Promise<Project> {
     const project = await this.requireProject(projectId);
-    if (project.status === 'running') return project;
+    if (project.status === 'running' || project.status === 'queued') return project;
     const previousRun = project.currentRunId ? await this.runs.get(project.currentRunId) : null;
     if (
       project.error === INITIALIZATION_INTERRUPTED ||

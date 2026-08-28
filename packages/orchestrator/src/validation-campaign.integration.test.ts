@@ -588,7 +588,11 @@ const taskRetryPlan: AgentArtifact = {
  */
 async function seedTaskCampaignRun(
   behaviors: Record<string, StepBehavior> = {},
-  options: { existingStores?: Stores; models?: typeof models } = {},
+  options: {
+    existingStores?: Stores;
+    models?: typeof models;
+    versions?: ReturnType<typeof makeHarness>['versions'];
+  } = {},
 ) {
   // Passing existingStores rebuilds the orchestrator over a run that is already
   // seeded and part-executed — the seam a restart or a drifted catalog needs.
@@ -640,6 +644,7 @@ async function seedTaskCampaignRun(
     validationEvidence: evidence,
     previews: { start: previewStart, activeForProject: async () => undefined },
     agentOutput: (request) => (request.stepId === 'plan' ? taskRetryPlan : undefined),
+    ...(options.versions ? { versions: options.versions } : {}),
   });
   if (!options.existingStores) await seedCampaignRun(harness);
   return { stores, harness, evidence, previewStart };
@@ -838,6 +843,7 @@ describe('targeted preserve retry (#396)', () => {
       {},
       {
         existingStores: stores,
+        versions: harness.versions,
         models: models.map((model, index) =>
           index === 0
             ? ModelDefinitionSchema.parse({ ...model, model: 'campaign-model-1-renamed' })

@@ -213,6 +213,57 @@ function makeService() {
 }
 
 describe('ProjectVersionService', () => {
+  describe('baselineForRun', () => {
+    it('records the scaffold commit exactly once and reuses it on replay', async () => {
+      const { service, versions } = makeService();
+
+      const baseline = await service.baselineForRun('project-1', 'run-1', 'commit-scaffold');
+
+      expect(baseline.sequence).toBe(1);
+      expect(baseline.kind).toBe('run');
+      expect(baseline.runId).toBe('run-1');
+      expect(baseline.commit).toBe('commit-scaffold');
+      expect(versions.store.size).toBe(1);
+
+      // Replay of the same run at the same HEAD appends nothing.
+      const replay = await service.baselineForRun('project-1', 'run-1', 'commit-scaffold');
+      expect(replay.id).toBe(baseline.id);
+      expect(versions.store.size).toBe(1);
+    });
+
+    it('reuses the run own entry at the new HEAD once steps have committed', async () => {
+      const { service, versions } = makeService();
+      await service.baselineForRun('project-1', 'run-1', 'commit-scaffold');
+      const step = await service.recordFromStep({
+        projectId: 'project-1',
+        runId: 'run-1',
+        stepRunId: 'step-1',
+        attemptId: 'attempt-1',
+        commit: 'commit-a',
+      });
+
+      const resumed = await service.baselineForRun('project-1', 'run-1', 'commit-a');
+
+      expect(resumed.id).toBe(step.id);
+      expect(versions.store.size).toBe(2);
+    });
+
+    it('fails closed when history holds no entry for this run at HEAD', async () => {
+      const { service, versions } = makeService();
+      await service.baselineForRun('project-1', 'run-1', 'commit-scaffold');
+
+      // Another run's stack may not borrow run-1's commit binding, and a HEAD
+      // the ledger does not name may not be bound at all.
+      await expect(service.baselineForRun('project-1', 'run-2', 'commit-scaffold')).rejects.toThrow(
+        /no entry for run run-2/,
+      );
+      await expect(service.baselineForRun('project-1', 'run-1', 'commit-moved')).rejects.toThrow(
+        /HEAD commit-moved/,
+      );
+      expect(versions.store.size).toBe(1);
+    });
+  });
+
   describe('recordFromStep', () => {
     it('builds sequence 1 then 2 on successive calls', async () => {
       const { service } = makeService();

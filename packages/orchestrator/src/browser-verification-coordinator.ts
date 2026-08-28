@@ -26,6 +26,7 @@ import type { PreviewService } from './preview-service.js';
 
 export interface BrowserVerificationInput {
   projectId: string;
+  environmentId?: string;
   workspacePath: string;
   runId: string;
   plan: StoredArtifact;
@@ -53,10 +54,17 @@ export class BrowserVerificationCoordinator {
     signal: AbortSignal,
     onSessionStarted?: (sessionId: string) => Promise<void>,
   ): Promise<BrowserVerificationReport> {
-    const active = await this.previews.activeForProject(input.projectId);
+    const active = await this.previews.activeForProject(
+      input.projectId,
+      input.environmentId ?? null,
+    );
     if (active) await this.previews.stop(active.id);
     const started = await this.previews.start({
-      workspaceRef: { projectId: input.projectId, workspacePath: input.workspacePath },
+      workspaceRef: {
+        projectId: input.projectId,
+        ...(input.environmentId !== undefined ? { environmentId: input.environmentId } : {}),
+        workspacePath: input.workspacePath,
+      },
       runId: input.runId,
     });
     if (!started.url || !['running', 'unhealthy'].includes(started.session.status)) {

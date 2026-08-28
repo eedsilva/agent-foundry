@@ -43,6 +43,7 @@ import {
   type ValidationPreflightReport,
   type WorkflowDefinition,
   type WorkflowRun,
+  type ProjectVersion,
 } from '@agent-foundry/contracts';
 import {
   ExecutionError,
@@ -82,6 +83,7 @@ import {
   type SystemPromptRepository,
   type Tx,
   type TransactionRunner,
+  type ProjectVersionRepository,
   type VerificationService,
   type WorkflowRepository,
   type WorkflowRunRepository,
@@ -89,7 +91,7 @@ import {
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
-import type { ProjectVersionService } from '../project-version-service.js';
+import { ProjectVersionService } from '../project-version-service.js';
 import type { QualityObservationService } from '../quality-observation-service.js';
 import type { ValidationEvidencePublisher } from '../validation-evidence.js';
 import { WorkflowOrchestrator, type WorkspacePreviewBooter } from '../workflow-orchestrator.js';
@@ -581,6 +583,21 @@ export class InMemoryEvents implements EventStore {
   }
   list(projectId: string): Promise<ProjectEvent[]> {
     return Promise.resolve(this.events.filter((event) => event.projectId === projectId));
+  }
+  findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    return Promise.resolve(
+      [...this.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.projectId === projectId &&
+            event.type === query.type &&
+            (query.runId === undefined || event.runId === query.runId),
+        ) ?? null,
+    );
   }
   types(): string[] {
     return this.events.map((event) => event.type);
@@ -1232,6 +1249,48 @@ export interface Stores {
   scaffoldFiles: { value: Array<{ path: string; content: string }> };
 }
 
+/**
+ * The version ledger every orchestrator gets by default: provisioning binds a
+ * run's environment to a ProjectVersion (#617), so a harness without a ledger
+ * cannot boot a stack at all.
+ */
+export class InMemoryProjectVersions implements ProjectVersionRepository {
+  readonly store = new Map<string, ProjectVersion>();
+  create(version: ProjectVersion): Promise<void> {
+    this.store.set(`${version.projectId}/${version.id}`, { ...version });
+    return Promise.resolve();
+  }
+  discardUnpromoted(version: ProjectVersion): Promise<void> {
+    this.store.delete(`${version.projectId}/${version.id}`);
+    return Promise.resolve();
+  }
+  get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
+    return Promise.resolve(this.store.get(`${projectId}/${versionId}`) ?? null);
+  }
+  list(projectId: string, limit?: number): Promise<ProjectVersion[]> {
+    const all = [...this.store.values()]
+      .filter((version) => version.projectId === projectId)
+      .sort((left, right) => right.sequence - left.sequence);
+    return Promise.resolve(limit ? all.slice(0, limit) : all);
+  }
+  update(version: ProjectVersion, expectedVersion: number): Promise<ProjectVersion> {
+    const key = `${version.projectId}/${version.id}`;
+    const existing = this.store.get(key);
+    if (!existing) throw new Error(`version ${version.id} missing`);
+    if (existing.version !== expectedVersion) {
+      throw new VersionConflictError(
+        'project-version',
+        version.id,
+        expectedVersion,
+        existing.version,
+      );
+    }
+    const updated = { ...version, version: expectedVersion + 1 };
+    this.store.set(key, updated);
+    return Promise.resolve({ ...updated });
+  }
+}
+
 export function makeStores(clock: Clock = new SystemClock()): Stores {
   const power: PowerSwitch = { on: true };
   return {
@@ -1300,6 +1359,17 @@ export function makeHarness(
 ) {
   const stores = existing ?? makeStores();
   const ids = new SequentialIds();
+  // Provisioning binds the run's environment to a ProjectVersion (#617), so a
+  // ledger is not optional for any harness that boots a stack.
+  const versions =
+    opts.versions ??
+    new ProjectVersionService(
+      new InMemoryProjectVersions(),
+      stores.workspaces,
+      stores.artifacts,
+      stores.clock,
+      ids,
+    );
   const models = opts.models ?? MODELS;
   const configuredExecutorHealth =
     opts.executorHealth ??
@@ -1503,7 +1573,7 @@ export function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
     stores.modelOverrides,
-    opts.versions,
+    versions,
     opts.browserVerification,
     opts.qualityObservationService,
     executorRegistry,
@@ -1543,6 +1613,7 @@ export function makeHarness(
     ids,
     executor,
     workflow,
+    versions,
     orchestrator,
     service,
     enqueued,

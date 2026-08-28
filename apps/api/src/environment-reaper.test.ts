@@ -94,7 +94,17 @@ describe('sweepIdleEnvironments', () => {
 
     expect(count).toBe(1);
     expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
-    expect(log.info).toHaveBeenCalledWith({ projectId: 'proj-1' }, expect.any(String));
+    expect(log.info).toHaveBeenCalledWith(
+      // Project, environment and bound version (#617). A record written
+      // before identity existed reports the last two as unknown.
+      {
+        projectId: 'proj-1',
+        environmentId: null,
+        environmentClass: null,
+        projectVersionId: null,
+      },
+      expect.any(String),
+    );
     expect(deps.listNonTerminalRuns).toHaveBeenCalledWith('proj-1');
     expect(deps.withProjectLock).toHaveBeenCalledWith('proj-1', expect.any(Function));
   });
@@ -208,5 +218,102 @@ describe('sweepIdleEnvironments', () => {
     await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
 
     expect(deps.listActive).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('addressing one environment, not one project (#617)', () => {
+  const CANDIDATE = {
+    class: 'candidate',
+    projectId: 'proj-1',
+    environmentId: 'candidate-7f3a',
+    runCandidateId: 'run-candidate-42',
+    projectVersionId: 'version-19',
+  } as const;
+
+  it('stops the exact environment it swept, not the project', async () => {
+    const candidate = environment({
+      updatedAt: '2026-08-14T11:00:00.000Z',
+      identity: CANDIDATE,
+    });
+    const deps = makeDeps({ environments: [candidate] });
+
+    await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
+
+    // Par negativo: a bare project id would stop whichever stack the legacy
+    // root resolves to, which with two classes in one project is a coin flip.
+    expect(deps.stopMock).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      environmentId: CANDIDATE.environmentId,
+    });
+  });
+
+  it('keeps addressing a pre-identity record by project id', async () => {
+    const legacy = environment({ updatedAt: '2026-08-14T11:00:00.000Z' });
+    const deps = makeDeps({ environments: [legacy] });
+
+    await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
+
+    expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('logs project, environment and bound version, and invents neither', async () => {
+    const log = logger();
+    const deps = makeDeps({
+      environments: [
+        environment({ updatedAt: '2026-08-14T11:00:00.000Z', identity: CANDIDATE }),
+        environment({
+          projectId: 'proj-2',
+          workdir: '/tmp/proj-2',
+          updatedAt: '2026-08-14T11:00:00.000Z',
+        }),
+      ],
+    });
+
+    await sweepIdleEnvironments(deps, IDLE_MS, NOW, log);
+
+    expect(log.info).toHaveBeenCalledWith(
+      {
+        projectId: 'proj-1',
+        environmentId: CANDIDATE.environmentId,
+        environmentClass: 'candidate',
+        projectVersionId: CANDIDATE.projectVersionId,
+      },
+      'Stopped idle environment',
+    );
+    // Identity absent means unknown, never `accepted` (#616).
+    expect(log.info).toHaveBeenCalledWith(
+      {
+        projectId: 'proj-2',
+        environmentId: null,
+        environmentClass: null,
+        projectVersionId: null,
+      },
+      'Stopped idle environment',
+    );
+  });
+
+  it('logs a manual preview migration digest as its source version', async () => {
+    const migrationDigest = 'd'.repeat(64);
+    const log = logger();
+    const deps = makeDeps({
+      environments: [
+        environment({
+          updatedAt: '2026-08-14T11:00:00.000Z',
+          identity: {
+            class: 'manual-preview',
+            projectId: 'proj-1',
+            environmentId: 'manual-1',
+            migrationDigest,
+          },
+        }),
+      ],
+    });
+
+    await sweepIdleEnvironments(deps, IDLE_MS, NOW, log);
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ migrationDigest }),
+      'Stopped idle environment',
+    );
   });
 });

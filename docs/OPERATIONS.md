@@ -898,15 +898,20 @@ resolves 8.5.x in the same workspace) and `sharp` to `>=0.35.0` (GHSA-f88m-g3jw-
 libvips CVEs). The scaffold ships email/password auth wired end to end (`apps/web`) against its own isolated local
 Supabase stack. `SupabaseGeneratedProjectRuntime#initialize`
 (`packages/platform/src/supabase-runtime.ts`) writes the stack's `NEXT_PUBLIC_SUPABASE_URL`,
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` into the same per-project `.env`
-described in "Segredos do app (por projeto)" above (ADR 0034) — it is a second, automated writer of
-that file alongside any operator-set secrets; existing keys are preserved, not overwritten. Email
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` into the candidate's environment-
+scoped `.env` at `DATA_DIR/projects/<projectId>/environments/<environmentId>/.env` (ADR 0080).
+The legacy root keeps `DATA_DIR/projects/<projectId>/.env` for compatibility and remains unknown-class;
+it is never inferred to be accepted. Existing keys are preserved, not overwritten. Email
 confirmation is disabled in the generated `config.toml` (no SMTP in v1), so signup returns an active
 session immediately, same as sign-in.
 
 Password reset is deliberately **not** self-service (`docs/PRODUCT_CONTRACT.md`). To reset a user's
-password as an administrator, use the service-role key from the project's `.env` against the local
-GoTrue admin API:
+password as an administrator, use the service-role key from the addressed environment's
+`DATA_DIR/projects/<projectId>/environments/<environmentId>/.env` against its local GoTrue admin
+API. Use `DATA_DIR/projects/<projectId>/.env` only for an explicit pre-#617 legacy environment. If
+that legacy file contains Supabase credentials, `FileSecretStore` rejects a missing environment-
+scoped file instead of falling back; without runtime credentials it may still return operator-only
+secrets, which are insufficient for this reset workflow:
 
 ```bash
 curl -X PUT "$NEXT_PUBLIC_SUPABASE_URL/auth/v1/admin/users/<user-id>" \
@@ -1125,9 +1130,12 @@ Em uso local, faça snapshot de todo `DATA_DIR`, incluindo `runs/`. Para restore
 
 Para upgrade de um projeto local v0.x já existente, siga o runbook dedicado em [`docs/PERSONAL_V1_LOCAL_MIGRATION.md`](PERSONAL_V1_LOCAL_MIGRATION.md). Ele cobre preflight, inventário, backup de `DATA_DIR`/workspace, migração forward-only, verificação, rollback somente do app e restore explícito.
 
-### Runtime local por projeto
+### Runtime local por ambiente
 
-Cada projeto greenfield possui nome de Compose, portas, rede, volumes e `.env` próprios. O lifecycle suportado é initialize, start, stop, inspect, migrate, seed, health e cleanup. Reset destrutivo exige confirmação e backup recente.
+Cada Run Candidate possui nome de Compose, portas, rede, volumes e `.env` próprios, separado de
+siblings candidate, accepted e manual-preview do mesmo projeto. O lifecycle suportado é initialize,
+start, stop, inspect, migrate, seed, health e cleanup, sempre endereçado por `projectId` +
+`environmentId`. Reset destrutivo exige confirmação e backup recente.
 
 Em `EXECUTOR_MODE=real`, a criação do projeto inicializa sua stack Supabase antes de persistir o projeto. Pré-requisitos no host:
 
@@ -1141,12 +1149,21 @@ Ambos devem terminar com sucesso. `EXECUTOR_MODE=mock` não instancia esse runti
 `SUPABASE_PROVISIONING_TIMEOUT_MS` limita quanto tempo cada inicialização pode aguardar a stack
 local ficar pronta; o padrão é `600000` ms (dez minutos). Em timeout, o runtime tenta parar a stack
 por até 30 segundos, registra um diagnóstico redigido no evento de provisioning e preserva o
-workdir parcial para inspeção/backup. Depois de corrigir Docker ou Supabase, a mesma tentativa de
-retry recolhe esse workdir antes de recriar o ambiente. Se a retenção não for mais necessária,
+workdir parcial para inspeção/backup. Depois de corrigir Docker ou Supabase, recovery da mesma run
+recolhe esse workdir; um retry explícito cria outro `WorkflowRun`, mas reutiliza a identidade e a
+stack do Run Candidate preservado. Ele nunca reclassifica ou escolhe uma stack accepted por default;
+projetos pre-#617 com evento de provisioning explicitamente legado continuam no runtime project-wide.
+Se a retenção não for mais necessária,
 faça backup do `DATA_DIR` e use o procedimento explícito de cleanup do runtime; não remova o
 diretório diretamente.
 
-O diretório autoritativo de cada runtime é `DATA_DIR/projects/<projectId>/environment/`; `environment.json` contém somente nomes de recursos, paths, portas, endpoints sem credenciais e timestamps de saúde. Nunca registre stdout/stderr bruto do Supabase, URLs de banco, JWTs ou chaves. Logs podem conter somente `EnvironmentOperationError.operation`, `exitCode` e o `diagnostic` já limitado e redigido pelo adapter.
+O diretório autoritativo de um ambiente explícito é
+`DATA_DIR/projects/<projectId>/environments/<environmentId>/environment/`; o root legado
+`DATA_DIR/projects/<projectId>/environment/` continua legível sem ganhar classe implícita.
+`environment.json` contém somente identidade, nomes de recursos, paths, portas, endpoints sem
+credenciais e timestamps de saúde. Nunca registre stdout/stderr bruto do Supabase, URLs de banco,
+JWTs ou chaves. Logs podem conter somente `EnvironmentOperationError.operation`, `exitCode` e o
+`diagnostic` já limitado e redigido pelo adapter.
 
 Use o lifecycle do `GeneratedProjectRuntime`, que fixa `--workdir`, nome de rede e validação de path. `initialize`, `start`, `stop`, `inspect` e `health` são seguros para repetição; `migrate` e `seed` aceitam somente arquivos contidos no workdir. `reset` e `cleanup` exigem `confirmed: true` e `backupCreatedAt` de um backup independente criado há no máximo 24 horas. Não execute `supabase db reset`, `supabase stop --no-backup` nem remova o workdir diretamente.
 
@@ -1154,7 +1171,8 @@ Se ocorrer `EnvironmentOperationError`:
 
 1. registre apenas operação, exit code e diagnóstico redigido;
 2. confirme `supabase --version` e `docker info`;
-3. preserve e faça backup do workdir, então rode `inspect`/`health` para reconciliar metadata e estado real;
+3. preserve e faça backup do workdir endereçado; manifests ficam separados por projeto e ambiente,
+   então rode `inspect`/`health` no mesmo alvo para reconciliar metadata e estado real;
 4. corrija o pré-requisito indicado e repita a mesma operação idempotente; para falha durante `initialize` sem `environment.json`, preserve o diretório parcial e só o remova após backup e confirmação explícita antes de tentar novamente.
 
 Migrations, autenticação, storage e functions pertencem aos issues #70–#73; não improvise esses contratos durante recuperação operacional.
@@ -1165,7 +1183,15 @@ Em `EXECUTOR_MODE=real`, o processo da API roda uma varredura periódica a cada 
 
 Um ambiente só é parado quando todas as condições a seguir são verdadeiras: seu `health.state` persistido não é `stopped`; o projeto não tem sessão de preview ativa; `updatedAt` tem pelo menos `ENVIRONMENT_IDLE_MS` (padrão `1800000` ms, 30 minutos); e nenhuma run não terminal existe para o projeto (terminal = `completed`, `failed`, `cancelled` ou `rejected`). O repositório aplica esse filtro no storage: o backend de arquivo varre todas as runs persistidas, e o backend Postgres faz a filtragem na consulta, sem janela limitada às runs mais recentes.
 
-O reaper chama somente `stop()`, nunca `cleanup()` ou `reset()`: os containers descem, mas volumes e dados sobrevivem, e o próximo passo de provisionamento do run (`initialize`) sobe a stack de novo automaticamente. Paradas são sequenciais, um projeto por vez; falha ao parar um projeto fica registrada em log e não interrompe a varredura dos demais projetos.
+O reaper chama somente `stop({ projectId, environmentId })`, nunca `cleanup()` ou `reset()`: os
+containers do alvo descem, mas volumes e dados sobrevivem, e recovery da mesma run pode subir essa
+stack novamente. A elegibilidade permanece conservadora no escopo do projeto: qualquer preview ou
+run não terminal impede stop de todos os seus ambientes. Paradas são sequenciais, um ambiente por
+vez; falha em um alvo fica registrada com project, environment e version e não interrompe os demais.
+
+Rollback do código preserva os roots explícitos e seus volumes. Não mova um environment explícito
+para o root legado e não apague diretórios para "reverter": containment é desativar o reaper e parar
+o alvo exato; cleanup/reset continuam explícitos, confirmados e condicionados a backup recente.
 
 Para desativar na prática, configure `ENVIRONMENT_IDLE_MS` com um valor muito alto.
 

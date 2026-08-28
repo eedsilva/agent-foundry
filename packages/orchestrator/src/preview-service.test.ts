@@ -59,6 +59,21 @@ class InMemoryEventStore implements EventStore {
   async list(projectId: string): Promise<ProjectEvent[]> {
     return this.events.filter((event) => event.projectId === projectId);
   }
+  async findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    return (
+      [...this.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.projectId === projectId &&
+            event.type === query.type &&
+            (query.runId === undefined || event.runId === query.runId),
+        ) ?? null
+    );
+  }
 }
 
 function failureDiagnostic(events: InMemoryEventStore): PreviewFailureDiagnostic {
@@ -277,9 +292,13 @@ async function buildService(
   return { service, runner, clock, events, sessions, artifacts, lifecycleLock };
 }
 
-async function start(service: PreviewService, runId?: string) {
+async function start(service: PreviewService, runId?: string, environmentId?: string) {
   return service.start({
-    workspaceRef: { projectId: 'project-1', workspacePath: '/tmp/project-1' },
+    workspaceRef: {
+      projectId: 'project-1',
+      ...(environmentId ? { environmentId } : {}),
+      workspacePath: '/tmp/project-1',
+    },
     ...(runId ? { runId } : {}),
   });
 }
@@ -287,12 +306,20 @@ async function start(service: PreviewService, runId?: string) {
 describe('PreviewService durable lifecycle', () => {
   it('activeForProject returns the live session for that project only', async () => {
     const { service } = await buildService();
-    const started = await start(service);
+    const started = await start(service, 'run-1', 'candidate-a');
+    const legacy = await start(service, 'run-legacy');
 
     expect((await service.activeForProject('project-1'))?.id).toBe(started.session.id);
+    expect((await service.activeForProject('project-1', 'candidate-a'))?.id).toBe(
+      started.session.id,
+    );
+    expect(await service.activeForProject('project-1', 'candidate-b')).toBeUndefined();
+    expect((await service.activeForProject('project-1', null))?.id).toBe(legacy.session.id);
     expect(await service.activeForProject('project-2')).toBeUndefined();
 
     await service.stop(started.session.id);
+    expect((await service.activeForProject('project-1'))?.id).toBe(legacy.session.id);
+    await service.stop(legacy.session.id);
     expect(await service.activeForProject('project-1')).toBeUndefined();
   });
 
@@ -328,6 +355,19 @@ describe('PreviewService durable lifecycle', () => {
     expect((await built.sessions.get(session.id))?.session).toMatchObject({
       ttl: { expiresAt: '2026-07-16T12:01:10.000Z' },
     });
+  });
+
+  it('renews the exact legacy lease without selecting an explicit sibling', async () => {
+    const built = await buildService();
+    await start(built.service, 'run-candidate', 'candidate-a');
+    const { session: legacy } = await start(built.service, 'run-legacy');
+    built.clock.advance(10_000);
+
+    await expect(built.service.renewForProject('project-1', null)).resolves.toBe(true);
+
+    expect((await built.sessions.get(legacy.id))?.session.ttl.expiresAt).toBe(
+      '2026-07-16T12:01:10.000Z',
+    );
   });
 
   it('activeForProject does not treat a failing session as live', async () => {

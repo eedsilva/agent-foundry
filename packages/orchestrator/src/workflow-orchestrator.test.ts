@@ -11,8 +11,8 @@ import {
   type AgentArtifact,
   type ArtifactReference,
   type ExecutableStep,
+  type EnvironmentIdentity,
   type ExecutorHealth,
-  type Project,
   type StoredArtifact,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
@@ -367,19 +367,14 @@ describe('ProjectVersion recording hook (#40)', () => {
 
   it('populates ExecutionRequest.secrets with declared names only, never values', async () => {
     const secretStore = new FakeSecretStore({ STRIPE_SECRET_KEY: 'sk-should-never-appear' });
+    const names = vi.spyOn(secretStore, 'names');
     const stores = makeOrchestrator(undefined, undefined, secretStore);
-    const project = {
-      id: 'project-1',
-      name: 'Test',
-      workflowId: WORKFLOW.id,
-      policyId: 'default',
-      version: 1,
-    } as Project;
-    await stores.projects.create(project);
+    await seedRun(stores);
 
-    await stores.orchestrator.runProject(project.id);
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
 
     const submitted = stores.executor.submittedExecutionRequests.at(-1);
+    expect(names).toHaveBeenCalledWith('project-1', 'run-1');
     expect(submitted?.secrets).toEqual([{ name: 'STRIPE_SECRET_KEY', ref: 'STRIPE_SECRET_KEY' }]);
     expect(JSON.stringify(submitted)).not.toContain('sk-should-never-appear');
   });
@@ -1447,7 +1442,15 @@ describe('generated database sync before browser verification (#429)', () => {
       'create table todos ();',
     );
 
-    const applyWorkspaceMigrations = vi.fn(async () => ({}) as never);
+    const applyWorkspaceMigrations = vi.fn(
+      async (_input: { projectId: string; environmentId?: string }) => ({}) as never,
+    );
+    let candidateIdentity: EnvironmentIdentity | undefined;
+    const initialize = vi.fn(async (input: { identity?: EnvironmentIdentity }) => {
+      candidateIdentity ??= input.identity;
+      return {} as never;
+    });
+    const names = vi.fn(async (_projectId: string, _environmentId?: string) => []);
     const verify = vi.fn(
       async (
         input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
@@ -1486,9 +1489,13 @@ describe('generated database sync before browser verification (#429)', () => {
       browserVerification: { verify } as never,
       generatedProjectRuntime: {
         applyWorkspaceMigrations,
-        initialize: vi.fn(async () => ({}) as never),
+        initialize,
+        listEnvironments: vi.fn(async () =>
+          candidateIdentity ? ([{ identity: candidateIdentity }] as never) : [],
+        ),
         health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
       } as never,
+      secretStore: { names } as never,
       agentOutput: (request) => {
         if (request.stepId === 'plan') {
           return {
@@ -1511,15 +1518,64 @@ describe('generated database sync before browser verification (#429)', () => {
 
     await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
 
+    // Addressed by the run's own environment, never the bare project (#617).
     expect(applyWorkspaceMigrations).toHaveBeenCalledWith({
       projectId: 'project-1',
+      environmentId: 'run-1',
       workspaceMigrationsDir: join(workspace, 'supabase', 'migrations'),
     });
     expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
       verify.mock.invocationCallOrder[0]!,
     );
+    expect(verify.mock.calls[0]?.[0]).toMatchObject({ environmentId: 'run-1' });
+
+    const retried = await harness.service.retry('project-1');
+    if (!retried.currentRunId) throw new Error('retry has no run');
+    expect(retried.currentRunId).not.toBe('run-1');
+    await harness.orchestrator.runProject(
+      'project-1',
+      TASK_BROWSER_WORKFLOW.id,
+      retried.currentRunId,
+    );
+
+    expect(applyWorkspaceMigrations.mock.calls.at(-1)?.[0]).toMatchObject({
+      environmentId: 'run-1',
+    });
+    expect(verify.mock.calls.at(-1)?.[0]).toMatchObject({ environmentId: 'run-1' });
+    expect(names.mock.calls.at(-1)).toEqual(['project-1', 'run-1']);
   });
 });
+
+describe('environment identity ordering (#617)', () => {
+  it('creates the scaffold commit before binding the environment to a version', async () => {
+    const initialize = vi.fn(async (_input: { identity?: unknown }) => ({}) as never);
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize } as never,
+    });
+    // The real WorkspaceManager has no HEAD until ensureGit() writes the
+    // scaffold commit, and the environment is bound to that commit's
+    // ProjectVersion. Provisioning before ensureGit therefore has nothing to
+    // bind to, which is why the order in runProjectTraced is load-bearing.
+    let git = false;
+    harness.workspaces.ensureGit = () => {
+      git = true;
+      return Promise.resolve();
+    };
+    harness.workspaces.head = () => Promise.resolve(git ? 'scaffold-commit' : null);
+    await seedHarnessRun(harness);
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect(initialize).toHaveBeenCalledTimes(1);
+    expect(initialize.mock.calls[0]![0]).toMatchObject({
+      identity: { class: 'candidate', projectVersionId: expect.any(String) },
+    });
+  });
+});
+
+/** Whatever else an environment operation takes, it takes an address. */
+type EnvironmentAddress = { projectId: string; environmentId?: string };
 
 describe('destructive-migration approval gate (#535)', () => {
   function browserVerifyFixture() {
@@ -1604,11 +1660,17 @@ describe('destructive-migration approval gate (#535)', () => {
     // This mock throws unconditionally, the same way the real one always
     // fails on a first, unapproved call, so a fix that re-calls
     // applyWorkspaceMigrations instead of migrate() on retry is caught here.
-    const applyWorkspaceMigrations = vi.fn(async () => {
+    const applyWorkspaceMigrations = vi.fn(async (_input: EnvironmentAddress) => {
       throw new MigrationApprovalRequiredError(destructive);
     });
-    const migrate = vi.fn(async () => ({}) as never);
-    const backupMigration = vi.fn(async () => ({
+    const migrate = vi.fn(async (_input: EnvironmentAddress) => ({}) as never);
+    let initializedIdentity: unknown;
+    const initialize = vi.fn(async (input: { identity?: unknown }) => {
+      initializedIdentity = input.identity;
+      return {} as never;
+    });
+    const listEnvironments = vi.fn(async () => [{ identity: initializedIdentity }] as never);
+    const backupMigration = vi.fn(async (_input: EnvironmentAddress) => ({
       path: '.foundry/migration-backups/backup.sql',
       checksum: 'b'.repeat(64),
       schemaChecksum: 'c'.repeat(64),
@@ -1624,14 +1686,15 @@ describe('destructive-migration approval gate (#535)', () => {
         applyWorkspaceMigrations,
         migrate,
         backupMigration,
-        initialize: vi.fn(async () => ({}) as never),
+        initialize,
+        listEnvironments,
         health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
       } as never,
       agentOutput: agentOutputFixture(),
     });
     harness.workspaces.workspacePath = () => workspace;
     await seedHarnessRun(harness);
-    return { harness, applyWorkspaceMigrations, migrate, backupMigration, destructive };
+    return { harness, applyWorkspaceMigrations, migrate, backupMigration, initialize, destructive };
   }
 
   it('parks the run at an approval gate naming the file and statement instead of failing the run', async () => {
@@ -1666,6 +1729,11 @@ describe('destructive-migration approval gate (#535)', () => {
 
     expect((await harness.runs.get('run-1'))?.status).toBe('completed');
     expect(backupMigration).toHaveBeenCalledTimes(1);
+    expect(backupMigration).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      environmentId: 'run-1',
+      backupPath: expect.stringContaining('.foundry/migration-backups/'),
+    });
     // Once per run attempt (park, then replay) — applyWorkspaceMigrations is
     // never retried with the resolved approval attached: that retry would
     // find the destructive file already staged from the first (failed)
@@ -1675,6 +1743,7 @@ describe('destructive-migration approval gate (#535)', () => {
     expect(migrate).toHaveBeenCalledTimes(1);
     expect(migrate).toHaveBeenCalledWith({
       projectId: 'project-1',
+      environmentId: 'run-1',
       migrationPath: destructive[0]!.migrationPath,
       approval: {
         migrationChecksum: destructive[0]!.checksum,
@@ -1712,6 +1781,45 @@ describe('destructive-migration approval gate (#535)', () => {
     expect(applyWorkspaceMigrations).toHaveBeenCalledTimes(2);
     const rejected = harness.events.events.find((event) => event.type === 'run.rejected');
     expect(rejected?.message).toContain('not safe to drop obsolete yet');
+  });
+
+  /**
+   * The caller matrix the #617 contract asks for, stated as an invariant
+   * rather than a list: whatever the run asks of the generated runtime, it
+   * asks of its own environment. A new caller added later without an
+   * environment fails here even though no assertion names it.
+   */
+  it('leaves no generated-runtime call addressed by the bare project (#617)', async () => {
+    const { harness, applyWorkspaceMigrations, migrate, backupMigration, initialize } =
+      await destructiveHarness();
+
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+    const [pending] = await harness.service.listApprovals('run-1');
+    await harness.service.decideApproval('run-1', pending!.request.id, {
+      action: 'approve',
+      decidedBy: 'ed',
+      note: 'obsolete is unused',
+    });
+    await harness.orchestrator.runProject('project-1', TASK_BROWSER_WORKFLOW.id, 'run-1');
+
+    // initialize names the environment through the identity it creates;
+    // every later operation addresses that same environment by id.
+    expect(initialize).toHaveBeenCalledTimes(2);
+    for (const [input] of initialize.mock.calls) {
+      expect(input).toMatchObject({
+        identity: { class: 'candidate', environmentId: 'run-1', runCandidateId: 'run-1' },
+      });
+    }
+    const addressed: EnvironmentAddress[] = [
+      ...applyWorkspaceMigrations.mock.calls,
+      ...migrate.mock.calls,
+      ...backupMigration.mock.calls,
+    ].map(([input]) => input);
+    expect(addressed.length).toBeGreaterThan(0);
+    for (const input of addressed) {
+      expect(input.projectId).toBe('project-1');
+      expect(input.environmentId).toBe('run-1');
+    }
   });
 });
 
@@ -1845,6 +1953,7 @@ describe('schema drift verification before browser check (#481)', () => {
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
     expect(verifySchema).toHaveBeenCalledWith({
       projectId: 'project-1',
+      environmentId: 'run-1',
       tables: VALID_SCHEMA_PLAN.tables,
     });
   });

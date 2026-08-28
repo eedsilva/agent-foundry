@@ -9,7 +9,7 @@ O Agent Foundry separa seis preocupações que frequentemente aparecem misturada
 3. **Workflow:** ordem, gates, reparos e limites.
 4. **Inteligência:** harness, task profiling e model routing.
 5. **Execução:** CLIs, workspace, Git e verificações determinísticas.
-6. **Runtime do app:** Supabase local por projeto, preview e publicação Compose no VPS do operador.
+6. **Runtime do app:** Supabase local por ambiente, preview e publicação Compose no VPS do operador.
 
 A regra central é simples: **agentes não fazem handoff por memória implícita**. Eles leem artefatos persistidos e produzem novos artefatos validados.
 
@@ -107,7 +107,10 @@ Composition root. Converte ambiente em configuração e conecta implementações
 
 ## Arquitetura-alvo do Personal Builder v1
 
-O control plane continua local e loopback. Cada projeto greenfield ganha um repositório Git e um runtime Docker Compose isolados. O runtime do app não compartilha banco, auth, storage, rede ou volumes com outro projeto.
+O control plane continua local e loopback. Cada projeto greenfield ganha um repositório Git. Cada
+Run Candidate ganha um runtime Docker Compose identificado por projeto, ambiente e versão; candidates,
+accepted e manual-preview do mesmo projeto não compartilham banco, auth, storage, rede, volumes,
+credenciais, migrations ou backup manifests (ADR 0080).
 
 ```mermaid
 flowchart LR
@@ -116,7 +119,7 @@ flowchart LR
   O --> C["Codex / Claude"]
   O --> G["Repositório Git do projeto"]
   O --> S["Sandbox de build, verifier e preview"]
-  G --> L["Compose local: Next.js + Supabase"]
+  G --> L["Compose local isolado por Run Candidate: Next.js + Supabase"]
   S --> L
   O --> D["Deployer SSH"]
   D --> V["VPS: Compose isolado + Caddy"]
@@ -127,6 +130,8 @@ flowchart LR
 ### Fronteiras novas
 
 - `GeneratedProjectRuntime` controla o Compose local, migrations, seed e health.
+- `EnvironmentIdentity` endereça todo caller de runtime. Identidade ausente resolve somente o root
+  legado unknown-class; nunca implica `accepted`.
 - `PreviewRunner` e `BrowserVerifier` executam apenas através de `SandboxRunner`.
 - `DeploymentProvider` v1 possui uma única implementação: SSH + Docker Compose em VPS existente.
 - `BackupProvider` agenda backup no VPS, verifica integridade e copia para o Mac.

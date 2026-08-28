@@ -74,12 +74,20 @@ async function createStoredSession(runtime: Runtime, projectId: string): Promise
   return session;
 }
 
-async function createActiveSession(runtime: Runtime, projectId: string): Promise<PreviewSession> {
+async function createActiveSession(
+  runtime: Runtime,
+  projectId: string,
+  environmentId?: string,
+): Promise<PreviewSession> {
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 3600_000).toISOString(); // 1 hour from now
   const session: PreviewSession = {
-    id: `preview-active-${projectId}`,
-    workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+    id: `preview-active-${projectId}-${environmentId ?? 'legacy'}`,
+    workspaceRef: {
+      projectId,
+      ...(environmentId ? { environmentId } : {}),
+      workspacePath: runtime.workspaces.workspacePath(projectId),
+    },
     status: 'running',
     version: 1,
     url: `http://127.0.0.1/preview/preview-active-${projectId}/`,
@@ -95,10 +103,55 @@ async function createActiveSession(runtime: Runtime, projectId: string): Promise
   return session;
 }
 
+async function recordCandidateEnvironment(runtime: Runtime, projectId: string): Promise<string> {
+  const project = await runtime.projects.get(projectId);
+  if (!project?.currentRunId) throw new Error('project has no current run');
+  await runtime.workspaces.ensureGit(projectId);
+  const head = await runtime.workspaces.head(projectId);
+  if (!head) throw new Error('project has no workspace HEAD');
+  const version = await runtime.projectVersionService.baselineForRun(
+    projectId,
+    project.currentRunId,
+    head,
+  );
+  const identity = {
+    class: 'candidate',
+    projectId,
+    environmentId: project.currentRunId,
+    runCandidateId: project.currentRunId,
+    projectVersionId: version.id,
+  } as const;
+  await runtime.events.append({
+    id: `provisioned-${project.currentRunId}`,
+    projectId,
+    runId: project.currentRunId,
+    type: 'project.provisioned',
+    createdAt: new Date().toISOString(),
+    message: 'Project provisioning completed.',
+    data: { environment: identity },
+  });
+  return identity.environmentId;
+}
+
+async function recordLegacyEnvironment(runtime: Runtime, projectId: string): Promise<void> {
+  const project = await runtime.projects.get(projectId);
+  if (!project?.currentRunId) throw new Error('project has no current run');
+  await runtime.events.append({
+    id: `legacy-${project.currentRunId}`,
+    projectId,
+    runId: project.currentRunId,
+    type: 'project.provisioned',
+    createdAt: new Date().toISOString(),
+    message: 'Legacy project provisioning completed.',
+    data: {},
+  });
+}
+
 describe('preview routes', () => {
-  it('starts and stops a preview session for a project', async () => {
+  it('starts and stops a preview session for an explicitly legacy project', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
+    await recordLegacyEnvironment(runtime, projectId);
     await runtime.workspaces.ensure(projectId);
     const workspacePath = runtime.workspaces.workspacePath(projectId);
     await writeFile(
@@ -123,6 +176,15 @@ describe('preview routes', () => {
     expect(stopResponse.status).toBe(202);
     const stopped = (await stopResponse.json()) as { session: { status: string } };
     expect(['stopped', 'failed']).toContain(stopped.session.status);
+  });
+
+  it('does not route a project with missing provisioning state to the legacy root', async () => {
+    const { baseUrl } = await startApi();
+    const projectId = await createProject(baseUrl);
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
+
+    expect(response.status).toBe(400);
   });
 
   it('404s stopping an unknown session', async () => {
@@ -235,11 +297,14 @@ describe('preview routes', () => {
     expect(stop.status).toBe(404);
   });
 
-  it('passes the project current run to preview start', async () => {
+  it('passes the project current run and environment to preview start', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
     const project = await runtime.projects.get(projectId);
     expect(project?.currentRunId).toBeDefined();
+    const environmentTargetForRun = vi
+      .spyOn(runtime.orchestrator, 'environmentTargetForRun')
+      .mockResolvedValue({ projectId, environmentId: project!.currentRunId! });
     const start = vi.spyOn(runtime.previewService, 'start').mockResolvedValue({
       session: await createStoredSession(runtime, projectId),
       url: 'http://127.0.0.1/preview',
@@ -248,14 +313,80 @@ describe('preview routes', () => {
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
 
     expect(response.status).toBe(202);
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ runId: project!.currentRunId }));
+    expect(environmentTargetForRun).toHaveBeenCalledWith(projectId, project!.currentRunId);
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: project!.currentRunId,
+        workspaceRef: expect.objectContaining({ environmentId: project!.currentRunId }),
+      }),
+    );
+  });
+
+  it('does not fall back to the legacy root for mismatched explicit identity', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const project = await runtime.projects.get(projectId);
+    if (!project?.currentRunId) throw new Error('project has no current run');
+    await runtime.events.append({
+      id: `mismatched-${project.currentRunId}`,
+      projectId,
+      runId: project.currentRunId,
+      type: 'project.provisioned',
+      createdAt: new Date().toISOString(),
+      message: 'Project provisioning completed.',
+      data: {
+        environment: {
+          class: 'candidate',
+          projectId: 'different-project',
+          environmentId: project.currentRunId,
+          runCandidateId: project.currentRunId,
+          projectVersionId: `version-${project.currentRunId}`,
+        },
+      },
+    });
+    const start = vi.spyOn(runtime.previewService, 'start');
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
+
+    expect(response.status).toBe(400);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('does not use an accepted environment as the current run candidate', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const project = await runtime.projects.get(projectId);
+    if (!project?.currentRunId) throw new Error('project has no current run');
+    await runtime.events.append({
+      id: `accepted-${project.currentRunId}`,
+      projectId,
+      runId: project.currentRunId,
+      type: 'project.provisioned',
+      createdAt: new Date().toISOString(),
+      message: 'Invalid candidate provisioning metadata.',
+      data: {
+        environment: {
+          class: 'accepted',
+          projectId,
+          environmentId: 'accepted-project',
+          projectVersionId: 'version-accepted',
+        },
+      },
+    });
+    const start = vi.spyOn(runtime.previewService, 'start');
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
+
+    expect(response.status).toBe(400);
+    expect(start).not.toHaveBeenCalled();
   });
 });
 
 describe('GET /projects/:projectId/preview/active', () => {
   it('returns null when no session is active', async () => {
-    const { baseUrl } = await startApi();
+    const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
+    await recordLegacyEnvironment(runtime, projectId);
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
 
@@ -266,6 +397,7 @@ describe('GET /projects/:projectId/preview/active', () => {
   it('returns the active session for a project', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
+    await recordLegacyEnvironment(runtime, projectId);
     const session = await createActiveSession(runtime, projectId);
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
@@ -274,9 +406,21 @@ describe('GET /projects/:projectId/preview/active', () => {
     expect(await response.json()).toEqual({ session });
   });
 
+  it('returns the active session for the current explicit environment', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const environmentId = await recordCandidateEnvironment(runtime, projectId);
+    const session = await createActiveSession(runtime, projectId, environmentId);
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
+
+    expect(await response.json()).toEqual({ session });
+  });
+
   it('does not return a stopped session', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
+    await recordLegacyEnvironment(runtime, projectId);
     await createStoredSession(runtime, projectId);
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
@@ -288,9 +432,21 @@ describe('GET /projects/:projectId/preview/active', () => {
     const { baseUrl, runtime } = await startApi();
     const ownerId = await createProject(baseUrl);
     const otherId = await createProject(baseUrl);
+    await recordLegacyEnvironment(runtime, otherId);
     await createActiveSession(runtime, ownerId);
 
     const response = await fetch(`${baseUrl}/projects/${otherId}/preview/active`);
+
+    expect(await response.json()).toEqual({ session: null });
+  });
+
+  it("does not return a sibling environment's active session", async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    await recordCandidateEnvironment(runtime, projectId);
+    await createActiveSession(runtime, projectId, 'sibling-run');
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
 
     expect(await response.json()).toEqual({ session: null });
   });

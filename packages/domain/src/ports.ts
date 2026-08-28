@@ -53,6 +53,8 @@ import type {
   WorkflowRun,
   KnowledgeFile,
   AppEnvironment,
+  EnvironmentIdentity,
+  EnvironmentTarget,
   DestructiveEnvironmentConfirmation,
   FunctionArtifact,
   FunctionInvocationResult,
@@ -227,6 +229,10 @@ export interface ArtifactStore {
 export interface EventStore {
   append(event: ProjectEvent, tx?: Tx): Promise<void>;
   list(projectId: string, limit?: number, afterId?: string): Promise<ProjectEvent[]>;
+  findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null>;
 }
 
 export interface StepEventRepository {
@@ -624,8 +630,16 @@ export interface WorkspaceManager {
  * anything that builds the agent's prompt, logs, or artifacts.
  */
 export interface SecretStore {
-  names(projectId: string): Promise<string[]>;
-  resolveAll(projectId: string): Promise<Record<string, string>>;
+  names(projectId: string, environmentId?: string): Promise<string[]>;
+  /**
+   * Values the generated app runs with. `environmentId` addresses one
+   * environment's own secrets (#617): a candidate stack and the accepted
+   * stack of the same project write different Supabase credentials, and a
+   * preview must read the ones belonging to the environment it was booted
+   * against. The project-level file still contributes operator-set secrets;
+   * the environment's own file wins on conflict.
+   */
+  resolveAll(projectId: string, environmentId?: string): Promise<Record<string, string>>;
 }
 
 export interface Clock {
@@ -677,10 +691,15 @@ export interface BlobStore {
 }
 
 export interface GeneratedProjectRuntime {
-  initialize(input: { projectId: string }): Promise<AppEnvironment>;
-  start(projectId: string): Promise<AppEnvironment>;
-  stop(projectId: string): Promise<AppEnvironment>;
-  inspect(projectId: string): Promise<AppEnvironment | null>;
+  initialize(input: {
+    projectId: string;
+    /** Explicit environment identity (#617). Absent keeps the legacy
+     * single-environment root; nothing may infer a class for it. */
+    identity?: EnvironmentIdentity;
+  }): Promise<AppEnvironment>;
+  start(target: EnvironmentTarget): Promise<AppEnvironment>;
+  stop(target: EnvironmentTarget): Promise<AppEnvironment>;
+  inspect(target: EnvironmentTarget): Promise<AppEnvironment | null>;
   /**
    * Every project environment that has persisted metadata on disk, read from
    * metadata only — it never shells out to the container runtime and never
@@ -688,10 +707,20 @@ export interface GeneratedProjectRuntime {
    * Unreadable or schema-invalid metadata is skipped, not thrown.
    */
   listEnvironments(): Promise<AppEnvironment[]>;
-  previewMigration(input: { projectId: string; migrationPath: string }): Promise<MigrationPreview>;
-  backupMigration(input: { projectId: string; backupPath: string }): Promise<MigrationBackup>;
+  previewMigration(input: {
+    projectId: string;
+    environmentId?: string;
+    migrationPath: string;
+  }): Promise<MigrationPreview>;
+  backupMigration(input: {
+    projectId: string;
+    environmentId?: string;
+    backupPath: string;
+  }): Promise<MigrationBackup>;
   migrate(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     migrationPath: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment>;
@@ -706,6 +735,8 @@ export interface GeneratedProjectRuntime {
    */
   applyWorkspaceMigrations(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     workspaceMigrationsDir: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment | null>;
@@ -715,33 +746,53 @@ export interface GeneratedProjectRuntime {
    * approved policy by name. Constraints and indexes are out of scope.
    * Read-only. Extra tables the plan does not name are not a failure.
    */
-  verifySchema(input: { projectId: string; tables: SchemaTable[] }): Promise<SchemaVerification>;
-  seed(input: { projectId: string; seedPath: string }): Promise<AppEnvironment>;
-  health(projectId: string): Promise<AppEnvironment>;
+  verifySchema(input: {
+    projectId: string;
+    environmentId?: string;
+    tables: SchemaTable[];
+  }): Promise<SchemaVerification>;
+  seed(input: {
+    projectId: string;
+    environmentId?: string;
+    seedPath: string;
+  }): Promise<AppEnvironment>;
+  health(target: EnvironmentTarget): Promise<AppEnvironment>;
   reset(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<AppEnvironment>;
   cleanup(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<void>;
   deployFunction(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     functionPath: string;
     artifact: FunctionArtifact;
   }): Promise<FunctionVersion>;
   listFunctionVersions(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     functionName: string;
   }): Promise<FunctionVersion[]>;
   rollbackFunction(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     functionName: string;
     versionId: string;
   }): Promise<FunctionVersion>;
   invokeFunction(input: {
     projectId: string;
+    /** Addresses one environment; absent means the legacy root (#617). */
+    environmentId?: string;
     functionName: string;
     body?: string;
     headers?: Record<string, string>;
