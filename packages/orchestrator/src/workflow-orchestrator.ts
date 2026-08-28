@@ -560,7 +560,7 @@ export class WorkflowOrchestrator {
   /** How every later environment operation addresses the stack provisioning
    * recorded for this run. Explicit candidates stay exact; only an explicit
    * pre-#617 event without identity addresses the legacy project-wide root. */
-  private async runEnvironmentTarget(
+  async environmentTargetForRun(
     projectId: string,
     runId: string,
   ): Promise<{
@@ -586,6 +586,14 @@ export class WorkflowOrchestrator {
     const version = await this.versions?.get(projectId, recorded.data.projectVersionId);
     if (!version || version.runId !== recorded.data.runCandidateId) {
       throw new ValidationError(`Run ${runId} has invalid environment provenance.`);
+    }
+    if (this.generatedProjectRuntime?.listEnvironments) {
+      const environment = (await this.generatedProjectRuntime.listEnvironments()).find((entry) =>
+        isDeepStrictEqual(entry.identity, recorded.data),
+      );
+      if (!environment) {
+        throw new ValidationError(`Run ${runId} has no matching persisted environment.`);
+      }
     }
     return { projectId, environmentId: recorded.data.environmentId };
   }
@@ -644,7 +652,7 @@ export class WorkflowOrchestrator {
     if (!previews || !stop) return;
     const run = await this.runs.get(runId);
     if (!run || !isWorkflowRunStatusTerminal(run.status) || run.status === 'completed') return;
-    const environment = await this.runEnvironmentTarget(projectId, runId);
+    const environment = await this.environmentTargetForRun(projectId, runId);
     const active = await previews.activeForProject(projectId, environment.environmentId ?? null);
     if (!active) return;
     // An explicit environment is the ownership boundary across repair runs.
@@ -826,7 +834,7 @@ export class WorkflowOrchestrator {
         });
       }
       if (this.previews) {
-        const environment = await this.runEnvironmentTarget(projectId, run.id);
+        const environment = await this.environmentTargetForRun(projectId, run.id);
         stopPreviewLeaseHeartbeat = this.startPreviewLeaseHeartbeat(
           projectId,
           environment.environmentId ?? null,
@@ -2769,7 +2777,7 @@ export class WorkflowOrchestrator {
           ? await this.secretStore.resolveAll(
               project.id,
               (this.generatedProjectRuntime || this.previews
-                ? await this.runEnvironmentTarget(project.id, runId)
+                ? await this.environmentTargetForRun(project.id, runId)
                 : { projectId: project.id, environmentId: runId }
               ).environmentId,
             )
@@ -3123,7 +3131,7 @@ export class WorkflowOrchestrator {
     if (!schemaArtifact) return;
     const schemaPlan = SchemaPlanArtifactSchema.safeParse(schemaArtifact.content);
     if (!schemaPlan.success) return;
-    const environment = await this.runEnvironmentTarget(project.id, runId);
+    const environment = await this.environmentTargetForRun(project.id, runId);
     const verification = await this.generatedProjectRuntime.verifySchema({
       ...environment,
       tables: schemaPlan.data.data.tables,
@@ -3164,7 +3172,7 @@ export class WorkflowOrchestrator {
       'migrations',
     );
     try {
-      const environment = await this.runEnvironmentTarget(project.id, runId);
+      const environment = await this.environmentTargetForRun(project.id, runId);
       await this.generatedProjectRuntime!.applyWorkspaceMigrations({
         ...environment,
         workspaceMigrationsDir,
@@ -3188,7 +3196,7 @@ export class WorkflowOrchestrator {
       // ponytail: skips applyWorkspaceMigrations's #446 already-applied
       // reconcile retry for this one call — add here too if a destructive
       // migration ever needs it.
-      const environment = await this.runEnvironmentTarget(project.id, runId);
+      const environment = await this.environmentTargetForRun(project.id, runId);
       await this.generatedProjectRuntime!.migrate({
         ...environment,
         migrationPath: error.destructive.at(-1)!.migrationPath,
@@ -3331,7 +3339,7 @@ export class WorkflowOrchestrator {
       );
     }
 
-    const environment = await this.runEnvironmentTarget(project.id, runId);
+    const environment = await this.environmentTargetForRun(project.id, runId);
     const backup = await this.generatedProjectRuntime!.backupMigration({
       ...environment,
       backupPath: `.foundry/migration-backups/${stepRun.id}.sql`,
@@ -3387,7 +3395,7 @@ export class WorkflowOrchestrator {
         await this.syncGeneratedDatabase(project, runId, stepRun.nodeId, signal);
         const environment =
           this.generatedProjectRuntime || this.previews
-            ? await this.runEnvironmentTarget(project.id, runId)
+            ? await this.environmentTargetForRun(project.id, runId)
             : { projectId: project.id, environmentId: runId };
         const report = await browserVerification.verify(
           {
@@ -4433,7 +4441,7 @@ export class WorkflowOrchestrator {
               await this.secretStore.names(
                 project.id,
                 (this.generatedProjectRuntime || this.previews
-                  ? await this.runEnvironmentTarget(project.id, runId)
+                  ? await this.environmentTargetForRun(project.id, runId)
                   : { projectId: project.id, environmentId: runId }
                 ).environmentId,
               )

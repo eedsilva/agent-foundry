@@ -190,7 +190,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       }
       await this.#stopWithTimeout(existing.workdir);
       try {
-        await rm(existing.workdir, { recursive: true, force: true });
+        await rm(environmentRoot(this.#dataDir, resolved), { recursive: true, force: true });
       } catch (error) {
         throw operationError('initialize', error);
       }
@@ -754,7 +754,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<void> {
     requireDestructiveConfirmation(input.confirmation, this.#now());
-    const environment = await this.#read(targetFrom(input));
+    const target = resolveTarget(targetFrom(input));
+    const environment = await this.#read(target);
     if (!environment) return;
     await this.#execute(
       'cleanup',
@@ -764,7 +765,10 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       '--no-backup',
       '--yes',
     );
-    await rm(environment.workdir, { recursive: true, force: true });
+    await rm(target.environmentId ? environmentRoot(this.#dataDir, target) : environment.workdir, {
+      recursive: true,
+      force: true,
+    });
   }
 
   async deployFunction(input: {
@@ -879,7 +883,20 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     }
     return withSpan(
       'function.invoke',
-      { 'function.name': functionName, 'project.id': environment.projectId },
+      {
+        'function.name': functionName,
+        'project.id': environment.projectId,
+        'foundry.project.id': environment.projectId,
+        ...(environment.identity
+          ? {
+              'foundry.environment.id': environment.identity.environmentId,
+              'foundry.environment.class': environment.identity.class,
+              ...(environment.identity.class === 'manual-preview'
+                ? { 'foundry.environment.migration.digest': environment.identity.migrationDigest }
+                : { 'foundry.project.version.id': environment.identity.projectVersionId }),
+            }
+          : {}),
+      },
       async (span) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), current.artifact.timeoutMs);

@@ -2,7 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse as parseDotEnv } from 'dotenv';
 import { PathSegmentSchema } from '@agent-foundry/contracts';
-import type { SecretStore, WorkspaceManager } from '@agent-foundry/domain';
+import { ValidationError, type SecretStore, type WorkspaceManager } from '@agent-foundry/domain';
+
+const ENVIRONMENT_MANAGED_KEYS = [
+  'NEXT_PUBLIC_SUPABASE_URL',
+  'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+] as const;
 
 export class FileSecretStore implements SecretStore {
   constructor(private readonly workspaces: Pick<WorkspaceManager, 'projectRoot'>) {}
@@ -30,18 +36,32 @@ export class FileSecretStore implements SecretStore {
     const project = await this.readEnvFile(join(projectRoot, '.env'));
     if (environmentId === undefined) return project;
     const environment = PathSegmentSchema.parse(environmentId);
+    const hasLegacyRuntimeSecrets = ENVIRONMENT_MANAGED_KEYS.some(
+      (key) => project[key] !== undefined,
+    );
+    const environmentSecrets = await this.readEnvFile(
+      join(projectRoot, 'environments', environment, '.env'),
+      hasLegacyRuntimeSecrets ? `Environment ${environment} secrets are missing.` : undefined,
+    );
+    for (const key of ENVIRONMENT_MANAGED_KEYS) delete project[key];
     return {
       ...project,
-      ...(await this.readEnvFile(join(projectRoot, 'environments', environment, '.env'))),
+      ...environmentSecrets,
     };
   }
 
-  private async readEnvFile(path: string): Promise<Record<string, string>> {
+  private async readEnvFile(
+    path: string,
+    missingMessage?: string,
+  ): Promise<Record<string, string>> {
     let raw: string;
     try {
       raw = await readFile(path, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        if (missingMessage) throw new ValidationError(missingMessage);
+        return {};
+      }
       throw error;
     }
     return parseDotEnv(raw);

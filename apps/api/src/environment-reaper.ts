@@ -43,6 +43,7 @@ function environmentTelemetry(environment: AppEnvironment): Record<string, unkno
     environmentClass: identity?.class ?? null,
     projectVersionId:
       identity && identity.class !== 'manual-preview' ? identity.projectVersionId : null,
+    ...(identity?.class === 'manual-preview' ? { migrationDigest: identity.migrationDigest } : {}),
   };
 }
 

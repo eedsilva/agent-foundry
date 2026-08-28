@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
-import { isDeepStrictEqual } from 'node:util';
 import Fastify, {
   type FastifyError,
   type FastifyInstance,
@@ -39,7 +38,6 @@ import {
   DecideOperationRequestSchema,
   DecisionExportRowSchema,
   DiscardDraftRequestSchema,
-  EnvironmentIdentitySchema,
   PathSegmentSchema,
   PreviewSelectionRequestSchema,
   PreviewSelectionResultSchema,
@@ -108,44 +106,6 @@ export const BODY_LIMIT_BYTES = 1_000_000;
 const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 const KNOWLEDGE_FILE_BODY_LIMIT = Math.ceil(((MAX_KNOWLEDGE_FILE_BYTES + 1) * 4) / 3) + 4_096;
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
-
-async function currentEnvironmentId(
-  runtime: Runtime,
-  projectId: string,
-  runId?: string,
-): Promise<string | undefined> {
-  if (!runId) return undefined;
-  const event = await runtime.events.findLatest(projectId, {
-    type: 'project.provisioned',
-    runId,
-  });
-  if (!event) throw new ValidationError(`Project ${projectId} has no recorded environment.`);
-  if (event.data.environment === undefined) return undefined;
-  const recorded = EnvironmentIdentitySchema.safeParse(event?.data?.environment);
-  if (
-    !recorded.success ||
-    recorded.data.class !== 'candidate' ||
-    recorded.data.projectId !== projectId
-  ) {
-    throw new ValidationError(`Project ${projectId} has invalid environment identity.`);
-  }
-  const version = await runtime.projectVersionService.get(
-    projectId,
-    recorded.data.projectVersionId,
-  );
-  if (!version || version.runId !== recorded.data.runCandidateId) {
-    throw new ValidationError(`Project ${projectId} has invalid environment provenance.`);
-  }
-  if (runtime.generatedProjectRuntime) {
-    const environment = (await runtime.generatedProjectRuntime.listEnvironments()).find((entry) =>
-      isDeepStrictEqual(entry.identity, recorded.data),
-    );
-    if (!environment) {
-      throw new ValidationError(`Project ${projectId} has no matching persisted environment.`);
-    }
-  }
-  return recorded.data.environmentId;
-}
 
 function percentile(sortedValues: number[], fraction: number): number | null {
   if (sortedValues.length === 0) return null;
@@ -1037,7 +997,10 @@ export async function buildApp(
     const project = await runtime.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     await runtime.workspaces.ensure(projectId);
-    const environmentId = await currentEnvironmentId(runtime, projectId, project.currentRunId);
+    const environmentId = project.currentRunId
+      ? (await runtime.orchestrator.environmentTargetForRun(projectId, project.currentRunId))
+          .environmentId
+      : undefined;
     const { session, url } = await runtime.previewService.start({
       workspaceRef: {
         projectId,
@@ -1053,7 +1016,10 @@ export async function buildApp(
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
     const project = await runtime.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
-    const environmentId = await currentEnvironmentId(runtime, projectId, project.currentRunId);
+    const environmentId = project.currentRunId
+      ? (await runtime.orchestrator.environmentTargetForRun(projectId, project.currentRunId))
+          .environmentId
+      : undefined;
     const active = await runtime.previewSessions.listActive();
     const projectSessions = active
       .filter(

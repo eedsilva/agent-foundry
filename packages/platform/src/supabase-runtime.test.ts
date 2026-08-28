@@ -2,9 +2,12 @@ import { createHash } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import { EnvironmentOperationError, MigrationApprovalRequiredError } from '@agent-foundry/domain';
 import {
   destructiveStatements,
@@ -1348,6 +1351,37 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
     await expect(stat(second.workdir)).resolves.toBeDefined();
   });
 
+  it('removes one explicit environment root without touching its sibling', async () => {
+    const { runtime } = fixture();
+    const identity = (environmentId: string) =>
+      ({
+        class: 'candidate',
+        projectId: 'project-a',
+        environmentId,
+        runCandidateId: `run-${environmentId}`,
+        projectVersionId: `version-${environmentId}`,
+      }) as const;
+    const first = await runtime.initialize({
+      projectId: 'project-a',
+      identity: identity('candidate-a'),
+    });
+    const second = await runtime.initialize({
+      projectId: 'project-a',
+      identity: identity('candidate-b'),
+    });
+    const firstRoot = dirname(first.workdir);
+    await expect(stat(join(firstRoot, '.env'))).resolves.toBeDefined();
+
+    await runtime.cleanup({
+      projectId: 'project-a',
+      environmentId: 'candidate-a',
+      confirmation: { confirmed: true, backupCreatedAt: '2026-07-22T11:00:00.000Z' },
+    });
+
+    await expect(stat(firstRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(dirname(second.workdir))).resolves.toBeDefined();
+  });
+
   it('never trusts persisted metadata to redirect cleanup outside the project environment', async () => {
     const { command, runtime } = fixture();
     const environment = await runtime.initialize({ projectId: 'project-a' });
@@ -1782,6 +1816,14 @@ describe('function deployment', () => {
 describe('function invocation', () => {
   let server: Server;
   let apiPort: number;
+  let exporter: InMemorySpanExporter;
+  let provider: NodeTracerProvider;
+
+  beforeAll(() => {
+    exporter = new InMemorySpanExporter();
+    provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
+    provider.register();
+  });
 
   beforeEach(async () => {
     server = createServer((req, res) => {
@@ -1820,6 +1862,12 @@ describe('function invocation', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    exporter.reset();
+  });
+
+  afterAll(async () => {
+    await provider.shutdown();
+    trace.disable();
   });
 
   function invokeCommand(...args: string[]) {
@@ -1849,6 +1897,46 @@ describe('function invocation', () => {
       body: 'hi',
       durationMs: expect.any(Number),
       timedOut: false,
+    });
+  });
+
+  it('records project, environment, class and source version on the invocation span', async () => {
+    const runtime = new SupabaseGeneratedProjectRuntime({
+      dataDir,
+      command: invokeCommand,
+      now: () => NOW,
+    });
+    const identity = {
+      class: 'candidate',
+      projectId: 'invoke-candidate',
+      environmentId: 'candidate-1',
+      runCandidateId: 'run-1',
+      projectVersionId: 'version-1',
+    } as const;
+    const environment = await runtime.initialize({ projectId: identity.projectId, identity });
+    const functionDir = join(environment.workdir, 'supabase', 'functions', 'hello');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("hi");\n');
+    await runtime.deployFunction({
+      projectId: identity.projectId,
+      environmentId: identity.environmentId,
+      functionPath: 'supabase/functions/hello',
+      artifact: FUNCTION_ARTIFACT,
+    });
+
+    await runtime.invokeFunction({
+      projectId: identity.projectId,
+      environmentId: identity.environmentId,
+      functionName: 'hello',
+    });
+
+    expect(
+      exporter.getFinishedSpans().find((span) => span.name === 'function.invoke')?.attributes,
+    ).toMatchObject({
+      'foundry.project.id': identity.projectId,
+      'foundry.environment.id': identity.environmentId,
+      'foundry.environment.class': identity.class,
+      'foundry.project.version.id': identity.projectVersionId,
     });
   });
 
@@ -2499,7 +2587,16 @@ describe('callers address one environment, not one project (#617)', () => {
       environmentId: 'preflight',
       migrationDigest: checksum('first'),
     } as const;
-    await runtime.initialize({ projectId: 'project-a', identity });
+    const first = await runtime.initialize({ projectId: 'project-a', identity });
+    const functionDir = join(first.workdir, 'supabase', 'functions', 'hello');
+    await mkdir(functionDir, { recursive: true });
+    await writeFile(join(functionDir, 'index.ts'), 'export default () => new Response("old");\n');
+    const oldVersion = await runtime.deployFunction({
+      projectId: 'project-a',
+      environmentId: identity.environmentId,
+      functionPath: 'supabase/functions/hello',
+      artifact: FUNCTION_ARTIFACT,
+    });
     command.mockClear();
 
     const recreated = await runtime.initialize({
@@ -2513,6 +2610,21 @@ describe('callers address one environment, not one project (#617)', () => {
     });
     expect(command.mock.calls.some(([operation]) => operation === 'stop')).toBe(true);
     expect(command.mock.calls.some(([operation]) => operation === 'init')).toBe(true);
+    await expect(
+      runtime.listFunctionVersions({
+        projectId: 'project-a',
+        environmentId: identity.environmentId,
+        functionName: 'hello',
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      runtime.rollbackFunction({
+        projectId: 'project-a',
+        environmentId: identity.environmentId,
+        functionName: 'hello',
+        versionId: oldVersion.versionId,
+      }),
+    ).rejects.toThrow(/not found/i);
   });
 
   it('allocates ports against every environment root, not just the legacy one', async () => {

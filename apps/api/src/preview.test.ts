@@ -302,7 +302,9 @@ describe('preview routes', () => {
     const projectId = await createProject(baseUrl);
     const project = await runtime.projects.get(projectId);
     expect(project?.currentRunId).toBeDefined();
-    await recordCandidateEnvironment(runtime, projectId);
+    const environmentTargetForRun = vi
+      .spyOn(runtime.orchestrator, 'environmentTargetForRun')
+      .mockResolvedValue({ projectId, environmentId: project!.currentRunId! });
     const start = vi.spyOn(runtime.previewService, 'start').mockResolvedValue({
       session: await createStoredSession(runtime, projectId),
       url: 'http://127.0.0.1/preview',
@@ -311,6 +313,7 @@ describe('preview routes', () => {
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
 
     expect(response.status).toBe(202);
+    expect(environmentTargetForRun).toHaveBeenCalledWith(projectId, project!.currentRunId);
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: project!.currentRunId,

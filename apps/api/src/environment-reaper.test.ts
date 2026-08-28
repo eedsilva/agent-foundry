@@ -291,4 +291,29 @@ describe('addressing one environment, not one project (#617)', () => {
       'Stopped idle environment',
     );
   });
+
+  it('logs a manual preview migration digest as its source version', async () => {
+    const migrationDigest = 'd'.repeat(64);
+    const log = logger();
+    const deps = makeDeps({
+      environments: [
+        environment({
+          updatedAt: '2026-08-14T11:00:00.000Z',
+          identity: {
+            class: 'manual-preview',
+            projectId: 'proj-1',
+            environmentId: 'manual-1',
+            migrationDigest,
+          },
+        }),
+      ],
+    });
+
+    await sweepIdleEnvironments(deps, IDLE_MS, NOW, log);
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ migrationDigest }),
+      'Stopped idle environment',
+    );
+  });
 });

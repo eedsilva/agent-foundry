@@ -906,8 +906,12 @@ confirmation is disabled in the generated `config.toml` (no SMTP in v1), so sign
 session immediately, same as sign-in.
 
 Password reset is deliberately **not** self-service (`docs/PRODUCT_CONTRACT.md`). To reset a user's
-password as an administrator, use the service-role key from the project's `.env` against the local
-GoTrue admin API:
+password as an administrator, use the service-role key from the addressed environment's
+`DATA_DIR/projects/<projectId>/environments/<environmentId>/.env` against its local GoTrue admin
+API. Use `DATA_DIR/projects/<projectId>/.env` only for an explicit pre-#617 legacy environment. If
+that legacy file contains Supabase credentials, `FileSecretStore` rejects a missing environment-
+scoped file instead of falling back; without runtime credentials it may still return operator-only
+secrets, which are insufficient for this reset workflow:
 
 ```bash
 curl -X PUT "$NEXT_PUBLIC_SUPABASE_URL/auth/v1/admin/users/<user-id>" \
