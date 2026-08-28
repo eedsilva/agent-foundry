@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
+import type { AgentExecutionRequest } from '@agent-foundry/contracts';
 import { buildApp } from './app.js';
 import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
@@ -22,7 +23,11 @@ async function createProjectDirectory(): Promise<string> {
   return path;
 }
 
-async function startApi(): Promise<{ app: FastifyInstance; runtime: Runtime }> {
+async function startApi(): Promise<{
+  app: FastifyInstance;
+  runtime: Runtime;
+  executionRequests: AgentExecutionRequest[];
+}> {
   const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-standard-prd-'));
   dirs.push(dataDir);
   const runtime = await createRuntime({
@@ -33,9 +38,16 @@ async function startApi(): Promise<{ app: FastifyInstance; runtime: Runtime }> {
     AUTO_INSTALL_DEPENDENCIES: 'false',
     WORKER_ID: 'standard-prd-worker',
   });
+  const executionRequests: AgentExecutionRequest[] = [];
+  const executor = runtime.executors.get('mock');
+  const execute = executor.execute.bind(executor);
+  executor.execute = (request, ...args) => {
+    executionRequests.push(request);
+    return execute(request, ...args);
+  };
   const app = await buildApp(runtime);
   apps.push(app);
-  return { app, runtime };
+  return { app, runtime, executionRequests };
 }
 
 describe('PRD Standard 1 intake gate (#643)', () => {
@@ -65,8 +77,8 @@ describe('PRD Standard 1 intake gate (#643)', () => {
     ).toBe(body.identity);
   });
 
-  it('rejects a PRD that does not conform to PRD Standard 1 with the first issue, not a generic Zod 400, and never reaches ProjectService.create', async () => {
-    const { app, runtime } = await startApi();
+  it('rejects a non-Standard PRD with the first issue before queue or executor activity', async () => {
+    const { app, runtime, executionRequests } = await startApi();
 
     const response = await app.inject({
       method: 'POST',
@@ -85,10 +97,24 @@ describe('PRD Standard 1 intake gate (#643)', () => {
       path: 'title',
       message: 'PRD title is required.',
     });
-    // Zero-executor proof (same shape as #598): rejection happens before
-    // ProjectService.create runs, so no project, workspace, or workflow run
-    // is ever created for a non-conforming PRD.
     expect(await runtime.projectService.list(1)).toEqual([]);
+    expect(await runtime.worker.runOnce()).toBe(false);
+    expect(executionRequests).toHaveLength(0);
+
+    // Non-vacuity pair: the same meter observes the first model call after a
+    // conforming request reaches the queue.
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: {
+        name: 'Task list',
+        prd: VALID_STANDARD_PRD,
+        projectDirectory: await createProjectDirectory(),
+      },
+    });
+    expect(accepted.statusCode, accepted.body).toBe(202);
+    expect(await runtime.worker.runOnce()).toBe(true);
+    expect(executionRequests).toHaveLength(1);
   });
 
   it('rejects every PRD over the 50,000-character Standard 1 ceiling before trimming', async () => {

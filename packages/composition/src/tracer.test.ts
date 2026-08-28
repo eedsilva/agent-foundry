@@ -61,6 +61,19 @@ describe('loadTracerScenarios', () => {
     );
   });
 
+  it('keeps each tracer scenario product contract while formatting it as Standard PRD 1', async () => {
+    const scenarios = new Map(
+      (await loadTracerScenarios(scenariosDir)).map((scenario) => [scenario.id, scenario]),
+    );
+
+    expect(scenarios.get('toy')?.prompt).toContain('No authentication is required');
+    expect(scenarios.get('crud-heavy')?.prompt).toContain('PNG or JPEG image up to 2 MB');
+    expect(scenarios.get('dashboard-heavy')?.prompt).toContain('90 days');
+    expect(scenarios.get('crud-heavy')?.expectedCapabilities).toContain(
+      'Uploading an image to an item stores the object and shows it on the item view after a reload.',
+    );
+  });
+
   it('rejects a scenario file missing a required field', async () => {
     const dir = await tempDir('tracer-scenarios-invalid-');
     await writeFile(
