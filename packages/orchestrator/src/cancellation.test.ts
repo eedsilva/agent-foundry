@@ -51,11 +51,9 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import { ProjectService } from './project-service.js';
-import { ProjectVersionService } from './project-version-service.js';
 import {
   DEFAULT_POLICY,
   InMemoryPolicies,
-  InMemoryProjectVersions,
   InMemoryStepEvents,
   NoopTransactionRunner,
 } from './testing/harness.js';
@@ -367,6 +365,21 @@ class InMemoryEvents implements EventStore {
   list(projectId: string): Promise<ProjectEvent[]> {
     return Promise.resolve(this.events.filter((event) => event.projectId === projectId));
   }
+  findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    return Promise.resolve(
+      [...this.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.projectId === projectId &&
+            event.type === query.type &&
+            (query.runId === undefined || event.runId === query.runId),
+        ) ?? null,
+    );
+  }
   types(): string[] {
     return this.events.map((event) => event.type);
   }
@@ -659,13 +672,6 @@ function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
   );
-  const projectVersions = new ProjectVersionService(
-    new InMemoryProjectVersions(),
-    workspaces,
-    artifacts,
-    clock,
-    ids,
-  );
   const service = new ProjectService(
     projects,
     runs,
@@ -682,7 +688,6 @@ function makeHarness(
     harness,
     router,
     workspaces,
-    projectVersions,
     clock,
     ids,
   );

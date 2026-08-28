@@ -447,7 +447,6 @@ export async function createRuntime(
     harness,
     router,
     workspaces,
-    projectVersionService,
     clock,
     ids,
     modelOverrides,

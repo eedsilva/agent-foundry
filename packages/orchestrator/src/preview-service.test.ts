@@ -59,6 +59,21 @@ class InMemoryEventStore implements EventStore {
   async list(projectId: string): Promise<ProjectEvent[]> {
     return this.events.filter((event) => event.projectId === projectId);
   }
+  async findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    return (
+      [...this.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.projectId === projectId &&
+            event.type === query.type &&
+            (query.runId === undefined || event.runId === query.runId),
+        ) ?? null
+    );
+  }
 }
 
 function failureDiagnostic(events: InMemoryEventStore): PreviewFailureDiagnostic {

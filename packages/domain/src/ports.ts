@@ -229,6 +229,10 @@ export interface ArtifactStore {
 export interface EventStore {
   append(event: ProjectEvent, tx?: Tx): Promise<void>;
   list(projectId: string, limit?: number, afterId?: string): Promise<ProjectEvent[]>;
+  findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null>;
 }
 
 export interface StepEventRepository {

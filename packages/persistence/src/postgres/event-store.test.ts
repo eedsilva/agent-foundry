@@ -65,6 +65,21 @@ describePostgres('Postgres event store', (ctx) => {
     expect(afterSecond.map((item) => item.id)).toEqual(['evt-03', 'evt-04', 'evt-05']);
   });
 
+  it('finds the latest event by type and optional run', async () => {
+    const sql = ctx.db();
+    await new PostgresProjectRepository(sql).create(makeProject());
+    const store = new PostgresEventStore(sql);
+    await store.append({ ...event('evt-01'), runId: 'run-1', type: 'project.provisioned' });
+    await store.append({ ...event('evt-02'), runId: 'run-2', type: 'project.provisioned' });
+
+    await expect(
+      store.findLatest('project-1', { type: 'project.provisioned', runId: 'run-1' }),
+    ).resolves.toMatchObject({ id: 'evt-01' });
+    await expect(
+      store.findLatest('project-1', { type: 'project.provisioned' }),
+    ).resolves.toMatchObject({ id: 'evt-02' });
+  });
+
   it('redacts sensitive data before persisting', async () => {
     const sql = ctx.db();
     await new PostgresProjectRepository(sql).create(makeProject());

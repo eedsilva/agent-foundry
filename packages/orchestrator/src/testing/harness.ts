@@ -584,6 +584,21 @@ export class InMemoryEvents implements EventStore {
   list(projectId: string): Promise<ProjectEvent[]> {
     return Promise.resolve(this.events.filter((event) => event.projectId === projectId));
   }
+  findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    return Promise.resolve(
+      [...this.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.projectId === projectId &&
+            event.type === query.type &&
+            (query.runId === undefined || event.runId === query.runId),
+        ) ?? null,
+    );
+  }
   types(): string[] {
     return this.events.map((event) => event.type);
   }
@@ -1586,7 +1601,6 @@ export function makeHarness(
     harness,
     router,
     stores.workspaces,
-    versions,
     stores.clock,
     ids,
     stores.modelOverrides,

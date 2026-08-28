@@ -1145,9 +1145,9 @@ Ambos devem terminar com sucesso. `EXECUTOR_MODE=mock` não instancia esse runti
 `SUPABASE_PROVISIONING_TIMEOUT_MS` limita quanto tempo cada inicialização pode aguardar a stack
 local ficar pronta; o padrão é `600000` ms (dez minutos). Em timeout, o runtime tenta parar a stack
 por até 30 segundos, registra um diagnóstico redigido no evento de provisioning e preserva o
-workdir parcial para inspeção/backup. Depois de corrigir Docker ou Supabase, a recuperação da mesma
-run recolhe esse workdir antes de recriar o ambiente. Personal v1 rejeita um novo Task Agent run
-quando o projeto já possui histórico de versões; evolução de app aceita fica para milestone posterior.
+workdir parcial para inspeção/backup. Depois de corrigir Docker ou Supabase, recovery da mesma run
+recolhe esse workdir; um retry explícito cria outro `WorkflowRun`, mas reutiliza a identidade e a
+stack do Run Candidate preservado. Ele nunca reclassifica ou escolhe uma stack accepted por default.
 Se a retenção não for mais necessária,
 faça backup do `DATA_DIR` e use o procedimento explícito de cleanup do runtime; não remova o
 diretório diretamente.

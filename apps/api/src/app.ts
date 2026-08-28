@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
+import { isDeepStrictEqual } from 'node:util';
 import Fastify, {
   type FastifyError,
   type FastifyInstance,
@@ -38,6 +39,7 @@ import {
   DecideOperationRequestSchema,
   DecisionExportRowSchema,
   DiscardDraftRequestSchema,
+  EnvironmentIdentitySchema,
   PathSegmentSchema,
   PreviewSelectionRequestSchema,
   PreviewSelectionResultSchema,
@@ -106,6 +108,32 @@ export const BODY_LIMIT_BYTES = 1_000_000;
 const MAX_KNOWLEDGE_FILE_BYTES = 4 * 1024 * 1024;
 const KNOWLEDGE_FILE_BODY_LIMIT = Math.ceil(((MAX_KNOWLEDGE_FILE_BYTES + 1) * 4) / 3) + 4_096;
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
+
+async function currentEnvironmentId(
+  runtime: Runtime,
+  projectId: string,
+  runId?: string,
+): Promise<string | undefined> {
+  if (!runId) return undefined;
+  const event = await runtime.events.findLatest(projectId, {
+    type: 'project.provisioned',
+    runId,
+  });
+  if (!event || event.data.environment === undefined) return undefined;
+  const recorded = EnvironmentIdentitySchema.safeParse(event?.data?.environment);
+  if (!recorded.success || recorded.data.projectId !== projectId) {
+    throw new ValidationError(`Project ${projectId} has invalid environment identity.`);
+  }
+  if (runtime.generatedProjectRuntime) {
+    const environment = (await runtime.generatedProjectRuntime.listEnvironments()).find((entry) =>
+      isDeepStrictEqual(entry.identity, recorded.data),
+    );
+    if (!environment) {
+      throw new ValidationError(`Project ${projectId} has no matching persisted environment.`);
+    }
+  }
+  return recorded.data.environmentId;
+}
 
 function percentile(sortedValues: number[], fraction: number): number | null {
   if (sortedValues.length === 0) return null;
@@ -997,10 +1025,11 @@ export async function buildApp(
     const project = await runtime.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     await runtime.workspaces.ensure(projectId);
+    const environmentId = await currentEnvironmentId(runtime, projectId, project.currentRunId);
     const { session, url } = await runtime.previewService.start({
       workspaceRef: {
         projectId,
-        ...(project.currentRunId ? { environmentId: project.currentRunId } : {}),
+        ...(environmentId ? { environmentId } : {}),
         workspacePath: runtime.workspaces.workspacePath(projectId),
       },
       ...(project.currentRunId ? { runId: project.currentRunId } : {}),
@@ -1012,12 +1041,13 @@ export async function buildApp(
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
     const project = await runtime.projects.get(projectId);
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
+    const environmentId = await currentEnvironmentId(runtime, projectId, project.currentRunId);
     const active = await runtime.previewSessions.listActive();
     const projectSessions = active
       .filter(
         (record) =>
           record.session.workspaceRef.projectId === projectId &&
-          record.session.workspaceRef.environmentId === project.currentRunId,
+          record.session.workspaceRef.environmentId === environmentId,
       )
       .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
     return { session: projectSessions[0]?.session ?? null };

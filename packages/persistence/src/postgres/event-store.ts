@@ -37,4 +37,23 @@ export class PostgresEventStore implements EventStore {
       limit ${limit}`;
     return rows.map((row) => ProjectEventSchema.parse(row.data));
   }
+
+  async findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    const rows =
+      query.runId === undefined
+        ? await this.sql<{ data: unknown }[]>`
+            select data from project_events
+            where project_id = ${projectId} and type = ${query.type}
+            order by created_at desc, id desc
+            limit 1`
+        : await this.sql<{ data: unknown }[]>`
+            select data from project_events
+            where project_id = ${projectId} and type = ${query.type} and run_id = ${query.runId}
+            order by created_at desc, id desc
+            limit 1`;
+    return rows[0] ? ProjectEventSchema.parse(rows[0].data) : null;
+  }
 }

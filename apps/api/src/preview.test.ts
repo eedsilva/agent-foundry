@@ -79,15 +79,13 @@ async function createActiveSession(
   projectId: string,
   environmentId?: string,
 ): Promise<PreviewSession> {
-  const project = await runtime.projects.get(projectId);
-  const resolvedEnvironmentId = environmentId ?? project?.currentRunId;
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 3600_000).toISOString(); // 1 hour from now
   const session: PreviewSession = {
-    id: `preview-active-${projectId}-${resolvedEnvironmentId ?? 'legacy'}`,
+    id: `preview-active-${projectId}-${environmentId ?? 'legacy'}`,
     workspaceRef: {
       projectId,
-      ...(resolvedEnvironmentId ? { environmentId: resolvedEnvironmentId } : {}),
+      ...(environmentId ? { environmentId } : {}),
       workspacePath: runtime.workspaces.workspacePath(projectId),
     },
     status: 'running',
@@ -103,6 +101,28 @@ async function createActiveSession(
   };
   await runtime.previewSessions.create({ session, tokenDigest: 'a'.repeat(64) });
   return session;
+}
+
+async function recordCandidateEnvironment(runtime: Runtime, projectId: string): Promise<string> {
+  const project = await runtime.projects.get(projectId);
+  if (!project?.currentRunId) throw new Error('project has no current run');
+  const identity = {
+    class: 'candidate',
+    projectId,
+    environmentId: project.currentRunId,
+    runCandidateId: project.currentRunId,
+    projectVersionId: `version-${project.currentRunId}`,
+  } as const;
+  await runtime.events.append({
+    id: `provisioned-${project.currentRunId}`,
+    projectId,
+    runId: project.currentRunId,
+    type: 'project.provisioned',
+    createdAt: new Date().toISOString(),
+    message: 'Project provisioning completed.',
+    data: { environment: identity },
+  });
+  return identity.environmentId;
 }
 
 describe('preview routes', () => {
@@ -250,6 +270,7 @@ describe('preview routes', () => {
     const projectId = await createProject(baseUrl);
     const project = await runtime.projects.get(projectId);
     expect(project?.currentRunId).toBeDefined();
+    await recordCandidateEnvironment(runtime, projectId);
     const start = vi.spyOn(runtime.previewService, 'start').mockResolvedValue({
       session: await createStoredSession(runtime, projectId),
       url: 'http://127.0.0.1/preview',
@@ -264,6 +285,36 @@ describe('preview routes', () => {
         workspaceRef: expect.objectContaining({ environmentId: project!.currentRunId }),
       }),
     );
+  });
+
+  it('does not fall back to the legacy root for mismatched explicit identity', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const project = await runtime.projects.get(projectId);
+    if (!project?.currentRunId) throw new Error('project has no current run');
+    await runtime.events.append({
+      id: `mismatched-${project.currentRunId}`,
+      projectId,
+      runId: project.currentRunId,
+      type: 'project.provisioned',
+      createdAt: new Date().toISOString(),
+      message: 'Project provisioning completed.',
+      data: {
+        environment: {
+          class: 'candidate',
+          projectId: 'different-project',
+          environmentId: project.currentRunId,
+          runCandidateId: project.currentRunId,
+          projectVersionId: `version-${project.currentRunId}`,
+        },
+      },
+    });
+    const start = vi.spyOn(runtime.previewService, 'start');
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
+
+    expect(response.status).toBe(400);
+    expect(start).not.toHaveBeenCalled();
   });
 });
 
@@ -286,6 +337,17 @@ describe('GET /projects/:projectId/preview/active', () => {
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
 
     expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ session });
+  });
+
+  it('returns the active session for the current explicit environment', async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    const environmentId = await recordCandidateEnvironment(runtime, projectId);
+    const session = await createActiveSession(runtime, projectId, environmentId);
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
+
     expect(await response.json()).toEqual({ session });
   });
 
@@ -313,6 +375,7 @@ describe('GET /projects/:projectId/preview/active', () => {
   it("does not return a sibling environment's active session", async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
+    await recordCandidateEnvironment(runtime, projectId);
     await createActiveSession(runtime, projectId, 'sibling-run');
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);

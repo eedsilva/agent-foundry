@@ -75,6 +75,35 @@ describe('orchestrator span coverage', () => {
     expect(identity.projectVersionId).toBeTypeOf('string');
   });
 
+  it('reuses the preserved candidate stack for a project retry', async () => {
+    const environments: Array<{ identity: EnvironmentIdentity }> = [];
+    const initialize = vi.fn(
+      async (input: { projectId: string; identity?: EnvironmentIdentity }) => {
+        if (input.identity && environments.length === 0)
+          environments.push({ identity: input.identity });
+        return {} as never;
+      },
+    );
+    const listEnvironments = vi.fn(async () => environments as never);
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize, listEnvironments } as never,
+    });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const original = initialize.mock.calls[0]![0].identity!;
+
+    const retried = await harness.service.retry('project-1');
+    if (!retried.currentRunId) throw new Error('retry has no run');
+    await harness.orchestrator.runProject('project-1', undefined, retried.currentRunId);
+
+    expect(initialize.mock.calls.at(-1)?.[0].identity).toEqual(original);
+    const retryEvent = await harness.events.findLatest('project-1', {
+      type: 'project.provisioned',
+      runId: retried.currentRunId,
+    });
+    expect(retryEvent?.data.environment).toEqual(original);
+  });
+
   it('replays the same environment and version on a resumed run that provisioned earlier (#617)', async () => {
     const initialize = vi.fn(async () => ({}) as never);
     const listEnvironments = vi.fn();

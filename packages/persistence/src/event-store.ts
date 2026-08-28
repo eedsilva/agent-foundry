@@ -44,6 +44,20 @@ export class FileEventStore implements EventStore {
     return after.slice(0, limit);
   }
 
+  async findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    const events = await readJsonLines<unknown>(this.pathFor(projectId));
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = ProjectEventSchema.parse(events[index]);
+      if (event.type === query.type && (query.runId === undefined || event.runId === query.runId)) {
+        return event;
+      }
+    }
+    return null;
+  }
+
   private pathFor(projectId: string): string {
     return join(this.dataDir, 'projects', safeSegment(projectId), 'events.jsonl');
   }

@@ -83,6 +83,25 @@ describe('FileEventStore.list cursor', () => {
   });
 });
 
+describe('FileEventStore.findLatest', () => {
+  it('finds a durable run event after it leaves the default 500-event window', async () => {
+    const store = new FileEventStore(await temporaryDataDir());
+    await store.append({
+      ...event('000-provisioned'),
+      runId: 'run-1',
+      type: 'project.provisioned',
+    });
+    for (let index = 1; index <= 501; index += 1) {
+      await store.append(event(`event-${String(index).padStart(3, '0')}`));
+    }
+
+    expect(await store.list('project-1')).toHaveLength(500);
+    await expect(
+      store.findLatest('project-1', { type: 'project.provisioned', runId: 'run-1' }),
+    ).resolves.toMatchObject({ id: '000-provisioned' });
+  });
+});
+
 describe('FileEventStore redaction on append', () => {
   it('redacts sensitive data before persisting', async () => {
     const store = new FileEventStore(await temporaryDataDir());

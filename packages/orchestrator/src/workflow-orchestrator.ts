@@ -470,15 +470,10 @@ export class WorkflowOrchestrator {
     });
   }
 
-  /**
-   * The Candidate Supabase Stack this run owns (ADR 0080, #617). A Run
-   * Candidate is one run, so the environment is named after it and shared by
-   * that candidate's worktrees; it is never the bare project, which is what
-   * used to let a second run mutate the first one's database, migration
-   * history and credentials. The stack names the ProjectVersion of the commit
-   * it starts from, so recovery can refuse a mismatched commit/environment
-   * pair instead of booting against the wrong data.
-   */
+  /** The Candidate Supabase Stack this run creates or reuses (ADR 0080, #617).
+   * A retry is a new WorkflowRun but remains a repair of the preserved Run
+   * Candidate, so it reuses the recorded identity instead of allocating a
+   * sibling stack or touching accepted data. */
   private async runEnvironmentIdentity(
     projectId: string,
     runId: string,
@@ -488,6 +483,31 @@ export class WorkflowOrchestrator {
         `Project ${projectId} cannot be provisioned without the version ledger: ` +
           'an environment must name the commit it runs.',
       );
+    }
+    const previousEvent = await this.events.findLatest(projectId, {
+      type: 'project.provisioned',
+    });
+    const previous = EnvironmentIdentitySchema.safeParse(previousEvent?.data?.environment);
+    if (previousEvent?.data.environment !== undefined) {
+      if (!previous.success || previous.data.class !== 'candidate') {
+        throw new ValidationError(`Project ${projectId} has no reusable candidate identity.`);
+      }
+      if (previous.data.projectId !== projectId) {
+        throw new ValidationError(`Project ${projectId} has mismatched candidate identity.`);
+      }
+      const version = await this.versions.get(projectId, previous.data.projectVersionId);
+      const environment = (await this.generatedProjectRuntime?.listEnvironments())?.find((entry) =>
+        isDeepStrictEqual(entry.identity, previous.data),
+      );
+      if (!version || version.runId !== previous.data.runCandidateId) {
+        throw new ValidationError(`Project ${projectId} has no matching candidate ProjectVersion.`);
+      }
+      if (this.generatedProjectRuntime && !environment) {
+        throw new ValidationError(
+          `Project ${projectId} has no matching preserved candidate stack.`,
+        );
+      }
+      return previous.data;
     }
     const head = await this.workspaces.head(projectId);
     if (!head) {
@@ -525,14 +545,23 @@ export class WorkflowOrchestrator {
    * `runEnvironmentIdentity` provisioned — migrations, schema verification and
    * backups must reach the same environment the run booted, never the legacy
    * project-wide root. */
-  private runEnvironmentTarget(
+  private async runEnvironmentTarget(
     projectId: string,
     runId: string,
-  ): {
+  ): Promise<{
     projectId: string;
-    environmentId: string;
-  } {
-    return { projectId, environmentId: runId };
+    environmentId?: string;
+  }> {
+    const event = await this.events.findLatest(projectId, {
+      type: 'project.provisioned',
+      runId,
+    });
+    if (!event || event.data.environment === undefined) return { projectId };
+    const recorded = EnvironmentIdentitySchema.safeParse(event?.data?.environment);
+    if (!recorded.success || recorded.data.projectId !== projectId) {
+      throw new ValidationError(`Run ${runId} has invalid environment identity.`);
+    }
+    return { projectId, environmentId: recorded.data.environmentId };
   }
 
   /**
@@ -677,16 +706,15 @@ export class WorkflowOrchestrator {
       // creates that commit.
       await this.workspaces.ensureGit(projectId);
       const activeRunId = run.id;
-      const provisionedEvent = (await this.events.list(projectId))
-        .filter((event) => event.runId === activeRunId && event.type === 'project.provisioned')
-        .at(-1);
+      const provisionedEvent = await this.events.findLatest(projectId, {
+        type: 'project.provisioned',
+        runId: activeRunId,
+      });
       const recorded = EnvironmentIdentitySchema.safeParse(provisionedEvent?.data?.environment);
       const recoveredIdentity =
         recorded.success &&
         recorded.data.class === 'candidate' &&
-        recorded.data.projectId === projectId &&
-        recorded.data.environmentId === activeRunId &&
-        recorded.data.runCandidateId === activeRunId
+        recorded.data.projectId === projectId
           ? recorded.data
           : undefined;
       if (recoveredIdentity) {
@@ -702,7 +730,7 @@ export class WorkflowOrchestrator {
             `Run ${activeRunId} has no matching persisted environment and ProjectVersion for recovery.`,
           );
         }
-        if (persistedVersion.runId !== activeRunId) {
+        if (persistedVersion.runId !== recoveredIdentity.runCandidateId) {
           throw new ValidationError(
             `Run ${activeRunId} has no matching persisted environment and ProjectVersion for recovery.`,
           );
@@ -3047,8 +3075,9 @@ export class WorkflowOrchestrator {
     if (!schemaArtifact) return;
     const schemaPlan = SchemaPlanArtifactSchema.safeParse(schemaArtifact.content);
     if (!schemaPlan.success) return;
+    const environment = await this.runEnvironmentTarget(project.id, runId);
     const verification = await this.generatedProjectRuntime.verifySchema({
-      ...this.runEnvironmentTarget(project.id, runId),
+      ...environment,
       tables: schemaPlan.data.data.tables,
     });
     const problems = [
@@ -3087,8 +3116,9 @@ export class WorkflowOrchestrator {
       'migrations',
     );
     try {
+      const environment = await this.runEnvironmentTarget(project.id, runId);
       await this.generatedProjectRuntime!.applyWorkspaceMigrations({
-        ...this.runEnvironmentTarget(project.id, runId),
+        ...environment,
         workspaceMigrationsDir,
       });
     } catch (error) {
@@ -3110,8 +3140,9 @@ export class WorkflowOrchestrator {
       // ponytail: skips applyWorkspaceMigrations's #446 already-applied
       // reconcile retry for this one call — add here too if a destructive
       // migration ever needs it.
+      const environment = await this.runEnvironmentTarget(project.id, runId);
       await this.generatedProjectRuntime!.migrate({
-        ...this.runEnvironmentTarget(project.id, runId),
+        ...environment,
         migrationPath: error.destructive.at(-1)!.migrationPath,
         approval,
       });
@@ -3252,8 +3283,9 @@ export class WorkflowOrchestrator {
       );
     }
 
+    const environment = await this.runEnvironmentTarget(project.id, runId);
     const backup = await this.generatedProjectRuntime!.backupMigration({
-      ...this.runEnvironmentTarget(project.id, runId),
+      ...environment,
       backupPath: `.foundry/migration-backups/${stepRun.id}.sql`,
     });
     throwIfCancelled(signal, runId);

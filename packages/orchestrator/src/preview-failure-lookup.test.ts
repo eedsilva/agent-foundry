@@ -32,6 +32,21 @@ class FakeEventStore implements EventStore {
         : projectEvents.filter((event) => event.id > afterId);
     return after.slice(0, limit);
   }
+  async findLatest(
+    projectId: string,
+    query: { type: ProjectEvent['type']; runId?: string },
+  ): Promise<ProjectEvent | null> {
+    return (
+      [...this.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.projectId === projectId &&
+            event.type === query.type &&
+            (query.runId === undefined || event.runId === query.runId),
+        ) ?? null
+    );
+  }
 }
 
 class FakeArtifactStore implements ArtifactStore {
