@@ -743,7 +743,8 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     commit: firstBuildCommit,
   });
   await expect(runtime.projectVersionService.list(projectId, 50)).resolves.toMatchObject([
-    { runId: run.id, commit: firstBuildCommit },
+    { runId: run.id, commit: firstBuildCommit, sequence: 2 },
+    { runId: run.id, kind: 'run', sequence: 1 },
   ]);
 
   // CLS budget (Task 4's perf-budgets.json): installed before navigation so
@@ -1287,7 +1288,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   expect(rebuiltGreeting).not.toContain("'#ddd'");
   await expect(readFile(buildSequencePath, 'utf8')).resolves.toBe('2\n');
 
-  await expect.poll(() => runtime.projectVersionService.list(projectId, 50)).toHaveLength(5);
+  await expect.poll(() => runtime.projectVersionService.list(projectId, 50)).toHaveLength(6);
   const [rebuiltVersion] = await runtime.projectVersionService.list(projectId, 50);
   await expect(versionArticle(rebuiltVersion!.commit)).toBeVisible({ timeout: 30_000 });
   await openInspectorTab(page, 'Mudanças');
