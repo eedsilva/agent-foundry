@@ -31,7 +31,7 @@ import {
   FileQualityObservationRepository,
 } from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveAllGates, describeRunFailure } from './testing-helpers.js';
+import { approveAllGates, describeRunFailure, VALID_STANDARD_PRD } from './testing-helpers.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
 schemaVersion: '1'
@@ -379,11 +379,7 @@ async function completeDefaultMockWorkflow(
   const project = await runtime.projectService.create({
     name: 'Integration sample',
     workflowId: 'web-app-v1',
-    prd: [
-      '# PRD',
-      'Build a tiny issue tracker with create and complete flows.',
-      'Persist issues, validate inputs, expose clear failure states, and add deterministic tests.',
-    ].join('\n\n'),
+    prd: VALID_STANDARD_PRD,
     projectDirectory: await createProjectDirectory(),
   });
 
@@ -445,7 +441,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Queue recovery fixture',
       workflowId: 'web-app-v1',
-      prd: 'Recover the deterministic queue publication after restart.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
@@ -528,7 +524,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Preview cleanup fixture',
       workflowId: 'web-app-v1',
-      prd: 'Fail after provisioning so preview cleanup runs.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
@@ -686,7 +682,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Cross-paired conversation',
       workflowId: 'web-app-v1',
-      prd: 'Build a persistent project whose exported conversation identity stays canonical.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
     const root = join(dataDir, 'projects', project.id, 'conversation');
@@ -717,7 +713,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Corrupt conversation storage',
       workflowId: 'web-app-v1',
-      prd: 'Build a persistent project whose export fails closed on corrupt conversation storage.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
     await writeFile(join(conversationDataDir, 'projects'), 'corrupt path shape');
@@ -755,7 +751,7 @@ describe('runtime composition', () => {
     const project = await runtimeA.projectService.create({
       name: 'Feedback restart sample',
       workflowId: 'restart-approval-v1',
-      prd: 'Build a small persistent issue tracker with validation and deterministic tests.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
     if (!project.currentRunId) throw new Error('Expected a persisted workflow run');
@@ -1050,7 +1046,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Full suite failure sample',
       workflowId: 'web-app-v1',
-      prd: 'Build a small issue tracker with deterministic verification and release review.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
 
@@ -1093,7 +1089,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Fallback sample',
       workflowId: 'web-app-v1',
-      prd: 'Build a small, persistent issue tracker with validation, filters, tests, type checking, clear failure states, and a production build.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
 
@@ -1141,7 +1137,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Run diagnostic sample',
       workflowId: 'web-app-v1',
-      prd: 'Build a small, persistent issue tracker with validation, filters, tests, type checking, clear failure states, and a production build.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
     const runId = project.currentRunId;
@@ -1180,7 +1176,7 @@ describe('runtime composition', () => {
     const project = await runtime.projectService.create({
       name: 'Failed run sample',
       workflowId: 'web-app-v1',
-      prd: 'Build a small persistent issue tracker with clear validation, deterministic tests, diagnostics, and production build checks.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
 

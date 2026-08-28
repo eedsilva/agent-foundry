@@ -12,6 +12,7 @@ import {
   runTracerScenarioToCompletion,
   TracerRunStuckError,
 } from './tracer.js';
+import { VALID_STANDARD_PRD } from './testing-helpers.js';
 
 const scenariosDir = resolve(import.meta.dirname, '../../../examples/tracer/scenarios');
 
@@ -36,8 +37,7 @@ function toyScenario(
     id: 'toy',
     title: 'Toy scenario',
     workflowId: 'web-app-v1',
-    prompt:
-      'A single-page counter app: one button increments a number shown on screen, and the count persists across reloads.',
+    prompt: VALID_STANDARD_PRD,
     expectedCapabilities: ['Counter persists across reloads'],
     ...overrides,
   });
@@ -94,8 +94,7 @@ describe('runTracerScenario (mock mode)', () => {
     const fifthScenario = toyScenario({
       id: 'toy-2',
       title: 'A second, differently-shaped toy scenario',
-      prompt:
-        'A single-page notes app: a textarea lets the user write a note, and a save button persists it to local storage.',
+      prompt: VALID_STANDARD_PRD.replace('Test application', 'Notes application'),
       expectedCapabilities: ['Note persists after reload'],
     });
 

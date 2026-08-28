@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRuntime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const directories: string[] = [];
 
@@ -32,7 +33,7 @@ describe('model override API', () => {
     const runtime = await createRuntime(env);
     const project = await runtime.projectService.create({
       name: 'Override API',
-      prd: 'Create a deterministic model override API with immutable audit records.',
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -89,7 +90,7 @@ describe('model override API', () => {
     });
     const project = await runtime.projectService.create({
       name: 'Forbidden override',
-      prd: 'Reject a policy-forbidden explicit model before invoking the configured executor.',
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -127,7 +128,7 @@ describe('model override API', () => {
     });
     const project = await runtime.projectService.create({
       name: 'Unresolved override',
-      prd: 'Reject an explicit model pin when its catalog tuple does not match.',
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -192,7 +193,7 @@ describe('model override API', () => {
     });
     const project = await runtime.projectService.create({
       name: 'Duplicate tuple',
-      prd: 'Preserve the selected catalog identity.',
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -236,7 +237,7 @@ describe('model override API', () => {
     });
     const project = await runtime.projectService.create({
       name: 'Verify retry pin',
-      prd: 'Reject model pins for non-agent retry targets.',
+      prd: VALID_STANDARD_PRD,
       workflowId: 'verify-only',
       projectDirectory: await createProjectDirectory(),
     });

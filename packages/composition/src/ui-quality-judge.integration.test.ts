@@ -17,7 +17,7 @@ import {
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { CodexCliExecutor, MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveAllGates } from './testing-helpers.js';
+import { approveAllGates, VALID_STANDARD_PRD } from './testing-helpers.js';
 
 /**
  * The 5 rubric criterion ids this test expects back on a real run (#475).
@@ -265,11 +265,7 @@ async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
     name: 'UI quality judge sample',
     workflowId: 'web-app-v1',
     policyId: 'ui-quality-judge-test',
-    prd: [
-      '# PRD',
-      'Build a tiny issue tracker with create and complete flows.',
-      'Persist issues, validate inputs, expose clear failure states, and add deterministic tests.',
-    ].join('\n\n'),
+    prd: VALID_STANDARD_PRD,
     projectDirectory,
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');

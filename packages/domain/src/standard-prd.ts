@@ -47,7 +47,7 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
   const source = markdown.replace(/\r\n?/g, '\n');
   const document = normalizeDocument(source);
   const issues: StandardPrdIssue[] = [];
-  if (source.length > 50_000) {
+  if (markdown.length > 50_000) {
     issues.push({
       code: 'max-length',
       path: 'document',

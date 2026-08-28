@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { scanForSecrets } from '@agent-foundry/domain';
 import { createRuntime } from './runtime.js';
-import { approveAllGates } from './testing-helpers.js';
+import { approveAllGates, VALID_STANDARD_PRD } from './testing-helpers.js';
 
 const run = promisify(execFile);
 const FAKE_SECRET = 'leak-canary-9f2b7c1a';
@@ -35,7 +35,7 @@ describe('secret leak scan', () => {
     const project = await runtime.projectService.create({
       name: 'Secret Leak Check',
       workflowId: 'web-app-v1',
-      prd: 'Build a tiny app so this test has a real workflow to run through mock execution.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory,
     });
     await writeFile(join(dataDir, 'projects', project.id, '.env'), `FAKE_SECRET=${FAKE_SECRET}\n`);

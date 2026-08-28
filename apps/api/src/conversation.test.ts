@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import type { KnowledgeFile, Message } from '@agent-foundry/contracts';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
@@ -43,7 +44,7 @@ async function createProject(runtime: Runtime, name = 'Conversation API'): Promi
   return (
     await runtime.projectService.create({
       name,
-      prd: 'Persist ordered conversation data through the public API with safe replay and export.',
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     })

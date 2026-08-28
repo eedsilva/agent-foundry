@@ -9,7 +9,7 @@ import {
   type PostgresDb,
 } from '@agent-foundry/persistence';
 import { createRuntime } from './runtime.js';
-import { approveAllGates, probeDocker } from './testing-helpers.js';
+import { approveAllGates, probeDocker, VALID_STANDARD_PRD } from './testing-helpers.js';
 
 const dockerAvailable = probeDocker();
 if (process.env.CI && !dockerAvailable) {
@@ -97,7 +97,7 @@ maybeDescribe('Postgres-backed runtime', () => {
     const project = await runtime.projectService.create({
       name: 'Postgres runtime sample',
       workflowId: 'web-app-v1',
-      prd: 'Build a small persistent issue tracker with validation and deterministic tests.',
+      prd: VALID_STANDARD_PRD,
       projectDirectory,
     });
     expect(await runtime.projects.get(project.id)).toMatchObject({ id: project.id });

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 // Self-contained fixture: a mid-pipeline design gate and a release gate,
 // standing in for the "mid-pipeline and release approval" E2E coverage issue
@@ -101,7 +102,7 @@ async function createProject(baseUrl: string): Promise<string> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       name: 'Approval E2E',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'approval-e2e-v1',
       projectDirectory: await createProjectDirectory(),
     }),

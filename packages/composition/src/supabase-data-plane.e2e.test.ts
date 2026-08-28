@@ -15,7 +15,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgresJobQueue, createPostgresClient, migrateUp } from '@agent-foundry/persistence';
-import { approveAllGates, probeDocker } from './testing-helpers.js';
+import { approveAllGates, probeDocker, VALID_STANDARD_PRD } from './testing-helpers.js';
 import { createRuntime, type Runtime } from './runtime.js';
 import {
   allocateLocalSupabasePorts,
@@ -187,7 +187,7 @@ suite('Supabase Postgres + Storage data plane', () => {
       const project = await runtime.projectService.create({
         name: 'Supabase data-plane sample',
         workflowId: 'web-app-v1',
-        prd: 'Build a small persistent issue tracker with deterministic tests.',
+        prd: VALID_STANDARD_PRD,
         projectDirectory,
       });
       if (!project.currentRunId) {

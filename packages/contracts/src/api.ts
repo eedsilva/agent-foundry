@@ -35,6 +35,7 @@ import {
 } from './run.js';
 import { ChangeRequestSchema } from './change-request.js';
 import { QualityObservationInputSchema, QualityObservationSchema } from './quality.js';
+import { Sha256Schema } from './app-environment.js';
 
 export const CreateAttachmentRequestSchema = z
   .object({
@@ -171,7 +172,7 @@ export type ProjectExportResponse = z.infer<typeof ProjectExportResponseSchema>;
 
 export const CreateProjectRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  prd: z.string().trim().min(50).max(500_000),
+  prd: z.string().max(50_000),
   projectDirectory: z.string().trim().min(1),
   workflowId: PathSegmentSchema.default('web-app-v1'),
   policyId: PathSegmentSchema.optional(),
@@ -180,6 +181,7 @@ export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
 export const CreateProjectResponseSchema = z.object({
   project: ProjectSchema,
+  identity: Sha256Schema,
 });
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
 

@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 import { blobKeyFor, createRuntime, type Runtime } from '@agent-foundry/composition';
 import { sweepUnreferencedBlobs } from './blob-gc.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const dirs: string[] = [];
 
@@ -38,7 +39,7 @@ describe('sweepUnreferencedBlobs', () => {
     const runtime = await makeRuntime();
     const project = await runtime.projectService.create({
       name: 'GC removed knowledge',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -94,7 +95,7 @@ describe('sweepUnreferencedBlobs', () => {
     const runtime = await makeRuntime();
     const project = await runtime.projectService.create({
       name: 'GC referenced',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -121,7 +122,7 @@ describe('sweepUnreferencedBlobs', () => {
     const runtime = await makeRuntime();
     const project = await runtime.projectService.create({
       name: 'GC young orphan',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -141,7 +142,7 @@ describe('sweepUnreferencedBlobs', () => {
     const runtime = await makeRuntime();
     const project = await runtime.projectService.create({
       name: 'GC old orphan',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });

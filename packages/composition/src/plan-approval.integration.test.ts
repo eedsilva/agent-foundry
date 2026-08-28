@@ -3,25 +3,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from './runtime.js';
+import { VALID_STANDARD_PRD } from './testing-helpers.js';
 
-// Issue #297's "Status App" PRD, kept verbatim in spirit: the non-goals
-// explicitly exclude auth. Under the old `plan-gate` quality loop a
-// plan-reviewer invented an access-control requirement (NFR-09), rejected four
-// plans in 23 minutes, and was still looping past `maxIterations: 3` when the
-// run was killed. ADR 0042 deleted that reviewer; this file is what stops it
-// coming back.
-const STATUS_APP_PRD = [
-  '# Status App',
-  '',
-  '## Goal',
-  'A single-user kanban board with three fixed columns: todo, in progress, done.',
-  'Cards can be created, moved between columns, and deleted. State persists across reloads.',
-  '',
-  '## Non-goals',
-  '- No authentication. There is no sign-in, no session, and no user record.',
-  '- No multi-user support. One person uses one board.',
-  '- No deployment or container publishing concerns.',
-].join('\n');
+// #297 pins the deleted plan-review repair loop. #643 makes the old no-auth
+// fixture invalid at intake, so the same orchestration invariant now runs with
+// a conforming PRD.
+const STATUS_APP_PRD = VALID_STANDARD_PRD;
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -57,7 +44,7 @@ async function startStatusAppRun(workerId: string): Promise<{
   return { runtime, projectId: project.id, runId: project.currentRunId };
 }
 
-describe('#297: a minimal no-auth PRD reaches operator approval without a repair loop', () => {
+describe('#297: a Standard PRD reaches operator approval without a repair loop', () => {
   it('parks on plan.current revision 1 after exactly one model call', async () => {
     const { runtime, projectId, runId } = await startStatusAppRun('plan-approval-worker');
 

@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { RouteDecisionSchema } from '@agent-foundry/contracts';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
@@ -95,7 +96,7 @@ describe('quality observation API (#64)', () => {
     const runtime = await startApi();
     const project = await runtime.projectService.create({
       name: 'Quality evidence',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -148,7 +149,7 @@ describe('quality observation API (#64)', () => {
     const runtime = await startApi();
     const project = await runtime.projectService.create({
       name: 'Regression evidence',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
@@ -191,7 +192,7 @@ describe('quality observation API (#64)', () => {
     const runtime = await startApi();
     const project = await runtime.projectService.create({
       name: 'Unrouted evidence',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });

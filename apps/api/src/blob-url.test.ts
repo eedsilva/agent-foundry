@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createRuntime, signBlobToken, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
@@ -45,7 +46,7 @@ async function createProject(app: FastifyInstance): Promise<string> {
     url: '/projects',
     payload: {
       name: 'Blob URL sample',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     },
   });

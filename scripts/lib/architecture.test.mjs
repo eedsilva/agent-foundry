@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { importSpecifiers, inspectArchitecture } from './architecture.mjs';
+import {
+  ALLOWED_INTERNAL_DEPENDENCIES,
+  importSpecifiers,
+  inspectArchitecture,
+} from './architecture.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
 
@@ -34,6 +38,32 @@ test('detecta deep import e dependência ausente', async () => {
   const result = await inspectArchitecture(root, allowed);
   assert.ok(result.errors.some((error) => error.includes('deep import')));
   assert.ok(result.errors.some((error) => error.includes('não declara')));
+});
+
+test('rejeita import de domain pelo web usando a política real', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'af-web-domain-'));
+  await mkdir(join(fixtureRoot, 'apps/web/src'), { recursive: true });
+  await mkdir(join(fixtureRoot, 'packages/domain/src'), { recursive: true });
+  await writeFile(
+    join(fixtureRoot, 'apps/web/package.json'),
+    JSON.stringify({
+      name: '@agent-foundry/web',
+      dependencies: { '@agent-foundry/domain': '0.1.0' },
+    }),
+  );
+  await writeFile(
+    join(fixtureRoot, 'packages/domain/package.json'),
+    JSON.stringify({ name: '@agent-foundry/domain' }),
+  );
+  await writeFile(join(fixtureRoot, 'apps/web/src/index.ts'), "import '@agent-foundry/domain';");
+  await writeFile(join(fixtureRoot, 'packages/domain/src/index.ts'), 'export {};');
+
+  const result = await inspectArchitecture(fixtureRoot, ALLOWED_INTERNAL_DEPENDENCIES);
+
+  assert.equal(result.ok, false);
+  assert.ok(
+    result.errors.includes('@agent-foundry/web não pode depender de @agent-foundry/domain.'),
+  );
 });
 
 async function contractsFixture(index, files = {}) {
