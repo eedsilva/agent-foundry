@@ -3277,6 +3277,7 @@ export class WorkflowOrchestrator {
         const report = await browserVerification.verify(
           {
             projectId: project.id,
+            environmentId: runId,
             workspacePath: this.workspaces.workspacePath(project.id),
             runId,
             plan: browserPlan,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   PREVIEW_INFRASTRUCTURE_ERROR_CODE,
   PREVIEW_INFRASTRUCTURE_ERROR_NAME,
@@ -144,6 +144,40 @@ const input = {
 };
 
 describe('BrowserVerificationCoordinator', () => {
+  it('keeps the addressed environment on the verification preview session', async () => {
+    const session = runningSession();
+    const start = vi.fn(async (_input: Parameters<PreviewService['start']>[0]) => ({
+      session,
+      url: session.url!,
+    }));
+    const previews = {
+      activeForProject: () => Promise.resolve(undefined),
+      start,
+      stop: () => Promise.resolve({ ...session, status: 'stopped' as const }),
+    } satisfies Pick<PreviewService, 'activeForProject' | 'start' | 'stop'>;
+    const coordinator = new BrowserVerificationCoordinator(
+      previews,
+      { verify: () => Promise.resolve({ report: report(), evidence: { screenshots: [] } }) },
+      { putBlob: () => Promise.reject(new Error('putBlob should not be called by this fixture')) },
+      {
+        maxScreenshotBytes: 5_000_000,
+        maxTraceBytes: 20_000_000,
+        maxVideoBytes: 50_000_000,
+        retentionSeconds: 604_800,
+      },
+    );
+
+    await coordinator.verify(
+      { ...input, environmentId: 'candidate-7f3a' },
+      new AbortController().signal,
+    );
+
+    expect(start.mock.calls[0]![0].workspaceRef).toMatchObject({
+      projectId: 'project-1',
+      environmentId: 'candidate-7f3a',
+    });
+  });
+
   it('stops an existing project preview before starting verification', async () => {
     const stopped: string[] = [];
     const existing = { ...runningSession(), id: 'preview-existing' };

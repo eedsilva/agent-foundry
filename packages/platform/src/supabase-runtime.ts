@@ -19,6 +19,7 @@ import {
   FunctionArtifactSchema,
   FunctionInvocationResultSchema,
   FunctionVersionSchema,
+  EnvironmentIdentitySchema,
   MigrationApprovalSchema,
   MigrationBackupSchema,
   MigrationPreviewSchema,
@@ -151,7 +152,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
      * for it (#616). */
     identity?: EnvironmentIdentity;
   }): Promise<AppEnvironment> {
-    const identity = input.identity;
+    const identity = input.identity ? EnvironmentIdentitySchema.parse(input.identity) : undefined;
     if (identity && identity.projectId !== input.projectId) {
       throw new ValidationError('Environment identity must name the same project as the request.');
     }
@@ -181,10 +182,23 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     // production caller. A stopped environment must be brought back up here,
     // or the project is permanently unusable after it goes idle. start()
     // itself is a no-op when already healthy, so this composes safely.
-    if (existing)
+    if (existing && identity && JSON.stringify(existing.identity) !== JSON.stringify(identity)) {
+      if (existing.identity?.class !== 'manual-preview' || identity.class !== 'manual-preview') {
+        throw new ValidationError(
+          `Project environment "${targetKey(resolved)}" is bound to a different identity.`,
+        );
+      }
+      await this.#stopWithTimeout(existing.workdir);
+      try {
+        await rm(existing.workdir, { recursive: true, force: true });
+      } catch (error) {
+        throw operationError('initialize', error);
+      }
+    } else if (existing) {
       return existing.health.state === 'stopped'
         ? this.start(targetFrom(resolved))
         : this.#touch(existing);
+    }
 
     const { workdir, composeProjectName, network, volumes } = projectResources(
       this.#dataDir,

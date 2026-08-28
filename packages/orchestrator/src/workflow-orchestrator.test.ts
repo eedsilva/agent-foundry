@@ -1520,6 +1520,7 @@ describe('generated database sync before browser verification (#429)', () => {
     expect(applyWorkspaceMigrations.mock.invocationCallOrder[0]!).toBeLessThan(
       verify.mock.invocationCallOrder[0]!,
     );
+    expect(verify.mock.calls[0]?.[0]).toMatchObject({ environmentId: 'run-1' });
   });
 });
 

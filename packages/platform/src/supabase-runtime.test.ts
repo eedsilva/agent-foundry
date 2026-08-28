@@ -3,6 +3,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnvironmentOperationError, MigrationApprovalRequiredError } from '@agent-foundry/domain';
 import {
@@ -2307,6 +2308,63 @@ describe('callers address one environment, not one project (#617)', () => {
       JSON.parse(await readFile(environmentMetadata('project-a', ACCEPTED.environmentId), 'utf8'))
         .identity,
     ).toEqual(ACCEPTED);
+  });
+
+  it('fails closed before touching a stack bound to another project version', async () => {
+    let now = NOW;
+    const { command, runtime } = fixture(undefined, { now: () => new Date(now) });
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const path = environmentMetadata('project-a', CANDIDATE.environmentId);
+    const before = await readFile(path, 'utf8');
+    command.mockClear();
+    now = new Date(NOW.getTime() + 1_000);
+
+    await expect(
+      runtime.initialize({
+        projectId: 'project-a',
+        identity: { ...CANDIDATE, projectVersionId: 'version-20' },
+      }),
+    ).rejects.toThrow(/identity/i);
+
+    expect(command).not.toHaveBeenCalled();
+    await expect(readFile(path, 'utf8')).resolves.toBe(before);
+  });
+
+  it('reuses the same identity when it arrives from another JavaScript realm', async () => {
+    const { command, runtime } = fixture();
+    const initialized = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    command.mockClear();
+
+    const sameIdentity = runInNewContext(`(${JSON.stringify(CANDIDATE)})`) as typeof CANDIDATE;
+
+    await expect(
+      runtime.initialize({ projectId: 'project-a', identity: sameIdentity }),
+    ).resolves.toEqual(initialized);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('recreates a manual preview when its migration digest changes', async () => {
+    const { command, runtime } = fixture();
+    const identity = {
+      class: 'manual-preview',
+      projectId: 'project-a',
+      environmentId: 'preflight',
+      migrationDigest: checksum('first'),
+    } as const;
+    await runtime.initialize({ projectId: 'project-a', identity });
+    command.mockClear();
+
+    const recreated = await runtime.initialize({
+      projectId: 'project-a',
+      identity: { ...identity, migrationDigest: checksum('second') },
+    });
+
+    expect(recreated.identity).toMatchObject({
+      class: 'manual-preview',
+      migrationDigest: checksum('second'),
+    });
+    expect(command.mock.calls.some(([operation]) => operation === 'stop')).toBe(true);
+    expect(command.mock.calls.some(([operation]) => operation === 'init')).toBe(true);
   });
 
   it('allocates ports against every environment root, not just the legacy one', async () => {
