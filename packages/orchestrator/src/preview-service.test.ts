@@ -307,15 +307,19 @@ describe('PreviewService durable lifecycle', () => {
   it('activeForProject returns the live session for that project only', async () => {
     const { service } = await buildService();
     const started = await start(service, 'run-1', 'candidate-a');
+    const legacy = await start(service, 'run-legacy');
 
     expect((await service.activeForProject('project-1'))?.id).toBe(started.session.id);
     expect((await service.activeForProject('project-1', 'candidate-a'))?.id).toBe(
       started.session.id,
     );
     expect(await service.activeForProject('project-1', 'candidate-b')).toBeUndefined();
+    expect((await service.activeForProject('project-1', null))?.id).toBe(legacy.session.id);
     expect(await service.activeForProject('project-2')).toBeUndefined();
 
     await service.stop(started.session.id);
+    expect((await service.activeForProject('project-1'))?.id).toBe(legacy.session.id);
+    await service.stop(legacy.session.id);
     expect(await service.activeForProject('project-1')).toBeUndefined();
   });
 
@@ -351,6 +355,19 @@ describe('PreviewService durable lifecycle', () => {
     expect((await built.sessions.get(session.id))?.session).toMatchObject({
       ttl: { expiresAt: '2026-07-16T12:01:10.000Z' },
     });
+  });
+
+  it('renews the exact legacy lease without selecting an explicit sibling', async () => {
+    const built = await buildService();
+    await start(built.service, 'run-candidate', 'candidate-a');
+    const { session: legacy } = await start(built.service, 'run-legacy');
+    built.clock.advance(10_000);
+
+    await expect(built.service.renewForProject('project-1', null)).resolves.toBe(true);
+
+    expect((await built.sessions.get(legacy.id))?.session.ttl.expiresAt).toBe(
+      '2026-07-16T12:01:10.000Z',
+    );
   });
 
   it('activeForProject does not treat a failing session as live', async () => {

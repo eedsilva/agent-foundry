@@ -484,9 +484,18 @@ export class WorkflowOrchestrator {
           'an environment must name the commit it runs.',
       );
     }
-    const previousEvent = await this.events.findLatest(projectId, {
-      type: 'project.provisioned',
-    });
+    const previousEvent = (
+      await Promise.all([
+        this.events.findLatest(projectId, { type: 'project.provisioned' }),
+        this.events.findLatest(projectId, { type: 'project.provisioning_started' }),
+      ])
+    )
+      .filter((event) => event !== null)
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      )
+      .at(-1);
     // Pre-#617 projects have one project-wide runtime. Preserve that explicit
     // legacy topology on retry; allocating an empty sibling would strand data.
     if (previousEvent && previousEvent.data.environment === undefined) return undefined;
@@ -505,7 +514,11 @@ export class WorkflowOrchestrator {
       if (!version || version.runId !== previous.data.runCandidateId) {
         throw new ValidationError(`Project ${projectId} has no matching candidate ProjectVersion.`);
       }
-      if (this.generatedProjectRuntime && !environment) {
+      if (
+        this.generatedProjectRuntime &&
+        previousEvent.type === 'project.provisioned' &&
+        !environment
+      ) {
         throw new ValidationError(
           `Project ${projectId} has no matching preserved candidate stack.`,
         );
@@ -589,7 +602,7 @@ export class WorkflowOrchestrator {
     environmentId?: string,
   ): Promise<PreviewSession | undefined> {
     if (!this.previews) return undefined;
-    if (await this.previews.activeForProject(projectId, environmentId)) return undefined;
+    if (await this.previews.activeForProject(projectId, environmentId ?? null)) return undefined;
     const { session } = await this.previews.start({
       // The session carries the environment so NodePreviewRunner resolves this
       // stack's Supabase credentials, not a sibling class's (#617).
@@ -632,10 +645,11 @@ export class WorkflowOrchestrator {
     const run = await this.runs.get(runId);
     if (!run || !isWorkflowRunStatusTerminal(run.status) || run.status === 'completed') return;
     const environment = await this.runEnvironmentTarget(projectId, runId);
-    const active = await previews.activeForProject(projectId, environment.environmentId ?? runId);
-    if (!active || (active.runId !== runId && active.runId !== environment.environmentId)) {
-      return;
-    }
+    const active = await previews.activeForProject(projectId, environment.environmentId ?? null);
+    if (!active) return;
+    // An explicit environment is the ownership boundary across repair runs.
+    // Legacy sessions have no such identity, so retain their run ownership.
+    if (environment.environmentId === undefined && active.runId !== runId) return;
     try {
       await stop.call(previews, active.id);
     } catch (error) {
@@ -764,20 +778,23 @@ export class WorkflowOrchestrator {
           );
           await this.syncProjectSummary(run);
         }
-        await this.emit(
-          projectId,
-          'project.provisioning_started',
-          'Project provisioning started.',
-          {
-            runId: run.id,
-            dedupeKey: `${run.id}:project.provisioning_started`,
-          },
-        );
         let bootedPreview: PreviewSession | undefined;
         let identity: (EnvironmentIdentity & { class: 'candidate' }) | undefined;
         try {
           identity = await this.runEnvironmentIdentity(projectId, run.id);
           if (identity) this.recordEnvironmentTelemetry(span, identity);
+          // Persist the binding before the first external side effect so a
+          // manual retry after provisioning failure reuses this exact target.
+          await this.emit(
+            projectId,
+            'project.provisioning_started',
+            'Project provisioning started.',
+            {
+              runId: run.id,
+              dedupeKey: `${run.id}:project.provisioning_started`,
+              data: identity ? { environment: identity } : {},
+            },
+          );
           await this.generatedProjectRuntime?.initialize({
             projectId,
             ...(identity ? { identity } : {}),
@@ -812,7 +829,7 @@ export class WorkflowOrchestrator {
         const environment = await this.runEnvironmentTarget(projectId, run.id);
         stopPreviewLeaseHeartbeat = this.startPreviewLeaseHeartbeat(
           projectId,
-          environment.environmentId ?? run.id,
+          environment.environmentId ?? null,
         );
       }
       run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
@@ -979,7 +996,7 @@ export class WorkflowOrchestrator {
     }
   }
 
-  private startPreviewLeaseHeartbeat(projectId: string, environmentId: string): () => void {
+  private startPreviewLeaseHeartbeat(projectId: string, environmentId: string | null): () => void {
     const previews = this.previews;
     const renew = previews?.renewForProject;
     if (!previews || !renew) return () => {};

@@ -144,6 +144,30 @@ const input = {
 };
 
 describe('BrowserVerificationCoordinator', () => {
+  it('addresses the exact legacy preview instead of a project-wide wildcard', async () => {
+    const activeForProject = vi.fn(() => Promise.resolve(undefined));
+    const session = runningSession();
+    const coordinator = new BrowserVerificationCoordinator(
+      {
+        activeForProject,
+        start: () => Promise.resolve({ session, url: session.url! }),
+        stop: () => Promise.resolve({ ...session, status: 'stopped' as const }),
+      },
+      { verify: () => Promise.resolve({ report: report(), evidence: { screenshots: [] } }) },
+      { putBlob: () => Promise.reject(new Error('not called')) },
+      {
+        maxScreenshotBytes: 5_000_000,
+        maxTraceBytes: 20_000_000,
+        maxVideoBytes: 50_000_000,
+        retentionSeconds: 604_800,
+      },
+    );
+
+    await coordinator.verify(input, new AbortController().signal);
+
+    expect(activeForProject).toHaveBeenCalledWith('project-1', null);
+  });
+
   it('keeps the addressed environment on the verification preview session', async () => {
     const session = runningSession();
     const start = vi.fn(async (_input: Parameters<PreviewService['start']>[0]) => ({

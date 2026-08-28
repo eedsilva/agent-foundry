@@ -54,7 +54,10 @@ export class BrowserVerificationCoordinator {
     signal: AbortSignal,
     onSessionStarted?: (sessionId: string) => Promise<void>,
   ): Promise<BrowserVerificationReport> {
-    const active = await this.previews.activeForProject(input.projectId, input.environmentId);
+    const active = await this.previews.activeForProject(
+      input.projectId,
+      input.environmentId ?? null,
+    );
     if (active) await this.previews.stop(active.id);
     const started = await this.previews.start({
       workspaceRef: {
