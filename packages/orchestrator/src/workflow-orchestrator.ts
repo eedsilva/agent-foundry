@@ -675,14 +675,26 @@ export class WorkflowOrchestrator {
       // creates that commit.
       await this.workspaces.ensureGit(projectId);
       const activeRunId = run.id;
-      const provisionedEvent = (await this.events.list(projectId)).find(
-        (event) => event.runId === activeRunId && event.type === 'project.provisioned',
-      );
-      if (provisionedEvent) {
-        const recorded = EnvironmentIdentitySchema.safeParse(provisionedEvent.data?.environment);
-        if (recorded.success) this.recordEnvironmentTelemetry(span, recorded.data);
+      const provisionedEvent = (await this.events.list(projectId))
+        .filter((event) => event.runId === activeRunId && event.type === 'project.provisioned')
+        .at(-1);
+      const recorded = EnvironmentIdentitySchema.safeParse(provisionedEvent?.data?.environment);
+      const recoveredIdentity =
+        recorded.success &&
+        recorded.data.class === 'candidate' &&
+        recorded.data.projectId === projectId &&
+        recorded.data.environmentId === activeRunId &&
+        recorded.data.runCandidateId === activeRunId
+          ? recorded.data
+          : undefined;
+      if (recoveredIdentity) {
+        await this.generatedProjectRuntime?.initialize({
+          projectId,
+          identity: recoveredIdentity,
+        });
+        this.recordEnvironmentTelemetry(span, recoveredIdentity);
       }
-      if ((this.generatedProjectRuntime || this.previews) && !provisionedEvent) {
+      if ((this.generatedProjectRuntime || this.previews) && !recoveredIdentity) {
         if (run.status !== 'running') {
           run = await this.runs.update(
             transitionWorkflowRun(run, 'running', this.clock.now()),
@@ -721,7 +733,7 @@ export class WorkflowOrchestrator {
         }
         await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
           runId: run.id,
-          dedupeKey: `${run.id}:project.provisioned`,
+          dedupeKey: `${run.id}:project.provisioned:${identity.environmentId}`,
           // The identity rides the event so a resumed run reports the same
           // environment and source version without re-resolving a baseline
           // against a HEAD that later steps have already moved (#617).

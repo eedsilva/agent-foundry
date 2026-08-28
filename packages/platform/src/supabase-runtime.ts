@@ -462,6 +462,9 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       await atomicWrite(path, backup);
       const manifest = MigrationBackupSchema.parse({
         path: input.backupPath,
+        ...(environment.identity?.environmentId
+          ? { environmentId: environment.identity.environmentId }
+          : {}),
         checksum: sha256(backup),
         schemaChecksum: sha256(schema),
         dataChecksum: sha256(data),
@@ -471,6 +474,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       const manifestPath = backupManifestPath(
         this.#dataDir,
         environment.projectId,
+        environment.identity?.environmentId,
         manifest.manifestId,
       );
       await mkdir(dirname(manifestPath), { recursive: true });
@@ -550,6 +554,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       try {
         return await this.migrate({
           projectId: input.projectId,
+          ...(input.environmentId ? { environmentId: input.environmentId } : {}),
           migrationPath: `supabase/migrations/${fresh.at(-1)!}`,
           ...(input.approval ? { approval: input.approval } : {}),
         });
@@ -1080,7 +1085,7 @@ function environmentDir(dataDir: string, target: ResolvedTarget): string {
 
 function projectResources(dataDir: string, target: ResolvedTarget) {
   const composeProjectName = target.environmentId
-    ? `supabase_${target.projectId}_${target.environmentId}`
+    ? `supabase_env_${sha256(`${target.projectId}\0${target.environmentId}`)}`
     : `supabase_${target.projectId}`;
   return {
     composeProjectName,
@@ -1551,7 +1556,14 @@ async function requireMigrationApproval(
   }
   let manifest: MigrationBackup;
   try {
-    const path = backupManifestPath(dataDir, environment.projectId, parsed.backup.manifestId);
+    const environmentId = environment.identity?.environmentId;
+    if (parsed.backup.environmentId !== environmentId) throw new Error('environment mismatch');
+    const path = backupManifestPath(
+      dataDir,
+      environment.projectId,
+      environmentId,
+      parsed.backup.manifestId,
+    );
     manifest = MigrationBackupSchema.parse(JSON.parse(await readFile(path, 'utf8')));
   } catch {
     throw new ValidationError(
@@ -1578,12 +1590,18 @@ async function requireMigrationApproval(
   }
 }
 
-function backupManifestPath(dataDir: string, projectId: string, manifestId: string): string {
+function backupManifestPath(
+  dataDir: string,
+  projectId: string,
+  environmentId: string | undefined,
+  manifestId: string,
+): string {
+  const projectRoot = join(dataDir, 'migration-backups', parsePathSegment('project ID', projectId));
   return join(
-    dataDir,
-    'migration-backups',
-    parsePathSegment('project ID', projectId),
-    `${parsePathSegment('project ID', manifestId)}.json`,
+    environmentId
+      ? join(projectRoot, 'environments', parsePathSegment('environment ID', environmentId))
+      : projectRoot,
+    `${parsePathSegment('manifest ID', manifestId)}.json`,
   );
 }
 

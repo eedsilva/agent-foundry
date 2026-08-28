@@ -66,6 +66,7 @@ describe('migration review schemas', () => {
     const migrationChecksum = 'a'.repeat(64);
     const backup = {
       path: 'supabase/backups/20260723.sql',
+      environmentId: 'candidate-1',
       checksum: 'b'.repeat(64),
       schemaChecksum: 'c'.repeat(64),
       dataChecksum: 'd'.repeat(64),

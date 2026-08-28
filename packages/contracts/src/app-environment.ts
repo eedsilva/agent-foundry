@@ -48,6 +48,8 @@ export type MigrationPreview = z.infer<typeof MigrationPreviewSchema>;
 export const MigrationBackupSchema = z
   .object({
     path: z.string().min(1),
+    /** Environment that produced the dump; absent only for the legacy project root. */
+    environmentId: PathSegmentSchema.optional(),
     checksum: Sha256Schema,
     schemaChecksum: Sha256Schema,
     dataChecksum: Sha256Schema,

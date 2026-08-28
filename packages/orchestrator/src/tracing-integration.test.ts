@@ -101,15 +101,53 @@ describe('orchestrator span coverage', () => {
 
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
 
-    // Provisioning is skipped, so the triple can only come from the recorded
-    // event — a resumed span must not drop two thirds of the identity.
-    expect(initialize).not.toHaveBeenCalled();
+    // Recovery validates the recorded identity against runtime metadata before
+    // trusting it, then replays that same triple onto the resumed span.
+    expect(initialize).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      identity: {
+        class: 'candidate',
+        projectId: 'project-1',
+        environmentId: 'run-1',
+        runCandidateId: 'run-1',
+        projectVersionId: 'version-7',
+      },
+    });
     const runSpan = exporter.getFinishedSpans().find((span) => span.name === 'foundry.run');
     expect(runSpan?.attributes).toMatchObject({
       'foundry.project.id': 'project-1',
       'foundry.environment.id': 'run-1',
       'foundry.environment.class': 'candidate',
       'foundry.project.version.id': 'version-7',
+    });
+  });
+
+  it('migrates a legacy provisioned event to an explicit run environment', async () => {
+    const initialize = vi.fn(async () => ({}) as never);
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize } as never,
+    });
+    await seedRun(harness);
+    await harness.events.append({
+      id: 'event-provisioned-legacy',
+      projectId: 'project-1',
+      runId: 'run-1',
+      type: 'project.provisioned',
+      createdAt: harness.clock.now().toISOString(),
+      message: 'Project provisioning completed.',
+      data: {},
+    });
+
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+
+    expect(initialize).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      identity: expect.objectContaining({
+        class: 'candidate',
+        projectId: 'project-1',
+        environmentId: 'run-1',
+        runCandidateId: 'run-1',
+      }),
     });
   });
 

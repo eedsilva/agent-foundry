@@ -788,7 +788,16 @@ enabled = false`);
       return statusCommand(...args);
     });
     const { runtime } = fixture(command);
-    const environment = await runtime.initialize({ projectId: 'project-a' });
+    const environment = await runtime.initialize({
+      projectId: 'project-a',
+      identity: {
+        class: 'candidate',
+        projectId: 'project-a',
+        environmentId: 'candidate-a',
+        runCandidateId: 'run-a',
+        projectVersionId: 'version-a',
+      },
+    });
     const workspaceDir = join(dataDir, 'workspace-migrations');
     await mkdir(workspaceDir, { recursive: true });
     await writeFile(
@@ -803,6 +812,7 @@ enabled = false`);
     await expect(
       runtime.applyWorkspaceMigrations({
         projectId: 'project-a',
+        environmentId: 'candidate-a',
         workspaceMigrationsDir: workspaceDir,
       }),
     ).resolves.toMatchObject({ projectId: 'project-a' });
@@ -1202,6 +1212,72 @@ SELECT '-- not a comment'; DROP TABLE quoted_line_marker;`,
         },
       }),
     ).rejects.toThrow(/generated backup manifest|provenance/i);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('does not accept one environment backup as another environment provenance', async () => {
+    const command = dumpingCommand();
+    const { runtime } = fixture(command);
+    const candidate = await runtime.initialize({
+      projectId: 'project-a',
+      identity: {
+        class: 'candidate',
+        projectId: 'project-a',
+        environmentId: 'candidate-a',
+        runCandidateId: 'run-a',
+        projectVersionId: 'version-a',
+      },
+    });
+    const accepted = await runtime.initialize({
+      projectId: 'project-a',
+      identity: {
+        class: 'accepted',
+        projectId: 'project-a',
+        environmentId: 'accepted-a',
+        projectVersionId: 'version-b',
+      },
+    });
+    await mkdir(join(candidate.workdir, 'supabase', 'backups'), { recursive: true });
+    const backup = await runtime.backupMigration({
+      projectId: 'project-a',
+      environmentId: 'candidate-a',
+      backupPath: 'supabase/backups/candidate.sql',
+    });
+    expect(backup).toMatchObject({ environmentId: 'candidate-a' });
+    await expect(
+      readFile(
+        join(
+          dataDir,
+          'migration-backups',
+          'project-a',
+          'environments',
+          'candidate-a',
+          `${backup.manifestId}.json`,
+        ),
+        'utf8',
+      ),
+    ).resolves.toContain('candidate-a');
+
+    const migrationPath = await writeMigration(
+      accepted.workdir,
+      '20260723120700_drop_tasks.sql',
+      'DROP TABLE tasks;',
+    );
+    const preview = await runtime.previewMigration({
+      projectId: 'project-a',
+      environmentId: 'accepted-a',
+      migrationPath,
+    });
+    command.mockClear();
+
+    await expect(
+      runtime.migrate({
+        projectId: 'project-a',
+        environmentId: 'accepted-a',
+        migrationPath,
+        approval: { migrationChecksum: preview.checksum, backup },
+      }),
+    ).rejects.toThrow(/provenance/i);
     expect(command).not.toHaveBeenCalled();
   });
 
@@ -2308,6 +2384,26 @@ describe('callers address one environment, not one project (#617)', () => {
       JSON.parse(await readFile(environmentMetadata('project-a', ACCEPTED.environmentId), 'utf8'))
         .identity,
     ).toEqual(ACCEPTED);
+  });
+
+  it('does not alias a legacy project and an explicit environment in Compose', async () => {
+    const { runtime } = fixture();
+
+    const legacy = await runtime.initialize({ projectId: 'a_b' });
+    const explicit = await runtime.initialize({
+      projectId: 'a',
+      identity: {
+        class: 'candidate',
+        projectId: 'a',
+        environmentId: 'b',
+        runCandidateId: 'run-a',
+        projectVersionId: 'version-a',
+      },
+    });
+
+    expect(explicit.composeProjectName).not.toBe(legacy.composeProjectName);
+    expect(explicit.network).not.toBe(legacy.network);
+    expect(explicit.volumes).not.toEqual(legacy.volumes);
   });
 
   it('fails closed before touching a stack bound to another project version', async () => {

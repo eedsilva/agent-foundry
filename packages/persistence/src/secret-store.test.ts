@@ -50,6 +50,18 @@ describe('FileSecretStore', () => {
     ]);
   });
 
+  it('rejects an environment id that escapes the project root', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-secrets-'));
+    const projectRoot = join(dataDir, 'projects', 'project-1');
+    const victimRoot = join(dataDir, 'projects', 'victim');
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(victimRoot, { recursive: true });
+    await writeFile(join(victimRoot, '.env'), 'LEAK=proved\n');
+    const store = new FileSecretStore({ projectRoot: () => projectRoot });
+
+    await expect(store.resolveAll('project-1', '../../victim')).rejects.toThrow();
+  });
+
   it('returns empty results when the project has no .env file yet', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-secrets-'));
     const store = new FileSecretStore({ projectRoot: () => join(dataDir, 'projects', 'p2') });

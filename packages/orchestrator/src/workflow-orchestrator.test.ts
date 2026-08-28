@@ -1776,10 +1776,12 @@ describe('destructive-migration approval gate (#535)', () => {
 
     // initialize names the environment through the identity it creates;
     // every later operation addresses that same environment by id.
-    expect(initialize).toHaveBeenCalledTimes(1);
-    expect(initialize.mock.calls[0]![0]).toMatchObject({
-      identity: { class: 'candidate', environmentId: 'run-1', runCandidateId: 'run-1' },
-    });
+    expect(initialize).toHaveBeenCalledTimes(2);
+    for (const [input] of initialize.mock.calls) {
+      expect(input).toMatchObject({
+        identity: { class: 'candidate', environmentId: 'run-1', runCandidateId: 'run-1' },
+      });
+    }
     const addressed: EnvironmentAddress[] = [
       ...applyWorkspaceMigrations.mock.calls,
       ...migrate.mock.calls,

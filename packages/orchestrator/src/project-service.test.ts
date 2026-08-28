@@ -1037,7 +1037,10 @@ describe('ProjectService.create workspace boot', () => {
     harness.queueForWorker(harness.enqueued[0]!);
     await worker.runOnce();
 
-    expect(initialize).toHaveBeenCalledTimes(1);
+    // The retry verifies the recorded binding through initialize's idempotent
+    // recovery path; it must not ask for a different environment.
+    expect(initialize).toHaveBeenCalledTimes(2);
+    expect(initialize.mock.calls[1]).toEqual(initialize.mock.calls[0]);
     expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'completed' });
   });
 });

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse as parseDotEnv } from 'dotenv';
+import { PathSegmentSchema } from '@agent-foundry/contracts';
 import type { SecretStore, WorkspaceManager } from '@agent-foundry/domain';
 
 export class FileSecretStore implements SecretStore {
@@ -28,9 +29,10 @@ export class FileSecretStore implements SecretStore {
     const projectRoot = this.workspaces.projectRoot(projectId);
     const project = await this.readEnvFile(join(projectRoot, '.env'));
     if (environmentId === undefined) return project;
+    const environment = PathSegmentSchema.parse(environmentId);
     return {
       ...project,
-      ...(await this.readEnvFile(join(projectRoot, 'environments', environmentId, '.env'))),
+      ...(await this.readEnvFile(join(projectRoot, 'environments', environment, '.env'))),
     };
   }
 
