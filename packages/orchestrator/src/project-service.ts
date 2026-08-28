@@ -63,6 +63,7 @@ import {
   NotFoundError,
   errorMessage,
   ResumeBlockedError,
+  StandardPrdRejectedError,
   ValidationError,
   VersionConflictError,
   browserRepairId,
@@ -72,6 +73,7 @@ import {
   redactValidationPreflightReport,
   traceContextField,
   transitionWorkflowRun,
+  validateStandardPrd,
 } from '@agent-foundry/domain';
 import { isMigrationApprovalGateId, policyHash, workflowHash } from './idempotency.js';
 import type { QualityObservationService } from './quality-observation-service.js';
@@ -153,7 +155,17 @@ export class ProjectService {
   }
 
   async create(input: CreateProjectRequest): Promise<Project> {
+    const validation = validateStandardPrd(input.prd);
+    if (!validation.ok) {
+      const maxLengthIssues = validation.issues.filter((issue) => issue.code === 'max-length');
+      if (maxLengthIssues.length > 0) throw new StandardPrdRejectedError(maxLengthIssues);
+    }
     const workflow = await this.workflows.get(input.workflowId);
+    let canonicalPrd = input.prd;
+    if (workflow.stack === 'nextjs') {
+      if (!validation.ok) throw new StandardPrdRejectedError(validation.issues);
+      canonicalPrd = validation.prd.canonicalMarkdown;
+    }
     const policyId = input.policyId ?? 'default';
     await this.policies.get(policyId);
     const preflight = await this.validationPreflight?.();
@@ -233,7 +245,7 @@ export class ProjectService {
         await this.runs.create(stagedRun, tx);
       });
 
-      await this.workspaces.initializeProject(project.id, input.prd, scaffoldFiles);
+      await this.workspaces.initializeProject(project.id, canonicalPrd, scaffoldFiles);
       await this.transactionRunner.run(async (tx) => {
         await this.appendEvent(project.id, 'project.created', 'Project and workspace created.', {
           runId,
@@ -291,7 +303,7 @@ export class ProjectService {
       await this.artifacts.put({
         projectId: project.id,
         name: 'prd',
-        content: input.prd,
+        content: canonicalPrd,
         contentType: 'text/markdown',
         createdBy: 'user',
         runId,

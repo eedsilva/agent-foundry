@@ -5,7 +5,11 @@ import {
   type PreviewSession,
   type PreviewWorkspaceRef,
 } from '@agent-foundry/contracts';
-import { EnvironmentOperationError, type GeneratedProjectRuntime } from '@agent-foundry/domain';
+import {
+  EnvironmentOperationError,
+  StandardPrdRejectedError,
+  type GeneratedProjectRuntime,
+} from '@agent-foundry/domain';
 import { authenticationError, makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
 
@@ -53,6 +57,51 @@ describe('ProjectService.retry', () => {
 });
 
 describe('ProjectService.create', () => {
+  it('rejects an oversized PRD before reserving a directory or queueing work', async () => {
+    const harness = makeHarness();
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'x'.repeat(60_000),
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toMatchObject({
+      name: StandardPrdRejectedError.name,
+      issues: expect.arrayContaining([
+        {
+          code: 'max-length',
+          path: 'document',
+          message: 'PRD must not exceed 50,000 characters.',
+        },
+      ]),
+    });
+    expect(await harness.projects.list()).toEqual([]);
+    expect(harness.enqueued).toEqual([]);
+  });
+
+  it('rejects a non-Standard PRD on a nextjs workflow before side effects', async () => {
+    const base = makeHarness();
+    const harness = makeHarness({}, undefined, { workflow: { ...base.workflow, stack: 'nextjs' } });
+
+    await expect(
+      harness.service.create({
+        name: 'Issue Radar',
+        prd: 'x'.repeat(200),
+        workflowId: harness.workflow.id,
+        projectDirectory: '/operator/projects/issue-radar',
+      }),
+    ).rejects.toMatchObject({
+      name: StandardPrdRejectedError.name,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'missing-or-duplicate-field', path: 'title' }),
+      ]),
+    });
+    expect(await harness.projects.list()).toEqual([]);
+    expect(harness.enqueued).toEqual([]);
+  });
+
   it('persists the operator-selected canonical project directory before queueing', async () => {
     const harness = makeHarness();
 

@@ -18,7 +18,7 @@ import {
 import type { AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveAllGates } from './testing-helpers.js';
+import { approveAllGates, VALID_STANDARD_PRD } from './testing-helpers.js';
 
 /**
  * PRD → plan → operator approval → per-task execution. Deliberately stops
@@ -203,7 +203,7 @@ async function startProject(
   const project = await runtime.projectService.create({
     name,
     workflowId: 'task-loop-v1',
-    prd: 'Build a small issue tracker with create and complete flows and deterministic tests.',
+    prd: VALID_STANDARD_PRD,
     projectDirectory,
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');

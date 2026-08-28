@@ -6,6 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AgentStreamEvent, ProjectEvent } from '@agent-foundry/contracts';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
@@ -46,7 +47,7 @@ async function createProject(baseUrl: string): Promise<string> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       name: 'SSE sample',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     }),
   });

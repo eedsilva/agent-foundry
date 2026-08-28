@@ -3,6 +3,7 @@ import type {
   EnvironmentLifecycleOperation,
   MigrationPreview,
 } from '@agent-foundry/contracts';
+import type { StandardPrdIssue } from './standard-prd.js';
 
 export class NotFoundError extends Error {
   override readonly name = 'NotFoundError';
@@ -10,6 +11,20 @@ export class NotFoundError extends Error {
 
 export class ValidationError extends Error {
   override readonly name = 'ValidationError';
+}
+
+/**
+ * A PRD failed PRD Standard 1 validation (#643). Carries every issue so the
+ * caller can report the first one's code/path/message instead of a generic
+ * Zod 400 — the transport schema only bounds length, semantic conformance is
+ * domain's job.
+ */
+export class StandardPrdRejectedError extends Error {
+  override readonly name = 'StandardPrdRejectedError';
+
+  constructor(readonly issues: StandardPrdIssue[]) {
+    super(issues[0]?.message ?? 'PRD does not conform to PRD Standard 1.');
+  }
 }
 
 /**

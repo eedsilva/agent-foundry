@@ -3,25 +3,68 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from './runtime.js';
+// Issue #297's Status App remains explicitly single-user and no-auth. #643 only
+// reformats that product contract; it must not let a reviewer invent access
+// control while making the fixture pass Standard PRD 1.
+const STATUS_APP_PRD = `# PRD — Status App
+PRD Standard: 1
+Interface language: en-US
 
-// Issue #297's "Status App" PRD, kept verbatim in spirit: the non-goals
-// explicitly exclude auth. Under the old `plan-gate` quality loop a
-// plan-reviewer invented an access-control requirement (NFR-09), rejected four
-// plans in 23 minutes, and was still looping past `maxIterations: 3` when the
-// run was killed. ADR 0042 deleted that reviewer; this file is what stops it
-// coming back.
-const STATUS_APP_PRD = [
-  '# Status App',
-  '',
-  '## Goal',
-  'A single-user kanban board with three fixed columns: todo, in progress, done.',
-  'Cards can be created, moved between columns, and deleted. State persists across reloads.',
-  '',
-  '## Non-goals',
-  '- No authentication. There is no sign-in, no session, and no user record.',
-  '- No multi-user support. One person uses one board.',
-  '- No deployment or container publishing concerns.',
-].join('\n');
+## 1. Problem and objective / Problema e objetivo
+
+A single user needs a kanban board whose card state persists across reloads.
+
+## 2. Users and roles / Usuários e papéis
+
+- Single user: creates, moves, and deletes cards without an account.
+
+## 3. Scope and non-goals / Escopo e não objetivos
+
+A board with fixed todo, in progress, and done columns is in scope. Authentication, multi-user support, deployment, and container publishing are excluded.
+
+## 4. Primary journeys / Jornadas principais
+
+1. The user creates a card, moves it between columns, reloads, and sees the same state.
+
+## 5. Screens and states / Telas e estados
+
+The board shows three fixed columns, card actions, and loading, empty, error, and success states.
+
+## 6. Functional requirements / Requisitos funcionais
+
+- **FR-001**: The user can create, move, and delete cards.
+- **FR-002**: Card state persists across reloads.
+
+## 7. Conceptual data and ownership / Dados conceituais e propriedade
+
+One board contains cards, and each card belongs to exactly one of the three fixed columns.
+
+## 8. Business rules / Regras de negócio
+
+- **BR-001**: Every card is in exactly one fixed column.
+
+## 9. Authentication and permissions / Autenticação e permissões
+
+No authentication is required; there is no sign-in, session, user record, or multi-user access boundary.
+
+## 10. Non-functional requirements / Requisitos não funcionais
+
+- **NFR-001**: Card creation, movement, and deletion are keyboard accessible.
+
+## 11. Acceptance criteria / Critérios de aceite
+
+- **AC-001** — Verifies: FR-001, FR-002, BR-001, NFR-001
+  - Given one person uses the board without signing in
+  - When they create and move a card and reload the page
+  - Then the accessible board restores the card in its last column.
+
+## 12. Assumptions / Premissas
+
+None
+
+## 13. Open decisions / Decisões em aberto
+
+None`;
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -59,6 +102,7 @@ async function startStatusAppRun(workerId: string): Promise<{
 
 describe('#297: a minimal no-auth PRD reaches operator approval without a repair loop', () => {
   it('parks on plan.current revision 1 after exactly one model call', async () => {
+    expect(STATUS_APP_PRD).toContain('No authentication is required');
     const { runtime, projectId, runId } = await startStatusAppRun('plan-approval-worker');
 
     const detail = await runtime.projectService.get(projectId);

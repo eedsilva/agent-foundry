@@ -19,7 +19,11 @@ import {
   getRiskById,
   verifyBlobToken,
 } from '@agent-foundry/composition';
-import { currentTraceIds, redactValidationPreflightReport } from '@agent-foundry/domain';
+import {
+  currentTraceIds,
+  redactValidationPreflightReport,
+  validateStandardPrd,
+} from '@agent-foundry/domain';
 import {
   BenchmarkReportSchema,
   BranchVersionRequestSchema,
@@ -67,6 +71,7 @@ import {
   NotFoundError,
   PreviewAccessDeniedError,
   ResumeBlockedError,
+  StandardPrdRejectedError,
   ValidationError,
   VersionConflictError,
 } from '@agent-foundry/domain';
@@ -166,6 +171,16 @@ export async function buildApp(
     }
     if (error instanceof ValidationError) {
       return reply.status(400).send({ error: error.name, message: error.message });
+    }
+    if (error instanceof StandardPrdRejectedError) {
+      const [issue] = error.issues;
+      return reply.status(400).send({
+        error: error.name,
+        message: error.message,
+        code: issue?.code,
+        path: issue?.path,
+        issues: error.issues,
+      });
     }
     if (error instanceof IdempotencyConflictError) {
       return reply.status(409).send({ error: error.name, message: error.message });
@@ -432,9 +447,30 @@ export async function buildApp(
   });
 
   app.post('/projects', async (request, reply) => {
-    const input = CreateProjectRequestSchema.parse(request.body);
-    const project = await runtime.projectService.create(input);
-    return reply.status(202).send({ project });
+    const parsed = CreateProjectRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      const oversizedPrd = parsed.error.issues.some(
+        (issue) => issue.code === 'too_big' && issue.path.length === 1 && issue.path[0] === 'prd',
+      );
+      if (oversizedPrd) {
+        throw new StandardPrdRejectedError([
+          {
+            code: 'max-length',
+            path: 'document',
+            message: 'PRD must not exceed 50,000 characters.',
+          },
+        ]);
+      }
+      throw parsed.error;
+    }
+    const input = parsed.data;
+    const validation = validateStandardPrd(input.prd);
+    if (!validation.ok) throw new StandardPrdRejectedError(validation.issues);
+    const project = await runtime.projectService.create({
+      ...input,
+      prd: validation.prd.canonicalMarkdown,
+    });
+    return reply.status(202).send({ project, identity: validation.prd.identity });
   });
 
   app.get('/projects/:projectId', async (request) => {

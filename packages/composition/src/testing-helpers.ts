@@ -5,6 +5,65 @@ import { execa } from 'execa';
 import type { StepAttempt, StepRun, WorkflowRun } from '@agent-foundry/contracts';
 import type { Runtime } from './runtime.js';
 
+export const VALID_STANDARD_PRD = `# PRD — Test application
+PRD Standard: 1
+Interface language: en-US
+
+## 1. Problem and objective / Problema e objetivo
+
+Let an authenticated owner manage tasks.
+
+## 2. Users and roles / Usuários e papéis
+
+- Owner: manages only their tasks.
+
+## 3. Scope and non-goals / Escopo e não objetivos
+
+Task management; collaboration is excluded.
+
+## 4. Primary journeys / Jornadas principais
+
+1. Owner creates and completes a task.
+
+## 5. Screens and states / Telas e estados
+
+Task list with loading, empty, error, and success states.
+
+## 6. Functional requirements / Requisitos funcionais
+
+- **FR-001**: The owner can create a task.
+
+## 7. Conceptual data and ownership / Dados conceituais e propriedade
+
+A task belongs to one owner.
+
+## 8. Business rules / Regras de negócio
+
+- **BR-001**: Owners access only their tasks.
+
+## 9. Authentication and permissions / Autenticação e permissões
+
+Authentication is required; cross-user access is denied.
+
+## 10. Non-functional requirements / Requisitos não funcionais
+
+- **NFR-001**: The task list is keyboard accessible.
+
+## 11. Acceptance criteria / Critérios de aceite
+
+- **AC-001** — Verifies: FR-001, BR-001, NFR-001
+  - Given an authenticated owner
+  - When the owner creates a task
+  - Then the task appears only in that owner's list.
+
+## 12. Assumptions / Premissas
+
+None
+
+## 13. Open decisions / Decisões em aberto
+
+None`;
+
 // Not exported from index.ts: this is test-only wiring, and re-exporting it through
 // the package barrel would put it on every consumer's public surface. Shared here
 // (rather than one test file importing from another) because importing a *.test.ts

@@ -5,7 +5,12 @@ import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from './runtime.js';
-import { approveAllGates, describeRunFailure, probeDocker } from './testing-helpers.js';
+import {
+  approveAllGates,
+  describeRunFailure,
+  probeDocker,
+  VALID_STANDARD_PRD,
+} from './testing-helpers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -104,7 +109,7 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
       const project = await runtime.projectService.create({
         name: 'Pipeline regression',
         workflowId: 'web-app-v1',
-        prd: 'Build the smallest persistent TODO app that proves the builder pipeline end to end.',
+        prd: VALID_STANDARD_PRD,
         projectDirectory,
       });
       teardownProjectId = project.id;

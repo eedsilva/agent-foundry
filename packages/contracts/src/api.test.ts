@@ -237,6 +237,18 @@ describe('project directory contract (#599)', () => {
   });
 });
 
+describe('Standard PRD transport contract (#643)', () => {
+  it('rejects PRD text above the 50,000-character ceiling', () => {
+    expect(
+      CreateProjectRequestSchema.safeParse({
+        name: 'Builder',
+        prd: 'x'.repeat(50_001),
+        projectDirectory: '/Users/operator/Projects/builder',
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('project detail HTTP contract', () => {
   it('requires and parses knowledge files', () => {
     const detail = {

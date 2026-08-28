@@ -12,6 +12,7 @@ import {
   runTracerScenarioToCompletion,
   TracerRunStuckError,
 } from './tracer.js';
+import { VALID_STANDARD_PRD } from './testing-helpers.js';
 
 const scenariosDir = resolve(import.meta.dirname, '../../../examples/tracer/scenarios');
 
@@ -36,8 +37,7 @@ function toyScenario(
     id: 'toy',
     title: 'Toy scenario',
     workflowId: 'web-app-v1',
-    prompt:
-      'A single-page counter app: one button increments a number shown on screen, and the count persists across reloads.',
+    prompt: VALID_STANDARD_PRD,
     expectedCapabilities: ['Counter persists across reloads'],
     ...overrides,
   });
@@ -58,6 +58,22 @@ describe('loadTracerScenarios', () => {
     const scenarios = await loadTracerScenarios(scenariosDir);
     expect(scenarios.map((scenario) => scenario.id)).toEqual(
       expect.arrayContaining(['crud-heavy', 'dashboard-heavy', 'auth-heavy', 'toy']),
+    );
+  });
+
+  it('keeps each tracer scenario product contract while formatting it as Standard PRD 1', async () => {
+    const scenarios = new Map(
+      (await loadTracerScenarios(scenariosDir)).map((scenario) => [scenario.id, scenario]),
+    );
+
+    expect(scenarios.get('toy')?.prompt).toContain('No authentication is required');
+    expect(scenarios.get('crud-heavy')?.prompt).toContain('PNG or JPEG image up to 2 MB');
+    expect(scenarios.get('dashboard-heavy')?.prompt).toContain('90 days');
+    expect(scenarios.get('auth-heavy')?.prompt).toContain('direct API or database attempt');
+    expect(scenarios.get('auth-heavy')?.prompt).toContain('joined date');
+    expect(scenarios.get('auth-heavy')?.prompt).toContain('signs out');
+    expect(scenarios.get('crud-heavy')?.expectedCapabilities).toContain(
+      'Uploading an image to an item stores the object and shows it on the item view after a reload.',
     );
   });
 
@@ -94,8 +110,7 @@ describe('runTracerScenario (mock mode)', () => {
     const fifthScenario = toyScenario({
       id: 'toy-2',
       title: 'A second, differently-shaped toy scenario',
-      prompt:
-        'A single-page notes app: a textarea lets the user write a note, and a save button persists it to local storage.',
+      prompt: VALID_STANDARD_PRD.replace('Test application', 'Notes application'),
       expectedCapabilities: ['Note persists after reload'],
     });
 

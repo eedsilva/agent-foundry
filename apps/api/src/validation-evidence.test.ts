@@ -14,6 +14,7 @@ import {
   type Runtime,
 } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
 const directories: string[] = [];
@@ -80,7 +81,7 @@ async function createRun(
     url: '/projects',
     payload: {
       name: `Evidence ${index}`,
-      prd: 'Create a small TODO application with persistent storage and a visible list.',
+      prd: VALID_STANDARD_PRD,
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     },
@@ -746,7 +747,7 @@ describe('validation evidence API', () => {
         url: '/projects',
         payload: {
           name: 'Public validation workflow',
-          prd: 'Create a small TODO application with persistent storage and a visible list.',
+          prd: VALID_STANDARD_PRD,
           workflowId: 'web-app-v1',
           projectDirectory: await createProjectDirectory(),
         },

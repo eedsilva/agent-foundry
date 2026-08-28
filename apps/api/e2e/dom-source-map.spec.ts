@@ -6,6 +6,7 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { execa } from 'execa';
 import { buildApp } from '../src/app.js';
+import { VALID_STANDARD_PRD } from '../src/test-support/standard-prd-fixture.js';
 import { reserveEphemeralPort, waitForHttp } from './support.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -92,7 +93,7 @@ async function createProject(): Promise<string> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       name: 'DOM source map E2E',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'golden-flow-e2e-v1',
       projectDirectory: await createProjectDirectory(),
     }),

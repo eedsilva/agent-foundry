@@ -22,6 +22,7 @@ import {
   CONTROL_SESSION_CSRF_HEADER,
 } from '@agent-foundry/contracts';
 import { buildAuthenticatedApp } from '../src/authenticated-app.js';
+import { VALID_STANDARD_PRD } from '../src/test-support/standard-prd-fixture.js';
 import { reserveEphemeralPort, waitForHttp } from './support.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
@@ -362,7 +363,7 @@ async function createProject(policyId?: string): Promise<string> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       name: 'Golden flow E2E',
-      prd: 'x'.repeat(60),
+      prd: VALID_STANDARD_PRD,
       workflowId: 'golden-flow-e2e-v1',
       projectDirectory: await createProjectDirectory(),
       ...(policyId ? { policyId } : {}),

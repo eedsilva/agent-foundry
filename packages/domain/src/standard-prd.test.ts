@@ -252,11 +252,14 @@ describe('validateStandardPrd', () => {
 
   it('measures maximum length before whitespace normalization', () => {
     const result = validateStandardPrd(`${prd()}\n${' '.repeat(50_001)}`);
+    const crlfResult = validateStandardPrd('\r\n'.repeat(25_001));
 
-    expect(result).toMatchObject({
-      ok: false,
-      issues: expect.arrayContaining([expect.objectContaining({ code: 'max-length' })]),
-    });
+    for (const candidate of [result, crlfResult]) {
+      expect(candidate).toMatchObject({
+        ok: false,
+        issues: expect.arrayContaining([expect.objectContaining({ code: 'max-length' })]),
+      });
+    }
   });
 
   it('delimits indented acceptance criteria by their next definition', () => {
