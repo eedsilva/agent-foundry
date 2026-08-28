@@ -184,16 +184,22 @@ export class PreviewService {
   /** The project's live preview session, if one exists. 'failing' does not
    * count: it is already condemned, and a caller that treated it as live
    * would skip a boot the project is about to lose. */
-  async activeForProject(projectId: string): Promise<PreviewSession | undefined> {
+  async activeForProject(
+    projectId: string,
+    environmentId?: string,
+  ): Promise<PreviewSession | undefined> {
     const records = await this.sessions.listActive();
     return records.find(
       (record) =>
-        record.session.workspaceRef.projectId === projectId && record.session.status !== 'failing',
+        record.session.workspaceRef.projectId === projectId &&
+        (environmentId === undefined ||
+          record.session.workspaceRef.environmentId === environmentId) &&
+        record.session.status !== 'failing',
     )?.session;
   }
 
-  async renewForProject(projectId: string): Promise<boolean> {
-    const active = await this.activeForProject(projectId);
+  async renewForProject(projectId: string, environmentId?: string): Promise<boolean> {
+    const active = await this.activeForProject(projectId, environmentId);
     if (!active || !['running', 'unhealthy'].includes(active.status)) return false;
     return this.lifecycleLock.withSessionLock(active.id, async () => {
       const current = await this.sessions.get(active.id);

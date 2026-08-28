@@ -12,7 +12,6 @@ import {
   type ArtifactReference,
   type ExecutableStep,
   type ExecutorHealth,
-  type Project,
   type StoredArtifact,
   type WorkflowDefinition,
 } from '@agent-foundry/contracts';
@@ -367,19 +366,14 @@ describe('ProjectVersion recording hook (#40)', () => {
 
   it('populates ExecutionRequest.secrets with declared names only, never values', async () => {
     const secretStore = new FakeSecretStore({ STRIPE_SECRET_KEY: 'sk-should-never-appear' });
+    const names = vi.spyOn(secretStore, 'names');
     const stores = makeOrchestrator(undefined, undefined, secretStore);
-    const project = {
-      id: 'project-1',
-      name: 'Test',
-      workflowId: WORKFLOW.id,
-      policyId: 'default',
-      version: 1,
-    } as Project;
-    await stores.projects.create(project);
+    await seedRun(stores);
 
-    await stores.orchestrator.runProject(project.id);
+    await stores.orchestrator.runProject('project-1', undefined, 'run-1');
 
     const submitted = stores.executor.submittedExecutionRequests.at(-1);
+    expect(names).toHaveBeenCalledWith('project-1', 'run-1');
     expect(submitted?.secrets).toEqual([{ name: 'STRIPE_SECRET_KEY', ref: 'STRIPE_SECRET_KEY' }]);
     expect(JSON.stringify(submitted)).not.toContain('sk-should-never-appear');
   });
@@ -1642,7 +1636,12 @@ describe('destructive-migration approval gate (#535)', () => {
       throw new MigrationApprovalRequiredError(destructive);
     });
     const migrate = vi.fn(async (_input: EnvironmentAddress) => ({}) as never);
-    const initialize = vi.fn(async (_input: { identity?: unknown }) => ({}) as never);
+    let initializedIdentity: unknown;
+    const initialize = vi.fn(async (input: { identity?: unknown }) => {
+      initializedIdentity = input.identity;
+      return {} as never;
+    });
+    const listEnvironments = vi.fn(async () => [{ identity: initializedIdentity }] as never);
     const backupMigration = vi.fn(async (_input: EnvironmentAddress) => ({
       path: '.foundry/migration-backups/backup.sql',
       checksum: 'b'.repeat(64),
@@ -1660,6 +1659,7 @@ describe('destructive-migration approval gate (#535)', () => {
         migrate,
         backupMigration,
         initialize,
+        listEnvironments,
         health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
       } as never,
       agentOutput: agentOutputFixture(),

@@ -998,7 +998,11 @@ export async function buildApp(
     if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     await runtime.workspaces.ensure(projectId);
     const { session, url } = await runtime.previewService.start({
-      workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+      workspaceRef: {
+        projectId,
+        ...(project.currentRunId ? { environmentId: project.currentRunId } : {}),
+        workspacePath: runtime.workspaces.workspacePath(projectId),
+      },
       ...(project.currentRunId ? { runId: project.currentRunId } : {}),
     });
     return reply.status(202).send({ session, url });

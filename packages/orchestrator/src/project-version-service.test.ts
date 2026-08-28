@@ -248,19 +248,16 @@ describe('ProjectVersionService', () => {
       expect(versions.store.size).toBe(2);
     });
 
-    it('fails closed when history holds no entry for this run at HEAD', async () => {
+    it('creates a baseline for a new run and fails closed when that run later moves HEAD', async () => {
       const { service, versions } = makeService();
       await service.baselineForRun('project-1', 'run-1', 'commit-scaffold');
 
-      // Another run's stack may not borrow run-1's commit binding, and a HEAD
-      // the ledger does not name may not be bound at all.
-      await expect(service.baselineForRun('project-1', 'run-2', 'commit-scaffold')).rejects.toThrow(
-        /no entry for run run-2/,
-      );
+      const retryBaseline = await service.baselineForRun('project-1', 'run-2', 'commit-scaffold');
+      expect(retryBaseline).toMatchObject({ runId: 'run-2', commit: 'commit-scaffold' });
       await expect(service.baselineForRun('project-1', 'run-1', 'commit-moved')).rejects.toThrow(
         /HEAD commit-moved/,
       );
-      expect(versions.store.size).toBe(1);
+      expect(versions.store.size).toBe(2);
     });
   });
 

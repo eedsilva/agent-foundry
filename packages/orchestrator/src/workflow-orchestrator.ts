@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { buffer } from 'node:stream/consumers';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { SpanStatusCode, type Span } from '@opentelemetry/api';
 import type {
   AgentArtifact,
@@ -114,6 +115,7 @@ import {
   NotFoundError,
   PolicyViolationError,
   ProviderAuthenticationError,
+  ValidationError,
   ValidationCampaignLimitError,
   QualityGateError,
   RunCancelledError,
@@ -545,7 +547,7 @@ export class WorkflowOrchestrator {
     environmentId: string,
   ): Promise<PreviewSession | undefined> {
     if (!this.previews) return undefined;
-    if (await this.previews.activeForProject(projectId)) return undefined;
+    if (await this.previews.activeForProject(projectId, environmentId)) return undefined;
     const { session } = await this.previews.start({
       // The session carries the environment so NodePreviewRunner resolves this
       // stack's Supabase credentials, not a sibling class's (#617).
@@ -587,7 +589,7 @@ export class WorkflowOrchestrator {
     if (!previews || !stop) return;
     const run = await this.runs.get(runId);
     if (!run || !isWorkflowRunStatusTerminal(run.status) || run.status === 'completed') return;
-    const active = await previews.activeForProject(projectId);
+    const active = await previews.activeForProject(projectId, runId);
     // A session booted by a different run is that run's to stop.
     if (!active || active.runId !== runId) return;
     try {
@@ -646,7 +648,7 @@ export class WorkflowOrchestrator {
       ? AbortSignal.any([cancellation.signal, externalSignal])
       : cancellation.signal;
     const stopWatching = this.watchForCancellation(run.id, cancellation);
-    const stopPreviewLeaseHeartbeat = this.startPreviewLeaseHeartbeat(projectId);
+    const stopPreviewLeaseHeartbeat = this.startPreviewLeaseHeartbeat(projectId, run.id);
     try {
       throwIfCancelled(signal, run.id);
       // A ceiling can crash after the terminal state write but before summary
@@ -688,6 +690,18 @@ export class WorkflowOrchestrator {
           ? recorded.data
           : undefined;
       if (recoveredIdentity) {
+        const persistedEnvironment = (await this.generatedProjectRuntime?.listEnvironments())?.find(
+          (environment) => isDeepStrictEqual(environment.identity, recoveredIdentity),
+        );
+        if (
+          this.generatedProjectRuntime &&
+          (!persistedEnvironment ||
+            !isDeepStrictEqual(persistedEnvironment.identity, recoveredIdentity))
+        ) {
+          throw new ValidationError(
+            `Run ${activeRunId} has no matching persisted environment for recovery.`,
+          );
+        }
         await this.generatedProjectRuntime?.initialize({
           projectId,
           identity: recoveredIdentity,
@@ -907,12 +921,12 @@ export class WorkflowOrchestrator {
     }
   }
 
-  private startPreviewLeaseHeartbeat(projectId: string): () => void {
+  private startPreviewLeaseHeartbeat(projectId: string, environmentId: string): () => void {
     const previews = this.previews;
     const renew = previews?.renewForProject;
     if (!previews || !renew) return () => {};
     const timer = setInterval(() => {
-      void renew.call(previews, projectId).catch(() => undefined);
+      void renew.call(previews, projectId, environmentId).catch(() => undefined);
     }, 30_000);
     timer.unref?.();
     return () => clearInterval(timer);
@@ -2677,7 +2691,7 @@ export class WorkflowOrchestrator {
       // env over .env; hand it the runtime credentials explicitly.
       const validationDatabaseSecrets =
         validationDatabaseGate && this.secretStore
-          ? await this.secretStore.resolveAll(project.id)
+          ? await this.secretStore.resolveAll(project.id, runId)
           : undefined;
       const gateEnvironment: Record<string, string> = {
         ...(validationDatabaseSecrets?.NEXT_PUBLIC_SUPABASE_URL
@@ -4324,7 +4338,7 @@ export class WorkflowOrchestrator {
         tools: [],
         limits: { timeoutMs: this.options.agentTimeoutMs },
         secrets: this.secretStore
-          ? (await this.secretStore.names(project.id)).map((name) => ({ name, ref: name }))
+          ? (await this.secretStore.names(project.id, runId)).map((name) => ({ name, ref: name }))
           : [],
       },
       signal,

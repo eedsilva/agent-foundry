@@ -2426,6 +2426,43 @@ describe('callers address one environment, not one project (#617)', () => {
     await expect(readFile(path, 'utf8')).resolves.toBe(before);
   });
 
+  it('rejects explicit operations with an empty environment id before any command', async () => {
+    const { command, runtime } = fixture();
+    const legacy = await runtime.initialize({ projectId: 'project-a' });
+    const migrationPath = await writeMigration(
+      legacy.workdir,
+      '20260723120000_create_tasks.sql',
+      'CREATE TABLE tasks (id bigint PRIMARY KEY);',
+    );
+    command.mockClear();
+
+    await expect(
+      runtime.previewMigration({ projectId: 'project-a', environmentId: '', migrationPath }),
+    ).rejects.toThrow();
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('rejects metadata whose identity names a sibling environment', async () => {
+    const { command, runtime } = fixture();
+    await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
+    const path = environmentMetadata('project-a', CANDIDATE.environmentId);
+    const persisted = JSON.parse(await readFile(path, 'utf8'));
+    await writeFile(
+      path,
+      `${JSON.stringify(
+        { ...persisted, identity: { ...CANDIDATE, environmentId: 'candidate-sibling' } },
+        null,
+        2,
+      )}\n`,
+    );
+    command.mockClear();
+
+    await expect(
+      runtime.stop({ projectId: 'project-a', environmentId: CANDIDATE.environmentId }),
+    ).rejects.toThrow(/identity/i);
+    expect(command).not.toHaveBeenCalled();
+  });
+
   it('reuses the same identity when it arrives from another JavaScript realm', async () => {
     const { command, runtime } = fixture();
     const initialized = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });

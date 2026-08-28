@@ -182,8 +182,9 @@ describe('BrowserVerificationCoordinator', () => {
     const stopped: string[] = [];
     const existing = { ...runningSession(), id: 'preview-existing' };
     const started = runningSession();
+    const activeForProject = vi.fn(() => Promise.resolve(existing));
     const previews = {
-      activeForProject: () => Promise.resolve(existing),
+      activeForProject,
       start: () => Promise.resolve({ session: started, url: started.url! }),
       stop: (sessionId: string) => {
         stopped.push(sessionId);
@@ -202,8 +203,10 @@ describe('BrowserVerificationCoordinator', () => {
       },
     );
 
-    await coordinator.verify(input, new AbortController().signal);
+    const addressedInput = { ...input, environmentId: 'candidate-a' };
+    await coordinator.verify(addressedInput, new AbortController().signal);
 
+    expect(activeForProject).toHaveBeenCalledWith('project-1', 'candidate-a');
     expect(stopped).toEqual(['preview-existing', 'preview-1']);
   });
 

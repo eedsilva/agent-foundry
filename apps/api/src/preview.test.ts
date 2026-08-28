@@ -235,7 +235,7 @@ describe('preview routes', () => {
     expect(stop.status).toBe(404);
   });
 
-  it('passes the project current run to preview start', async () => {
+  it('passes the project current run and environment to preview start', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
     const project = await runtime.projects.get(projectId);
@@ -248,7 +248,12 @@ describe('preview routes', () => {
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
 
     expect(response.status).toBe(202);
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ runId: project!.currentRunId }));
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: project!.currentRunId,
+        workspaceRef: expect.objectContaining({ environmentId: project!.currentRunId }),
+      }),
+    );
   });
 });
 

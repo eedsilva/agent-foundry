@@ -277,9 +277,13 @@ async function buildService(
   return { service, runner, clock, events, sessions, artifacts, lifecycleLock };
 }
 
-async function start(service: PreviewService, runId?: string) {
+async function start(service: PreviewService, runId?: string, environmentId?: string) {
   return service.start({
-    workspaceRef: { projectId: 'project-1', workspacePath: '/tmp/project-1' },
+    workspaceRef: {
+      projectId: 'project-1',
+      ...(environmentId ? { environmentId } : {}),
+      workspacePath: '/tmp/project-1',
+    },
     ...(runId ? { runId } : {}),
   });
 }
@@ -287,9 +291,13 @@ async function start(service: PreviewService, runId?: string) {
 describe('PreviewService durable lifecycle', () => {
   it('activeForProject returns the live session for that project only', async () => {
     const { service } = await buildService();
-    const started = await start(service);
+    const started = await start(service, 'run-1', 'candidate-a');
 
     expect((await service.activeForProject('project-1'))?.id).toBe(started.session.id);
+    expect((await service.activeForProject('project-1', 'candidate-a'))?.id).toBe(
+      started.session.id,
+    );
+    expect(await service.activeForProject('project-1', 'candidate-b')).toBeUndefined();
     expect(await service.activeForProject('project-2')).toBeUndefined();
 
     await service.stop(started.session.id);

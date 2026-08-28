@@ -76,9 +76,17 @@ describe('orchestrator span coverage', () => {
   });
 
   it('replays the same environment and version on a resumed run that provisioned earlier (#617)', async () => {
+    const identity = {
+      class: 'candidate',
+      projectId: 'project-1',
+      environmentId: 'run-1',
+      runCandidateId: 'run-1',
+      projectVersionId: 'version-7',
+    } as const;
     const initialize = vi.fn(async () => ({}) as never);
+    const listEnvironments = vi.fn(async () => [{ identity }] as never);
     const harness = makeHarness({}, undefined, {
-      generatedProjectRuntime: { initialize } as never,
+      generatedProjectRuntime: { initialize, listEnvironments } as never,
     });
     await seedRun(harness);
     await harness.events.append({
@@ -89,13 +97,7 @@ describe('orchestrator span coverage', () => {
       createdAt: harness.clock.now().toISOString(),
       message: 'Project provisioning completed.',
       data: {
-        environment: {
-          class: 'candidate',
-          projectId: 'project-1',
-          environmentId: 'run-1',
-          runCandidateId: 'run-1',
-          projectVersionId: 'version-7',
-        },
+        environment: identity,
       },
     });
 
@@ -103,6 +105,7 @@ describe('orchestrator span coverage', () => {
 
     // Recovery validates the recorded identity against runtime metadata before
     // trusting it, then replays that same triple onto the resumed span.
+    expect(listEnvironments).toHaveBeenCalledTimes(1);
     expect(initialize).toHaveBeenCalledWith({
       projectId: 'project-1',
       identity: {
@@ -120,6 +123,37 @@ describe('orchestrator span coverage', () => {
       'foundry.environment.class': 'candidate',
       'foundry.project.version.id': 'version-7',
     });
+  });
+
+  it('fails closed when a provisioned event has no persisted environment', async () => {
+    const initialize = vi.fn(async () => ({}) as never);
+    const listEnvironments = vi.fn(async () => []);
+    const harness = makeHarness({}, undefined, {
+      generatedProjectRuntime: { initialize, listEnvironments } as never,
+    });
+    await seedRun(harness);
+    await harness.events.append({
+      id: 'event-provisioned-missing',
+      projectId: 'project-1',
+      runId: 'run-1',
+      type: 'project.provisioned',
+      createdAt: harness.clock.now().toISOString(),
+      message: 'Project provisioning completed.',
+      data: {
+        environment: {
+          class: 'candidate',
+          projectId: 'project-1',
+          environmentId: 'run-1',
+          runCandidateId: 'run-1',
+          projectVersionId: 'version-7',
+        },
+      },
+    });
+
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /persisted environment/i,
+    );
+    expect(initialize).not.toHaveBeenCalled();
   });
 
   it('migrates a legacy provisioned event to an explicit run environment', async () => {

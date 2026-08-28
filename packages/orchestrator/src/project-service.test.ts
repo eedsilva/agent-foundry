@@ -962,7 +962,18 @@ describe('ProjectService.create workspace boot', () => {
   it('does not boot a second preview when the project already has a live session', async () => {
     const start = vi.fn();
     const harness = makeHarness({}, makeStores(), {
-      previews: { start, activeForProject: async () => previewSession() },
+      previews: {
+        start,
+        activeForProject: async () =>
+          previewSession({
+            runId: 'id-0002',
+            workspaceRef: {
+              projectId: 'id-0001',
+              environmentId: 'id-0002',
+              workspacePath: '/tmp/ws',
+            },
+          }),
+      },
     });
 
     await harness.service.create({
@@ -979,8 +990,45 @@ describe('ProjectService.create workspace boot', () => {
     ).toBe(true);
   });
 
+  it('boots the candidate preview when only a legacy project preview is live', async () => {
+    const start = vi.fn(async (input: { workspaceRef: PreviewWorkspaceRef; runId?: string }) => ({
+      session: previewSession({
+        workspaceRef: input.workspaceRef,
+        ...(input.runId ? { runId: input.runId } : {}),
+      }),
+      url: 'http://127.0.0.1/preview/preview-1/?token=t',
+    }));
+    const harness = makeHarness({}, makeStores(), {
+      previews: {
+        start,
+        activeForProject: async (_projectId, environmentId) =>
+          environmentId === undefined ? previewSession() : undefined,
+      },
+    });
+
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/fake/project',
+    });
+    await runWorker(harness);
+
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'id-0002',
+        workspaceRef: expect.objectContaining({ environmentId: 'id-0002' }),
+      }),
+    );
+  });
+
   it('retries a failed step without reprovisioning the generated runtime', async () => {
-    const initialize = vi.fn(async () => ENVIRONMENT);
+    let initialized: AppEnvironment | undefined;
+    const initialize = vi.fn(
+      async (input: { projectId: string; identity?: AppEnvironment['identity'] }) =>
+        (initialized = { ...ENVIRONMENT, ...(input.identity ? { identity: input.identity } : {}) }),
+    );
+    const listEnvironments = vi.fn(async () => (initialized ? [initialized] : []));
     const unused = () => Promise.reject(new Error('unused test runtime operation'));
     const harness = makeHarness(
       // A plain executor failure is now ADR-0073's Technical Retry (#604): a
@@ -997,7 +1045,7 @@ describe('ProjectService.create workspace boot', () => {
           start: unused,
           stop: unused,
           inspect: unused,
-          listEnvironments: unused,
+          listEnvironments,
           previewMigration: unused,
           applyWorkspaceMigrations: unused,
           verifySchema: unused,
@@ -1037,8 +1085,8 @@ describe('ProjectService.create workspace boot', () => {
     harness.queueForWorker(harness.enqueued[0]!);
     await worker.runOnce();
 
-    // The retry verifies the recorded binding through initialize's idempotent
-    // recovery path; it must not ask for a different environment.
+    // The retry verifies the persisted binding, then uses initialize's
+    // idempotent recovery path; it must not ask for a different environment.
     expect(initialize).toHaveBeenCalledTimes(2);
     expect(initialize.mock.calls[1]).toEqual(initialize.mock.calls[0]);
     expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'completed' });
