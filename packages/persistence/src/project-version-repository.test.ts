@@ -77,6 +77,17 @@ describe('FileProjectVersionRepository', () => {
     expect(versions.map((entry) => entry.id)).toEqual(['version-3', 'version-2']);
   });
 
+  it('does not silently truncate an unbounded ledger lookup', async () => {
+    const repository = new FileProjectVersionRepository(await makeDataDir());
+    await Promise.all(
+      Array.from({ length: 51 }, (_, index) =>
+        repository.create(makeVersion({ id: `version-${index + 1}`, sequence: index + 1 })),
+      ),
+    );
+
+    expect(await repository.list('project-1')).toHaveLength(51);
+  });
+
   it('rejects creating a version that already exists', async () => {
     const repository = new FileProjectVersionRepository(await makeDataDir());
     const version = makeVersion();

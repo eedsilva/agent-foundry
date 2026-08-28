@@ -337,6 +337,36 @@ describe('ProjectService.create', () => {
     expect(harness.enqueued).toHaveLength(0);
   });
 
+  it('rejects a new run synchronously once the project has version history (#617)', async () => {
+    const harness = makeHarness();
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    await harness.versions.recordFromStep({
+      projectId: 'id-0001',
+      runId: 'id-0002',
+      stepRunId: 'step-1',
+      attemptId: 'attempt-1',
+      commit: 'candidate-commit',
+    });
+    const project = await harness.projects.get('id-0001');
+    if (!project) throw new Error('project missing');
+    await harness.projects.update(
+      { ...project, status: 'failed', error: 'candidate failed' },
+      project.version,
+    );
+    harness.enqueued.splice(0);
+
+    await expect(harness.service.retry('id-0001')).rejects.toThrow(
+      /cannot start a new Task Agent run/i,
+    );
+    expect(harness.enqueued).toHaveLength(0);
+    expect(await harness.runs.list('id-0001')).toHaveLength(1);
+  });
+
   it('stops before project creation when validation preflight is blocked', async () => {
     const campaign = ValidationCampaignPreviewSchema.parse({
       schemaVersion: '1',

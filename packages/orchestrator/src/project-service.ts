@@ -75,6 +75,7 @@ import {
 } from '@agent-foundry/domain';
 import { isMigrationApprovalGateId, policyHash, workflowHash } from './idempotency.js';
 import type { QualityObservationService } from './quality-observation-service.js';
+import type { ProjectVersionService } from './project-version-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
 const INITIALIZATION_FAILURE_ATTEMPTS = 2;
@@ -114,6 +115,7 @@ export class ProjectService {
     private readonly harness: HarnessRepository,
     private readonly router: ModelRouter,
     private readonly workspaces: WorkspaceManager,
+    private readonly projectVersions: ProjectVersionService,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly modelOverrides?: ModelOverrideRepository,
@@ -457,6 +459,11 @@ export class ProjectService {
     ) {
       throw new ValidationError(
         'Project initialization failed; retry is blocked until workspace recovery is implemented.',
+      );
+    }
+    if (await this.projectVersions.hasHistory(projectId)) {
+      throw new ValidationError(
+        'Personal v1 cannot start a new Task Agent run after project version history exists.',
       );
     }
     if (input?.prompt) await this.workspaces.writePrd(projectId, input.prompt);

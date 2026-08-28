@@ -85,6 +85,14 @@ export class ProjectVersionService {
     return this.versions.list(projectId, limit);
   }
 
+  get(projectId: string, versionId: string): Promise<ProjectVersion | null> {
+    return this.versions.get(projectId, versionId);
+  }
+
+  async hasHistory(projectId: string): Promise<boolean> {
+    return (await this.versions.list(projectId, 1)).length > 0;
+  }
+
   async compare(
     projectId: string,
     fromVersionId: string,

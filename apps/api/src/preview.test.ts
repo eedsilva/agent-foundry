@@ -74,12 +74,22 @@ async function createStoredSession(runtime: Runtime, projectId: string): Promise
   return session;
 }
 
-async function createActiveSession(runtime: Runtime, projectId: string): Promise<PreviewSession> {
+async function createActiveSession(
+  runtime: Runtime,
+  projectId: string,
+  environmentId?: string,
+): Promise<PreviewSession> {
+  const project = await runtime.projects.get(projectId);
+  const resolvedEnvironmentId = environmentId ?? project?.currentRunId;
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 3600_000).toISOString(); // 1 hour from now
   const session: PreviewSession = {
-    id: `preview-active-${projectId}`,
-    workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+    id: `preview-active-${projectId}-${resolvedEnvironmentId ?? 'legacy'}`,
+    workspaceRef: {
+      projectId,
+      ...(resolvedEnvironmentId ? { environmentId: resolvedEnvironmentId } : {}),
+      workspacePath: runtime.workspaces.workspacePath(projectId),
+    },
     status: 'running',
     version: 1,
     url: `http://127.0.0.1/preview/preview-active-${projectId}/`,
@@ -296,6 +306,16 @@ describe('GET /projects/:projectId/preview/active', () => {
     await createActiveSession(runtime, ownerId);
 
     const response = await fetch(`${baseUrl}/projects/${otherId}/preview/active`);
+
+    expect(await response.json()).toEqual({ session: null });
+  });
+
+  it("does not return a sibling environment's active session", async () => {
+    const { baseUrl, runtime } = await startApi();
+    const projectId = await createProject(baseUrl);
+    await createActiveSession(runtime, projectId, 'sibling-run');
+
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
 
     expect(await response.json()).toEqual({ session: null });
   });

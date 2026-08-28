@@ -94,6 +94,7 @@ describe('orchestrator span coverage', () => {
       projectVersionId: version.id,
     } as const;
     listEnvironments.mockResolvedValue([{ identity }] as never);
+    const listVersions = vi.spyOn(harness.versions, 'list').mockResolvedValue([]);
     await harness.events.append({
       id: 'event-provisioned',
       projectId: 'project-1',
@@ -111,6 +112,7 @@ describe('orchestrator span coverage', () => {
     // Recovery validates the recorded identity against runtime metadata before
     // trusting it, then replays that same triple onto the resumed span.
     expect(listEnvironments).toHaveBeenCalledTimes(1);
+    expect(listVersions).not.toHaveBeenCalled();
     expect(initialize).toHaveBeenCalledWith({
       projectId: 'project-1',
       identity: {

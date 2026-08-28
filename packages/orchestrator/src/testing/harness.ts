@@ -1586,6 +1586,7 @@ export function makeHarness(
     harness,
     router,
     stores.workspaces,
+    versions,
     stores.clock,
     ids,
     stores.modelOverrides,

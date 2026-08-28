@@ -88,7 +88,7 @@ export class FileProjectVersionRepository implements ProjectVersionRepository {
     );
   }
 
-  async list(projectId: string, limit = 50): Promise<ProjectVersion[]> {
+  async list(projectId: string, limit?: number): Promise<ProjectVersion[]> {
     const root = pathFor(this.dataDir, 'projects', projectId, 'versions');
     await ensureDir(root);
     const entries = await readdir(root, { withFileTypes: true });
@@ -98,10 +98,10 @@ export class FileProjectVersionRepository implements ProjectVersionRepository {
         .map((entry) => readVersioned(join(root, entry.name), ProjectVersionSchema)),
     );
 
-    return versions
+    const sorted = versions
       .filter((version): version is ProjectVersion => version !== null)
-      .sort((left, right) => right.sequence - left.sequence)
-      .slice(0, limit);
+      .sort((left, right) => right.sequence - left.sequence);
+    return limit === undefined ? sorted : sorted.slice(0, limit);
   }
 }
 

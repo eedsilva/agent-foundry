@@ -1010,9 +1010,15 @@ export async function buildApp(
 
   app.get('/projects/:projectId/preview/active', async (request) => {
     const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const project = await runtime.projects.get(projectId);
+    if (!project) throw new NotFoundError(`Project ${projectId} not found`);
     const active = await runtime.previewSessions.listActive();
     const projectSessions = active
-      .filter((record) => record.session.workspaceRef.projectId === projectId)
+      .filter(
+        (record) =>
+          record.session.workspaceRef.projectId === projectId &&
+          record.session.workspaceRef.environmentId === project.currentRunId,
+      )
       .sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
     return { session: projectSessions[0]?.session ?? null };
   });

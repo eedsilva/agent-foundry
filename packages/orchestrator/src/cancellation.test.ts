@@ -51,9 +51,11 @@ import {
   type WorkspaceManager,
 } from '@agent-foundry/domain';
 import { ProjectService } from './project-service.js';
+import { ProjectVersionService } from './project-version-service.js';
 import {
   DEFAULT_POLICY,
   InMemoryPolicies,
+  InMemoryProjectVersions,
   InMemoryStepEvents,
   NoopTransactionRunner,
 } from './testing/harness.js';
@@ -657,6 +659,13 @@ function makeHarness(
     ids,
     { agentTimeoutMs: 60_000, cancelPollIntervalMs: 10 },
   );
+  const projectVersions = new ProjectVersionService(
+    new InMemoryProjectVersions(),
+    workspaces,
+    artifacts,
+    clock,
+    ids,
+  );
   const service = new ProjectService(
     projects,
     runs,
@@ -673,6 +682,7 @@ function makeHarness(
     harness,
     router,
     workspaces,
+    projectVersions,
     clock,
     ids,
   );

@@ -50,7 +50,7 @@ describe('policy enforcement', () => {
     expect(harness.stepAttempts.all()).toHaveLength(0);
   });
 
-  it('blocks at the next step boundary when the policy changes mid-run; retry forks under the new policy', async () => {
+  it('blocks policy drift and refuses a new run once candidate history exists', async () => {
     const harness = makeHarness({ implement: 'gated' }, undefined, { policy: strictPolicy() });
     await seedRun(harness);
     const walk = harness.orchestrator.runProject('project-1', undefined, 'run-1');
@@ -61,18 +61,10 @@ describe('policy enforcement', () => {
     await assert.rejects(walk, /changed/); // next step boundary (review) sees the new hash
     expect((await harness.runs.get('run-1'))?.status).toBe('failed');
     expect(harness.events.types()).toContain('policy.violation');
-    // Fork: project retry creates a fresh run that adopts the new policy.
-    await harness.service.retry('project-1');
-    const forked = (await harness.projects.get('project-1'))?.currentRunId;
-    assert.ok(forked && forked !== 'run-1');
-    // The forked run re-executes the gated implement step; release it again.
-    const rerun = harness.orchestrator.runProject('project-1', undefined, forked);
-    while (harness.executor.started('implement') < 2) await new Promise((r) => setTimeout(r, 5));
-    harness.executor.release('implement');
-    await rerun;
-    const run = await harness.runs.get(forked);
-    expect(run?.status).toBe('completed');
-    expect(run?.policy?.version).toBe(2);
+    await expect(harness.service.retry('project-1')).rejects.toThrow(
+      /cannot start a new Task Agent run/i,
+    );
+    expect((await harness.projects.get('project-1'))?.currentRunId).toBe('run-1');
   });
 
   it('blocks resume when the policy hash drifted while paused', async () => {
