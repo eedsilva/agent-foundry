@@ -69,6 +69,9 @@ describe('loadTracerScenarios', () => {
     expect(scenarios.get('toy')?.prompt).toContain('No authentication is required');
     expect(scenarios.get('crud-heavy')?.prompt).toContain('PNG or JPEG image up to 2 MB');
     expect(scenarios.get('dashboard-heavy')?.prompt).toContain('90 days');
+    expect(scenarios.get('auth-heavy')?.prompt).toContain('direct API or database attempt');
+    expect(scenarios.get('auth-heavy')?.prompt).toContain('joined date');
+    expect(scenarios.get('auth-heavy')?.prompt).toContain('signs out');
     expect(scenarios.get('crud-heavy')?.expectedCapabilities).toContain(
       'Uploading an image to an item stores the object and shows it on the item view after a reload.',
     );
