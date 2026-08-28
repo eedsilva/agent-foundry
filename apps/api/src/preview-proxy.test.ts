@@ -86,6 +86,17 @@ async function startPreview(baseUrl: string, runtime: Runtime, id: string, fixtu
     }),
   });
   const { project } = (await projectResponse.json()) as { project: { id: string } };
+  const stored = await runtime.projects.get(project.id);
+  if (!stored?.currentRunId) throw new Error('project has no current run');
+  await runtime.events.append({
+    id: `legacy-${stored.currentRunId}`,
+    projectId: project.id,
+    runId: stored.currentRunId,
+    type: 'project.provisioned',
+    createdAt: new Date().toISOString(),
+    message: 'Legacy proxy fixture provisioned.',
+    data: {},
+  });
   await runtime.workspaces.ensure(project.id);
   const workspacePath = runtime.workspaces.workspacePath(project.id);
   const source =
@@ -417,26 +428,7 @@ describe('inspector script injection', () => {
     script: string,
     id: string,
   ) {
-    const projectResponse = await fetch(`${baseUrl}/projects`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        name: `Inject ${id}`,
-        prd: 'x'.repeat(60),
-        projectDirectory: await createProjectDirectory(),
-      }),
-    });
-    const { project } = (await projectResponse.json()) as { project: { id: string } };
-    await runtime.workspaces.ensure(project.id);
-    const workspacePath = runtime.workspaces.workspacePath(project.id);
-    await writeFile(join(workspacePath, 'server.mjs'), script);
-    await writeNpmManifest(workspacePath);
-    const startResponse = await fetch(`${baseUrl}/projects/${project.id}/preview`, {
-      method: 'POST',
-    });
-    const started = (await startResponse.json()) as { session: { id: string }; url: string };
-    cleanups.push(() => runtime.previewService.stop(started.session.id).then(() => undefined));
-    return started;
+    return startPreview(baseUrl, runtime, id, script);
   }
 
   const HTML_FIXTURE = `
