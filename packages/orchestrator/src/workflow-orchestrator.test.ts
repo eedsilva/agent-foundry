@@ -11,6 +11,7 @@ import {
   type AgentArtifact,
   type ArtifactReference,
   type ExecutableStep,
+  type EnvironmentIdentity,
   type ExecutorHealth,
   type StoredArtifact,
   type WorkflowDefinition,
@@ -1441,7 +1442,15 @@ describe('generated database sync before browser verification (#429)', () => {
       'create table todos ();',
     );
 
-    const applyWorkspaceMigrations = vi.fn(async () => ({}) as never);
+    const applyWorkspaceMigrations = vi.fn(
+      async (_input: { projectId: string; environmentId?: string }) => ({}) as never,
+    );
+    let candidateIdentity: EnvironmentIdentity | undefined;
+    const initialize = vi.fn(async (input: { identity?: EnvironmentIdentity }) => {
+      candidateIdentity ??= input.identity;
+      return {} as never;
+    });
+    const names = vi.fn(async (_projectId: string, _environmentId?: string) => []);
     const verify = vi.fn(
       async (
         input: { plan: { metadata: { name: string; revision: number; sha256: string } } },
@@ -1480,9 +1489,13 @@ describe('generated database sync before browser verification (#429)', () => {
       browserVerification: { verify } as never,
       generatedProjectRuntime: {
         applyWorkspaceMigrations,
-        initialize: vi.fn(async () => ({}) as never),
+        initialize,
+        listEnvironments: vi.fn(async () =>
+          candidateIdentity ? ([{ identity: candidateIdentity }] as never) : [],
+        ),
         health: vi.fn(async () => ({ health: { state: 'healthy' } }) as never),
       } as never,
+      secretStore: { names } as never,
       agentOutput: (request) => {
         if (request.stepId === 'plan') {
           return {
@@ -1515,6 +1528,21 @@ describe('generated database sync before browser verification (#429)', () => {
       verify.mock.invocationCallOrder[0]!,
     );
     expect(verify.mock.calls[0]?.[0]).toMatchObject({ environmentId: 'run-1' });
+
+    const retried = await harness.service.retry('project-1');
+    if (!retried.currentRunId) throw new Error('retry has no run');
+    expect(retried.currentRunId).not.toBe('run-1');
+    await harness.orchestrator.runProject(
+      'project-1',
+      TASK_BROWSER_WORKFLOW.id,
+      retried.currentRunId,
+    );
+
+    expect(applyWorkspaceMigrations.mock.calls.at(-1)?.[0]).toMatchObject({
+      environmentId: 'run-1',
+    });
+    expect(verify.mock.calls.at(-1)?.[0]).toMatchObject({ environmentId: 'run-1' });
+    expect(names.mock.calls.at(-1)).toEqual(['project-1', 'run-1']);
   });
 });
 

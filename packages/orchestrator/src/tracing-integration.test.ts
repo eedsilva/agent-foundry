@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import type { EnvironmentIdentity } from '@agent-foundry/contracts';
+import type { EnvironmentIdentity, PreviewSession } from '@agent-foundry/contracts';
 import { EmergencyCeilingError, type Clock } from '@agent-foundry/domain';
 import { makeHarness, makeStores, rateLimitError, seedRun } from './testing/harness.js';
 
@@ -85,9 +85,43 @@ describe('orchestrator span coverage', () => {
       },
     );
     const listEnvironments = vi.fn(async () => environments as never);
+    let active: PreviewSession | undefined;
+    const activeForProject = vi.fn(async (_projectId: string, environmentId?: string) =>
+      active?.workspaceRef.environmentId === environmentId ? active : undefined,
+    );
+    const start = vi.fn(
+      async (input: {
+        workspaceRef: PreviewSession['workspaceRef'];
+        runId?: string;
+      }): Promise<{ session: PreviewSession; url: string }> => {
+        const now = new Date().toISOString();
+        active = {
+          id: 'preview-retry',
+          workspaceRef: input.workspaceRef,
+          ...(input.runId ? { runId: input.runId } : {}),
+          status: 'running',
+          version: 1,
+          health: { state: 'healthy', consecutiveFailures: 0 },
+          ttl: { seconds: 60 },
+          restartCount: 0,
+          createdAt: now,
+          updatedAt: now,
+          startedAt: now,
+        };
+        return { session: active, url: 'http://127.0.0.1/preview' };
+      },
+    );
+    const stop = vi.fn(async () => active!);
     const harness = makeHarness({}, undefined, {
       generatedProjectRuntime: { initialize, listEnvironments } as never,
+      previews: { activeForProject, start, renewForProject: vi.fn(), stop } as never,
     });
+    const heartbeat = vi.spyOn(
+      harness.orchestrator as unknown as {
+        startPreviewLeaseHeartbeat(projectId: string, environmentId: string): () => void;
+      },
+      'startPreviewLeaseHeartbeat',
+    );
     await seedRun(harness);
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
     const original = initialize.mock.calls[0]![0].identity!;
@@ -102,6 +136,18 @@ describe('orchestrator span coverage', () => {
       runId: retried.currentRunId,
     });
     expect(retryEvent?.data.environment).toEqual(original);
+    expect(heartbeat.mock.calls.at(-1)).toEqual(['project-1', original.environmentId]);
+
+    const retryRun = await harness.runs.get(retried.currentRunId);
+    if (!retryRun) throw new Error('retry run missing');
+    await harness.runs.update({ ...retryRun, status: 'failed' }, retryRun.version);
+    await (
+      harness.orchestrator as unknown as {
+        stopPreviewForFailedRun(projectId: string, runId: string): Promise<void>;
+      }
+    ).stopPreviewForFailedRun('project-1', retried.currentRunId);
+    expect(activeForProject.mock.calls.at(-1)).toEqual(['project-1', original.environmentId]);
+    expect(stop).toHaveBeenCalledWith('preview-retry');
   });
 
   it('replays the same environment and version on a resumed run that provisioned earlier (#617)', async () => {
@@ -224,7 +270,7 @@ describe('orchestrator span coverage', () => {
     expect(initialize).not.toHaveBeenCalled();
   });
 
-  it('migrates a legacy provisioned event to an explicit run environment', async () => {
+  it('preserves an explicitly legacy environment across retry', async () => {
     const initialize = vi.fn(async () => ({}) as never);
     const harness = makeHarness({}, undefined, {
       generatedProjectRuntime: { initialize } as never,
@@ -241,16 +287,16 @@ describe('orchestrator span coverage', () => {
     });
 
     await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const retried = await harness.service.retry('project-1');
+    if (!retried.currentRunId) throw new Error('retry has no run');
+    await harness.orchestrator.runProject('project-1', undefined, retried.currentRunId);
 
-    expect(initialize).toHaveBeenCalledWith({
-      projectId: 'project-1',
-      identity: expect.objectContaining({
-        class: 'candidate',
-        projectId: 'project-1',
-        environmentId: 'run-1',
-        runCandidateId: 'run-1',
-      }),
+    expect(initialize).toHaveBeenLastCalledWith({ projectId: 'project-1' });
+    const retryEvent = await harness.events.findLatest('project-1', {
+      type: 'project.provisioned',
+      runId: retried.currentRunId,
     });
+    expect(retryEvent?.data.environment).toBeUndefined();
   });
 
   it('produces one foundry.run trace with foundry.step and foundry.attempt descendants', async () => {

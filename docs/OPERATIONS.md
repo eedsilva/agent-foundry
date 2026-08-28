@@ -1147,7 +1147,8 @@ local ficar pronta; o padrão é `600000` ms (dez minutos). Em timeout, o runtim
 por até 30 segundos, registra um diagnóstico redigido no evento de provisioning e preserva o
 workdir parcial para inspeção/backup. Depois de corrigir Docker ou Supabase, recovery da mesma run
 recolhe esse workdir; um retry explícito cria outro `WorkflowRun`, mas reutiliza a identidade e a
-stack do Run Candidate preservado. Ele nunca reclassifica ou escolhe uma stack accepted por default.
+stack do Run Candidate preservado. Ele nunca reclassifica ou escolhe uma stack accepted por default;
+projetos pre-#617 com evento de provisioning explicitamente legado continuam no runtime project-wide.
 Se a retenção não for mais necessária,
 faça backup do `DATA_DIR` e use o procedimento explícito de cleanup do runtime; não remova o
 diretório diretamente.

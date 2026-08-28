@@ -119,10 +119,22 @@ async function currentEnvironmentId(
     type: 'project.provisioned',
     runId,
   });
-  if (!event || event.data.environment === undefined) return undefined;
+  if (!event) throw new ValidationError(`Project ${projectId} has no recorded environment.`);
+  if (event.data.environment === undefined) return undefined;
   const recorded = EnvironmentIdentitySchema.safeParse(event?.data?.environment);
-  if (!recorded.success || recorded.data.projectId !== projectId) {
+  if (
+    !recorded.success ||
+    recorded.data.class !== 'candidate' ||
+    recorded.data.projectId !== projectId
+  ) {
     throw new ValidationError(`Project ${projectId} has invalid environment identity.`);
+  }
+  const version = await runtime.projectVersionService.get(
+    projectId,
+    recorded.data.projectVersionId,
+  );
+  if (!version || version.runId !== recorded.data.runCandidateId) {
+    throw new ValidationError(`Project ${projectId} has invalid environment provenance.`);
   }
   if (runtime.generatedProjectRuntime) {
     const environment = (await runtime.generatedProjectRuntime.listEnvironments()).find((entry) =>

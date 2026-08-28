@@ -35,6 +35,23 @@ describe('ProjectService.get', () => {
   });
 });
 
+describe('ProjectService.retry', () => {
+  it('is a no-op while the current run is still queued', async () => {
+    const harness = makeHarness();
+    const created = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+
+    const retried = await harness.service.retry(created.id);
+
+    expect(retried.currentRunId).toBe(created.currentRunId);
+    expect(harness.enqueued).toHaveLength(1);
+  });
+});
+
 describe('ProjectService.create', () => {
   it('persists the operator-selected canonical project directory before queueing', async () => {
     const harness = makeHarness();

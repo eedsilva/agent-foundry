@@ -477,7 +477,7 @@ export class WorkflowOrchestrator {
   private async runEnvironmentIdentity(
     projectId: string,
     runId: string,
-  ): Promise<EnvironmentIdentity & { class: 'candidate' }> {
+  ): Promise<(EnvironmentIdentity & { class: 'candidate' }) | undefined> {
     if (!this.versions) {
       throw new ExecutionError(
         `Project ${projectId} cannot be provisioned without the version ledger: ` +
@@ -487,6 +487,9 @@ export class WorkflowOrchestrator {
     const previousEvent = await this.events.findLatest(projectId, {
       type: 'project.provisioned',
     });
+    // Pre-#617 projects have one project-wide runtime. Preserve that explicit
+    // legacy topology on retry; allocating an empty sibling would strand data.
+    if (previousEvent && previousEvent.data.environment === undefined) return undefined;
     const previous = EnvironmentIdentitySchema.safeParse(previousEvent?.data?.environment);
     if (previousEvent?.data.environment !== undefined) {
       if (!previous.success || previous.data.class !== 'candidate') {
@@ -541,10 +544,9 @@ export class WorkflowOrchestrator {
     }
   }
 
-  /** How every later environment operation of this run addresses the stack
-   * `runEnvironmentIdentity` provisioned — migrations, schema verification and
-   * backups must reach the same environment the run booted, never the legacy
-   * project-wide root. */
+  /** How every later environment operation addresses the stack provisioning
+   * recorded for this run. Explicit candidates stay exact; only an explicit
+   * pre-#617 event without identity addresses the legacy project-wide root. */
   private async runEnvironmentTarget(
     projectId: string,
     runId: string,
@@ -556,10 +558,21 @@ export class WorkflowOrchestrator {
       type: 'project.provisioned',
       runId,
     });
-    if (!event || event.data.environment === undefined) return { projectId };
+    if (!event) {
+      throw new ValidationError(`Run ${runId} has no recorded environment identity.`);
+    }
+    if (event.data.environment === undefined) return { projectId };
     const recorded = EnvironmentIdentitySchema.safeParse(event?.data?.environment);
-    if (!recorded.success || recorded.data.projectId !== projectId) {
+    if (
+      !recorded.success ||
+      recorded.data.class !== 'candidate' ||
+      recorded.data.projectId !== projectId
+    ) {
       throw new ValidationError(`Run ${runId} has invalid environment identity.`);
+    }
+    const version = await this.versions?.get(projectId, recorded.data.projectVersionId);
+    if (!version || version.runId !== recorded.data.runCandidateId) {
+      throw new ValidationError(`Run ${runId} has invalid environment provenance.`);
     }
     return { projectId, environmentId: recorded.data.environmentId };
   }
@@ -573,7 +586,7 @@ export class WorkflowOrchestrator {
   private async bootWorkspacePreview(
     projectId: string,
     runId: string,
-    environmentId: string,
+    environmentId?: string,
   ): Promise<PreviewSession | undefined> {
     if (!this.previews) return undefined;
     if (await this.previews.activeForProject(projectId, environmentId)) return undefined;
@@ -582,7 +595,7 @@ export class WorkflowOrchestrator {
       // stack's Supabase credentials, not a sibling class's (#617).
       workspaceRef: {
         projectId,
-        environmentId,
+        ...(environmentId !== undefined ? { environmentId } : {}),
         workspacePath: this.workspaces.workspacePath(projectId),
       },
       runId,
@@ -618,9 +631,11 @@ export class WorkflowOrchestrator {
     if (!previews || !stop) return;
     const run = await this.runs.get(runId);
     if (!run || !isWorkflowRunStatusTerminal(run.status) || run.status === 'completed') return;
-    const active = await previews.activeForProject(projectId, runId);
-    // A session booted by a different run is that run's to stop.
-    if (!active || active.runId !== runId) return;
+    const environment = await this.runEnvironmentTarget(projectId, runId);
+    const active = await previews.activeForProject(projectId, environment.environmentId ?? runId);
+    if (!active || (active.runId !== runId && active.runId !== environment.environmentId)) {
+      return;
+    }
     try {
       await stop.call(previews, active.id);
     } catch (error) {
@@ -677,7 +692,7 @@ export class WorkflowOrchestrator {
       ? AbortSignal.any([cancellation.signal, externalSignal])
       : cancellation.signal;
     const stopWatching = this.watchForCancellation(run.id, cancellation);
-    const stopPreviewLeaseHeartbeat = this.startPreviewLeaseHeartbeat(projectId, run.id);
+    let stopPreviewLeaseHeartbeat = () => {};
     try {
       throwIfCancelled(signal, run.id);
       // A ceiling can crash after the terminal state write but before summary
@@ -759,15 +774,18 @@ export class WorkflowOrchestrator {
           },
         );
         let bootedPreview: PreviewSession | undefined;
-        let identity: EnvironmentIdentity;
+        let identity: (EnvironmentIdentity & { class: 'candidate' }) | undefined;
         try {
           identity = await this.runEnvironmentIdentity(projectId, run.id);
-          this.recordEnvironmentTelemetry(span, identity);
-          await this.generatedProjectRuntime?.initialize({ projectId, identity });
+          if (identity) this.recordEnvironmentTelemetry(span, identity);
+          await this.generatedProjectRuntime?.initialize({
+            projectId,
+            ...(identity ? { identity } : {}),
+          });
           bootedPreview = await this.bootWorkspacePreview(
             projectId,
             run.id,
-            identity.environmentId,
+            identity?.environmentId,
           );
         } catch (error) {
           const diagnostic = provisioningFailureDiagnostic(error);
@@ -780,15 +798,22 @@ export class WorkflowOrchestrator {
         }
         await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
           runId: run.id,
-          dedupeKey: `${run.id}:project.provisioned:${identity.environmentId}`,
-          // The identity rides the event so a resumed run reports the same
-          // environment and source version without re-resolving a baseline
-          // against a HEAD that later steps have already moved (#617).
+          dedupeKey: `${run.id}:project.provisioned:${identity?.environmentId ?? 'legacy'}`,
+          // Managed identity rides the event so a resumed run reports the
+          // same environment/source version; its absence explicitly records
+          // a pre-#617 legacy root rather than an inferred fallback.
           data: {
             ...(bootedPreview ? provisionedPreviewData(bootedPreview) : {}),
-            environment: identity,
+            ...(identity ? { environment: identity } : {}),
           },
         });
+      }
+      if (this.previews) {
+        const environment = await this.runEnvironmentTarget(projectId, run.id);
+        stopPreviewLeaseHeartbeat = this.startPreviewLeaseHeartbeat(
+          projectId,
+          environment.environmentId ?? run.id,
+        );
       }
       run = await this.ensureInitialVerifiedCheckpoint(run.id, projectId);
       if (run.execution?.ceiling) {
@@ -2724,7 +2749,13 @@ export class WorkflowOrchestrator {
       // env over .env; hand it the runtime credentials explicitly.
       const validationDatabaseSecrets =
         validationDatabaseGate && this.secretStore
-          ? await this.secretStore.resolveAll(project.id, runId)
+          ? await this.secretStore.resolveAll(
+              project.id,
+              (this.generatedProjectRuntime || this.previews
+                ? await this.runEnvironmentTarget(project.id, runId)
+                : { projectId: project.id, environmentId: runId }
+              ).environmentId,
+            )
           : undefined;
       const gateEnvironment: Record<string, string> = {
         ...(validationDatabaseSecrets?.NEXT_PUBLIC_SUPABASE_URL
@@ -3337,10 +3368,16 @@ export class WorkflowOrchestrator {
       let artifact = await this.findArtifactByKey(project.id, step.outputArtifact, idempotencyKey);
       if (!artifact) {
         await this.syncGeneratedDatabase(project, runId, stepRun.nodeId, signal);
+        const environment =
+          this.generatedProjectRuntime || this.previews
+            ? await this.runEnvironmentTarget(project.id, runId)
+            : { projectId: project.id, environmentId: runId };
         const report = await browserVerification.verify(
           {
             projectId: project.id,
-            environmentId: runId,
+            ...(environment.environmentId !== undefined
+              ? { environmentId: environment.environmentId }
+              : {}),
             workspacePath: this.workspaces.workspacePath(project.id),
             runId,
             plan: browserPlan,
@@ -4375,7 +4412,15 @@ export class WorkflowOrchestrator {
         tools: [],
         limits: { timeoutMs: this.options.agentTimeoutMs },
         secrets: this.secretStore
-          ? (await this.secretStore.names(project.id, runId)).map((name) => ({ name, ref: name }))
+          ? (
+              await this.secretStore.names(
+                project.id,
+                (this.generatedProjectRuntime || this.previews
+                  ? await this.runEnvironmentTarget(project.id, runId)
+                  : { projectId: project.id, environmentId: runId }
+                ).environmentId,
+              )
+            ).map((name) => ({ name, ref: name }))
           : [],
       },
       signal,
