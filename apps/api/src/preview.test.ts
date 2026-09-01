@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
+import { recordCandidateEnvironment } from './test-support/environment-fixture.js';
 
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
@@ -57,11 +58,19 @@ async function createProject(baseUrl: string): Promise<string> {
   return project.id;
 }
 
-async function createStoredSession(runtime: Runtime, projectId: string): Promise<PreviewSession> {
+async function createStoredSession(
+  runtime: Runtime,
+  projectId: string,
+  environmentId?: string,
+): Promise<PreviewSession> {
   const now = new Date().toISOString();
   const session: PreviewSession = {
     id: `preview-${projectId}`,
-    workspaceRef: { projectId, workspacePath: runtime.workspaces.workspacePath(projectId) },
+    workspaceRef: {
+      projectId,
+      ...(environmentId ? { environmentId } : {}),
+      workspacePath: runtime.workspaces.workspacePath(projectId),
+    },
     status: 'stopped',
     version: 1,
     health: { state: 'unknown', consecutiveFailures: 0 },
@@ -104,36 +113,6 @@ async function createActiveSession(
   return session;
 }
 
-async function recordCandidateEnvironment(runtime: Runtime, projectId: string): Promise<string> {
-  const project = await runtime.projects.get(projectId);
-  if (!project?.currentRunId) throw new Error('project has no current run');
-  await runtime.workspaces.ensureGit(projectId);
-  const head = await runtime.workspaces.head(projectId);
-  if (!head) throw new Error('project has no workspace HEAD');
-  const version = await runtime.projectVersionService.baselineForRun(
-    projectId,
-    project.currentRunId,
-    head,
-  );
-  const identity = {
-    class: 'candidate',
-    projectId,
-    environmentId: project.currentRunId,
-    runCandidateId: project.currentRunId,
-    projectVersionId: version.id,
-  } as const;
-  await runtime.events.append({
-    id: `provisioned-${project.currentRunId}`,
-    projectId,
-    runId: project.currentRunId,
-    type: 'project.provisioned',
-    createdAt: new Date().toISOString(),
-    message: 'Project provisioning completed.',
-    data: { environment: identity },
-  });
-  return identity.environmentId;
-}
-
 async function recordLegacyEnvironment(runtime: Runtime, projectId: string): Promise<void> {
   const project = await runtime.projects.get(projectId);
   if (!project?.currentRunId) throw new Error('project has no current run');
@@ -149,34 +128,17 @@ async function recordLegacyEnvironment(runtime: Runtime, projectId: string): Pro
 }
 
 describe('preview routes', () => {
-  it('starts and stops a preview session for an explicitly legacy project', async () => {
+  it('refuses to start a preview for an explicitly legacy project (#618)', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
     await recordLegacyEnvironment(runtime, projectId);
-    await runtime.workspaces.ensure(projectId);
-    const workspacePath = runtime.workspaces.workspacePath(projectId);
-    await writeFile(
-      join(workspacePath, 'package.json'),
-      JSON.stringify({ scripts: { dev: 'node -e "process.exit(1)"' } }),
-    );
+    const start = vi.spyOn(runtime.previewService, 'start');
 
-    const startResponse = await fetch(`${baseUrl}/projects/${projectId}/preview`, {
-      method: 'POST',
-    });
-    expect(startResponse.status).toBe(202);
-    const started = (await startResponse.json()) as {
-      session: { id: string; status: string };
-      url: string;
-    };
-    expect(['starting', 'failed']).toContain(started.session.status); // a dev command that exits 1 fails fast; still proves the wiring
+    const response = await fetch(`${baseUrl}/projects/${projectId}/preview`, { method: 'POST' });
 
-    const stopResponse = await fetch(
-      `${baseUrl}/projects/${projectId}/preview/${started.session.id}/stop`,
-      { method: 'POST' },
-    );
-    expect(stopResponse.status).toBe(202);
-    const stopped = (await stopResponse.json()) as { session: { status: string } };
-    expect(['stopped', 'failed']).toContain(stopped.session.status);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ message: expect.stringContaining('#618') });
+    expect(start).not.toHaveBeenCalled();
   });
 
   it('does not route a project with missing provisioning state to the legacy root', async () => {
@@ -387,24 +349,12 @@ describe('GET /projects/:projectId/preview/active', () => {
   it('returns null when no session is active', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
-    await recordLegacyEnvironment(runtime, projectId);
+    await recordCandidateEnvironment(runtime, projectId);
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ session: null });
-  });
-
-  it('returns the active session for a project', async () => {
-    const { baseUrl, runtime } = await startApi();
-    const projectId = await createProject(baseUrl);
-    await recordLegacyEnvironment(runtime, projectId);
-    const session = await createActiveSession(runtime, projectId);
-
-    const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ session });
   });
 
   it('returns the active session for the current explicit environment', async () => {
@@ -415,14 +365,15 @@ describe('GET /projects/:projectId/preview/active', () => {
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
 
+    expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ session });
   });
 
   it('does not return a stopped session', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
-    await recordLegacyEnvironment(runtime, projectId);
-    await createStoredSession(runtime, projectId);
+    const environmentId = await recordCandidateEnvironment(runtime, projectId);
+    await createStoredSession(runtime, projectId, environmentId);
 
     const response = await fetch(`${baseUrl}/projects/${projectId}/preview/active`);
 
@@ -433,8 +384,9 @@ describe('GET /projects/:projectId/preview/active', () => {
     const { baseUrl, runtime } = await startApi();
     const ownerId = await createProject(baseUrl);
     const otherId = await createProject(baseUrl);
-    await recordLegacyEnvironment(runtime, otherId);
-    await createActiveSession(runtime, ownerId);
+    const ownerEnvironmentId = await recordCandidateEnvironment(runtime, ownerId);
+    await recordCandidateEnvironment(runtime, otherId);
+    await createActiveSession(runtime, ownerId, ownerEnvironmentId);
 
     const response = await fetch(`${baseUrl}/projects/${otherId}/preview/active`);
 

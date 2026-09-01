@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { test, expect } from '@playwright/test';
 import { parse as parseDotEnv } from 'dotenv';
@@ -61,14 +61,26 @@ test.describe('generated app auth', () => {
     if (!runtime.generatedProjectRuntime) {
       throw new Error('Real-mode runtime did not wire a generatedProjectRuntime.');
     }
-    await runtime.generatedProjectRuntime.initialize({ projectId: PROJECT_ID });
-    workdir = join(dataDir, 'projects', PROJECT_ID, 'environment');
+    // Provisioned by hand, outside any Run Candidate, so `manual-preview` is
+    // the only class that describes it. #618 removed the project-wide address
+    // this used to rely on: the environment has to be named to be reachable.
+    const environment = await runtime.generatedProjectRuntime.initialize({
+      projectId: PROJECT_ID,
+      identity: {
+        class: 'manual-preview',
+        projectId: PROJECT_ID,
+        environmentId: 'e2e',
+        migrationDigest: createHash('sha256').update(PROJECT_ID).digest('hex'),
+      },
+    });
+    workdir = environment.workdir;
 
     // The real credential bridge (packages/platform/src/supabase-secrets.ts,
     // wired into SupabaseGeneratedProjectRuntime#initialize) already wrote
     // this file; read it the same way NodePreviewRunner's SecretStore does
     // in production instead of deriving credentials a second way.
-    const envPath = join(dataDir, 'projects', PROJECT_ID, '.env');
+    // Sibling of the environment's workdir, per environment since #618.
+    const envPath = join(dirname(workdir), '.env');
     const secrets = parseDotEnv(await readFile(envPath, 'utf8'));
     const supabaseUrl = secrets.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY;

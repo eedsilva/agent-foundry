@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { cp, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { parse as parseDotEnv } from 'dotenv';
 import { createRuntime } from '@agent-foundry/composition';
@@ -61,8 +62,17 @@ export async function bootIssueRadarApp(projectId: string): Promise<IssueRadarFi
     if (!runtime.generatedProjectRuntime) {
       throw new Error('Real-mode runtime did not wire a generatedProjectRuntime.');
     }
-    await runtime.generatedProjectRuntime.initialize({ projectId });
-    workdir = join(dataDir, 'projects', projectId, 'environment');
+    // Provisioned by hand, outside any Run Candidate, so `manual-preview` is
+    // the only class that describes it. #618 removed the project-wide address
+    // this used to rely on: the environment has to be named to be reachable.
+    const identity = {
+      class: 'manual-preview',
+      projectId,
+      environmentId: 'e2e',
+      migrationDigest: createHash('sha256').update(projectId).digest('hex'),
+    } as const;
+    const environment = await runtime.generatedProjectRuntime.initialize({ projectId, identity });
+    workdir = environment.workdir;
 
     // Apply the real Issue Radar migrations (read from the checked-in example,
     // not re-typed here) on top of the storage migration `initialize()`
@@ -83,11 +93,13 @@ export async function bootIssueRadarApp(projectId: string): Promise<IssueRadarFi
       await cp(join(migrationsSourceDir, name), targetPath);
       await runtime.generatedProjectRuntime.migrate({
         projectId,
+        environmentId: identity.environmentId,
         migrationPath: `supabase/migrations/${name}`,
       });
     }
 
-    const envPath = join(dataDir, 'projects', projectId, '.env');
+    // Sibling of the environment's workdir, per environment since #618.
+    const envPath = join(dirname(workdir), '.env');
     const secrets = parseDotEnv(await readFile(envPath, 'utf8'));
     const supabaseUrl = secrets.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY;

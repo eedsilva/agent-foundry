@@ -477,7 +477,7 @@ export class WorkflowOrchestrator {
   private async runEnvironmentIdentity(
     projectId: string,
     runId: string,
-  ): Promise<(EnvironmentIdentity & { class: 'candidate' }) | undefined> {
+  ): Promise<EnvironmentIdentity & { class: 'candidate' }> {
     if (!this.versions) {
       throw new ExecutionError(
         `Project ${projectId} cannot be provisioned without the version ledger: ` +
@@ -496,9 +496,16 @@ export class WorkflowOrchestrator {
           left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
       )
       .at(-1);
-    // Pre-#617 projects have one project-wide runtime. Preserve that explicit
-    // legacy topology on retry; allocating an empty sibling would strand data.
-    if (previousEvent && previousEvent.data.environment === undefined) return undefined;
+    // Pre-#617 projects have one project-wide runtime. #618 removed that
+    // address, so a retry fails with remediation instead of provisioning an
+    // empty sibling that strands the legacy stack's data.
+    if (previousEvent && previousEvent.data.environment === undefined) {
+      throw new ValidationError(
+        `Project ${projectId} was provisioned before #617 and has no environment identity to ` +
+          'address. The legacy project-wide environment root was removed (#618): start a new ' +
+          'run to provision an environment with an explicit identity.',
+      );
+    }
     const previous = EnvironmentIdentitySchema.safeParse(previousEvent?.data?.environment);
     if (previousEvent?.data.environment !== undefined) {
       if (!previous.success || previous.data.class !== 'candidate') {
@@ -557,15 +564,17 @@ export class WorkflowOrchestrator {
     }
   }
 
-  /** How every later environment operation addresses the stack provisioning
-   * recorded for this run. Explicit candidates stay exact; only an explicit
-   * pre-#617 event without identity addresses the legacy project-wide root. */
+  /** How every later environment operation addresses the stack provisioned for
+   * this run: always one exact environment. A pre-#617 `project.provisioned`
+   * event carries no identity, and #618 removed the legacy project-wide
+   * address it used to fall back to — such a run fails here with remediation
+   * rather than handing an ambiguous target to migrate/verifySchema/cleanup. */
   async environmentTargetForRun(
     projectId: string,
     runId: string,
   ): Promise<{
     projectId: string;
-    environmentId?: string;
+    environmentId: string;
   }> {
     const event = await this.events.findLatest(projectId, {
       type: 'project.provisioned',
@@ -574,7 +583,13 @@ export class WorkflowOrchestrator {
     if (!event) {
       throw new ValidationError(`Run ${runId} has no recorded environment identity.`);
     }
-    if (event.data.environment === undefined) return { projectId };
+    if (event.data.environment === undefined) {
+      throw new ValidationError(
+        `Run ${runId} was provisioned before #617 and has no environment identity to address. ` +
+          'The legacy project-wide environment root was removed (#618): start a new run to ' +
+          'provision an environment with an explicit identity.',
+      );
+    }
     const recorded = EnvironmentIdentitySchema.safeParse(event?.data?.environment);
     if (
       !recorded.success ||
@@ -787,10 +802,10 @@ export class WorkflowOrchestrator {
           await this.syncProjectSummary(run);
         }
         let bootedPreview: PreviewSession | undefined;
-        let identity: (EnvironmentIdentity & { class: 'candidate' }) | undefined;
+        let identity: EnvironmentIdentity & { class: 'candidate' };
         try {
           identity = await this.runEnvironmentIdentity(projectId, run.id);
-          if (identity) this.recordEnvironmentTelemetry(span, identity);
+          this.recordEnvironmentTelemetry(span, identity);
           // Persist the binding before the first external side effect so a
           // manual retry after provisioning failure reuses this exact target.
           await this.emit(
@@ -800,17 +815,14 @@ export class WorkflowOrchestrator {
             {
               runId: run.id,
               dedupeKey: `${run.id}:project.provisioning_started`,
-              data: identity ? { environment: identity } : {},
+              data: { environment: identity },
             },
           );
-          await this.generatedProjectRuntime?.initialize({
-            projectId,
-            ...(identity ? { identity } : {}),
-          });
+          await this.generatedProjectRuntime?.initialize({ projectId, identity });
           bootedPreview = await this.bootWorkspacePreview(
             projectId,
             run.id,
-            identity?.environmentId,
+            identity.environmentId,
           );
         } catch (error) {
           const diagnostic = provisioningFailureDiagnostic(error);
@@ -823,13 +835,13 @@ export class WorkflowOrchestrator {
         }
         await this.emit(projectId, 'project.provisioned', 'Project provisioning completed.', {
           runId: run.id,
-          dedupeKey: `${run.id}:project.provisioned:${identity?.environmentId ?? 'legacy'}`,
-          // Managed identity rides the event so a resumed run reports the
-          // same environment/source version; its absence explicitly records
-          // a pre-#617 legacy root rather than an inferred fallback.
+          dedupeKey: `${run.id}:project.provisioned:${identity.environmentId}`,
+          // Managed identity rides the event so a resumed run reports the same
+          // environment/source version. Events written before #617 carry none;
+          // they are still read (and rejected with remediation), never written.
           data: {
             ...(bootedPreview ? provisionedPreviewData(bootedPreview) : {}),
-            ...(identity ? { environment: identity } : {}),
+            environment: identity,
           },
         });
       }

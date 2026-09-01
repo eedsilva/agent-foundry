@@ -20,6 +20,15 @@ import {
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ID = 'project-a';
+const ENVIRONMENT_ID = 'env-1';
+/** #618: environments are addressed explicitly; the stack lives under its own root. */
+const IDENTITY = {
+  class: 'candidate',
+  projectId: 'project-a',
+  environmentId: ENVIRONMENT_ID,
+  runCandidateId: 'run-1',
+  projectVersionId: 'version-1',
+} as const;
 const STOP_TIMEOUT_MS = 60_000;
 const PNG_1X1 = Uint8Array.from(
   Buffer.from(
@@ -40,14 +49,21 @@ describe.runIf(process.env.RUN_SUPABASE_STORAGE_E2E === 'true')(
       'enforces RLS, quarantine, limits, export, and cleanup on the real local stack',
       async () => {
         const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-storage-'));
-        const workdir = join(dataDir, 'projects', PROJECT_ID, 'environment');
+        const workdir = join(
+          dataDir,
+          'projects',
+          PROJECT_ID,
+          'environments',
+          ENVIRONMENT_ID,
+          'environment',
+        );
         const runtime = new SupabaseGeneratedProjectRuntime({ dataDir });
         const objectNames = new Set<string>();
         let credentials: Credentials | undefined;
         let bodyError: unknown;
 
         try {
-          await runtime.initialize({ projectId: PROJECT_ID });
+          await runtime.initialize({ projectId: PROJECT_ID, identity: IDENTITY });
           credentials = await readCredentials(workdir, STOP_TIMEOUT_MS);
           const userA = await createUser(credentials);
           const userB = await createUser(credentials);

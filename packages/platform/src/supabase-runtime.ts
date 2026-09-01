@@ -147,20 +147,32 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async initialize(input: {
     projectId: string;
-    /** When present, the environment is addressed and recorded explicitly.
-     * Absent keeps the legacy single-environment root; nothing infers a class
-     * for it (#616). */
-    identity?: EnvironmentIdentity;
+    /** The environment this call provisions, addressed and recorded
+     * explicitly. Required since #618: the legacy single-environment root is
+     * no longer addressable and nothing infers a class for it (#616). */
+    identity: EnvironmentIdentity;
   }): Promise<AppEnvironment> {
-    const identity = input.identity ? EnvironmentIdentitySchema.parse(input.identity) : undefined;
-    if (identity && identity.projectId !== input.projectId) {
+    // The other half of the #618 boundary. explicitTarget() covers callers
+    // that address an existing environment; this covers the one that creates
+    // it. Absent identity used to mean the legacy project-wide root, so an
+    // untyped caller that still omits it must read remediation, not the
+    // schema's "expected object, received undefined".
+    if (input.identity === undefined) {
+      throw new ValidationError(
+        `Project environment for "${input.projectId}" was initialized without an identity. ` +
+          'The legacy project-wide root was removed (#618): pass the EnvironmentIdentity naming ' +
+          "the environment to provision — WorkflowOrchestrator derives a run's candidate " +
+          'identity from its ProjectVersion. Nothing infers a class for an absent one.',
+      );
+    }
+    const identity = EnvironmentIdentitySchema.parse(input.identity);
+    if (identity.projectId !== input.projectId) {
       throw new ValidationError('Environment identity must name the same project as the request.');
     }
-    const resolved = resolveTarget(
-      identity
-        ? { projectId: input.projectId, environmentId: identity.environmentId }
-        : input.projectId,
-    );
+    const resolved = explicitTarget({
+      projectId: input.projectId,
+      environmentId: identity.environmentId,
+    });
     const key = targetKey(resolved);
     const inFlight = this.#initializations.get(key);
     if (inFlight) return inFlight;
@@ -172,8 +184,8 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async #initialize(
-    resolved: ResolvedTarget,
-    identity?: EnvironmentIdentity,
+    resolved: ExplicitTarget,
+    identity: EnvironmentIdentity,
   ): Promise<AppEnvironment> {
     const projectId = resolved.projectId;
     const existing = await this.#read(resolved);
@@ -182,7 +194,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     // production caller. A stopped environment must be brought back up here,
     // or the project is permanently unusable after it goes idle. start()
     // itself is a no-op when already healthy, so this composes safely.
-    if (existing && identity && JSON.stringify(existing.identity) !== JSON.stringify(identity)) {
+    if (existing && JSON.stringify(existing.identity) !== JSON.stringify(identity)) {
       if (existing.identity?.class !== 'manual-preview' || identity.class !== 'manual-preview') {
         throw new ValidationError(
           `Project environment "${targetKey(resolved)}" is bound to a different identity.`,
@@ -195,9 +207,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
         throw operationError('initialize', error);
       }
     } else if (existing) {
-      return existing.health.state === 'stopped'
-        ? this.start(targetFrom(resolved))
-        : this.#touch(existing);
+      return existing.health.state === 'stopped' ? this.start(resolved) : this.#touch(existing);
     }
 
     const { workdir, composeProjectName, network, volumes } = projectResources(
@@ -268,7 +278,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
           health: { state: 'healthy', checkedAt: timestamp },
           createdAt: timestamp,
           updatedAt: timestamp,
-          ...(identity ? { identity } : {}),
+          identity,
         },
         result.stdout,
         'healthy',
@@ -326,7 +336,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async start(target: EnvironmentTarget): Promise<AppEnvironment> {
-    const environment = await this.#require(target);
+    const environment = await this.#require(explicitTarget(target));
     if (environment.health.state === 'healthy') return environment;
     await this.#execute(
       'start',
@@ -360,7 +370,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async stop(target: EnvironmentTarget): Promise<AppEnvironment> {
-    const environment = await this.#require(target);
+    const environment = await this.#require(explicitTarget(target));
     if (environment.health.state === 'stopped') return environment;
     await this.#execute('stop', 'stop', '--workdir', environment.workdir);
     const timestamp = this.#now().toISOString();
@@ -374,7 +384,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
   }
 
   async inspect(target: EnvironmentTarget): Promise<AppEnvironment | null> {
-    const environment = await this.#read(target);
+    const environment = await this.#read(explicitTarget(target));
     if (!environment) return null;
     const result = await this.#execute(
       'inspect',
@@ -400,7 +410,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
     const environments: AppEnvironment[] = [];
     for (const target of await environmentTargets(this.#dataDir)) {
       try {
-        const environment = await this.#read(targetFrom(target));
+        const environment = await this.#read(target);
         if (environment) environments.push(environment);
       } catch {
         // Corrupt metadata or an invalid project-id path segment must not
@@ -412,21 +422,23 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async previewMigration(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     migrationPath: string;
   }): Promise<MigrationPreview> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     return migrationPreview(environment.workdir, input.migrationPath);
   }
 
   async backupMigration(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     backupPath: string;
   }): Promise<MigrationBackup> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     const path = await containedOutputFile(environment.workdir, input.backupPath);
     const suffix = randomUUID();
     const schemaPath = `${path}.${suffix}.schema.sql`;
@@ -487,12 +499,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async migrate(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     migrationPath: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     await migrationFile(environment.workdir, input.migrationPath);
     const destructive = (await migrationPreviews(environment.workdir)).filter(
       (preview) => preview.destructiveStatements.length,
@@ -512,12 +525,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async applyWorkspaceMigrations(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     workspaceMigrationsDir: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment | null> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     let names: string[];
     try {
       names = (await readdir(input.workspaceMigrationsDir))
@@ -554,7 +568,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
       try {
         return await this.migrate({
           projectId: input.projectId,
-          ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+          environmentId: input.environmentId,
           migrationPath: `supabase/migrations/${fresh.at(-1)!}`,
           ...(input.approval ? { approval: input.approval } : {}),
         });
@@ -625,11 +639,12 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
    */
   async verifySchema(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     tables: SchemaTable[];
   }): Promise<SchemaVerification> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     const sql = this.#sqlClientFactory(await this.#databaseUrl(environment));
     try {
       const [tableRows, columnRows, rlsRows, policyRows] = await Promise.all([
@@ -703,18 +718,19 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async seed(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     seedPath: string;
   }): Promise<AppEnvironment> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     await requireContainedFile(environment.workdir, input.seedPath);
     await this.#execute('seed', 'seed', '--workdir', environment.workdir, '--yes');
     return this.#touch(environment);
   }
 
   async health(target: EnvironmentTarget): Promise<AppEnvironment> {
-    const environment = await this.#require(target);
+    const environment = await this.#require(explicitTarget(target));
     const result = await this.#execute(
       'health',
       'status',
@@ -737,24 +753,26 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async reset(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<AppEnvironment> {
     requireDestructiveConfirmation(input.confirmation, this.#now());
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     await this.#execute('reset', 'db', 'reset', '--workdir', environment.workdir, '--yes');
     return this.#touch(environment);
   }
 
   async cleanup(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<void> {
     requireDestructiveConfirmation(input.confirmation, this.#now());
-    const target = resolveTarget(targetFrom(input));
+    const target = explicitTarget(input);
     const environment = await this.#read(target);
     if (!environment) return;
     await this.#execute(
@@ -773,12 +791,13 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async deployFunction(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     functionPath: string;
     artifact: FunctionArtifact;
   }): Promise<FunctionVersion> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     const artifact = FunctionArtifactSchema.parse(input.artifact);
     if (input.functionPath !== `supabase/functions/${artifact.name}`) {
       throw new ValidationError('Function source path must match supabase/functions/<name>.');
@@ -806,25 +825,27 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async listFunctionVersions(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     functionName: string;
   }): Promise<FunctionVersion[]> {
     // Kept for its side effect: an unknown environment must fail as such
     // rather than come back as an empty version list.
-    await this.#require(targetFrom(input));
+    await this.#require(explicitTarget(input));
     const functionName = parsePathSegment('function name', input.functionName);
     return readFunctionVersions(this.#root(input), functionName);
   }
 
   async rollbackFunction(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     functionName: string;
     versionId: string;
   }): Promise<FunctionVersion> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     const functionName = parsePathSegment('function name', input.functionName);
     const versionId = parsePathSegment('version ID', input.versionId);
     const root = this.#root(input);
@@ -851,13 +872,14 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
 
   async invokeFunction(input: {
     projectId: string;
-    /** Addresses one environment of the project; absent means the legacy root. */
-    environmentId?: string;
+    /** Addresses one environment of the project; the legacy project-wide root
+     * is no longer addressable (#618). */
+    environmentId: string;
     functionName: string;
     body?: string;
     headers?: Record<string, string>;
   }): Promise<FunctionInvocationResult> {
-    const environment = await this.#require(targetFrom(input));
+    const environment = await this.#require(explicitTarget(input));
     const functionName = parsePathSegment('function name', input.functionName);
     const root = this.#root(input);
     let current: FunctionVersion;
@@ -962,7 +984,7 @@ export class SupabaseGeneratedProjectRuntime implements GeneratedProjectRuntime 
    * caller stores per environment — today the function version history —
    * hangs off it, never off the bare project. */
   #root(input: { projectId: string; environmentId?: string }): string {
-    return environmentRoot(this.#dataDir, resolveTarget(targetFrom(input)));
+    return environmentRoot(this.#dataDir, explicitTarget(input));
   }
 
   async #require(target: EnvironmentTarget | ResolvedTarget): Promise<AppEnvironment> {
@@ -1087,10 +1109,33 @@ function targetKey(target: ResolvedTarget): string {
   return target.environmentId ? `${target.projectId}/${target.environmentId}` : target.projectId;
 }
 
-function targetFrom(input: { projectId: string; environmentId?: string }): EnvironmentTarget {
-  return input.environmentId !== undefined
-    ? { projectId: input.projectId, environmentId: input.environmentId }
-    : input.projectId;
+/** Address every public operation carries: one exact environment. */
+type ExplicitTarget = { projectId: string; environmentId: string };
+
+/**
+ * The #618 boundary. A project-only address — the bare string or an object
+ * without `environmentId` — names the pre-#617 legacy root, and with up to
+ * three environment classes per project (ADR 0080) there is no answer to
+ * "which stack" that is not an inference. Typed callers can no longer express
+ * it; this rejects the untyped ones with remediation instead of resolving one
+ * for them. Pre-#617 state on disk stays visible through `listEnvironments`,
+ * which reads the legacy root directly and never comes through here.
+ */
+function explicitTarget(input: { projectId: string; environmentId?: string }): ExplicitTarget {
+  const projectId =
+    typeof input === 'string' ? input : typeof input === 'object' && input ? input.projectId : '';
+  const environmentId = typeof input === 'object' && input ? input.environmentId : undefined;
+  if (environmentId === undefined) {
+    throw new ValidationError(
+      `Project environment for "${String(projectId)}" was addressed without an environmentId. ` +
+        'The legacy project-wide root was removed (#618): pass { projectId, environmentId } ' +
+        "naming the exact environment — WorkflowOrchestrator.environmentTargetForRun resolves a run's target " +
+        'from its project.provisioned event. A pre-#617 environment has no identity to address and ' +
+        'must be re-provisioned; listEnvironments still reports it.',
+    );
+  }
+  const resolved = resolveTarget({ projectId: String(projectId), environmentId });
+  return { projectId: resolved.projectId, environmentId: resolved.environmentId! };
 }
 
 /** ADR 0080 requires directory, compose project, network, and volume to be

@@ -22,14 +22,18 @@ export interface EnvironmentReaperLogger {
 
 export type EnvironmentReaperSchedule = IntervalSweepSchedule;
 
-function environmentTarget(environment: AppEnvironment): EnvironmentTarget {
+/** The address of an environment, or nothing when it has none. A pre-#617
+ * record carries no identity, and #618 removed the project-wide address that
+ * used to stand in for one — the reaper reports such an environment instead of
+ * stopping whichever stack the legacy root resolves to. */
+function environmentTarget(environment: AppEnvironment): EnvironmentTarget | undefined {
   return environment.identity
     ? { projectId: environment.projectId, environmentId: environment.identity.environmentId }
-    : environment.projectId;
+    : undefined;
 }
 
 function describeTarget(target: EnvironmentTarget): string {
-  return typeof target === 'string' ? target : `${target.projectId}/${target.environmentId}`;
+  return `${target.projectId}/${target.environmentId}`;
 }
 
 /** Project, environment, and the version the environment is bound to — the
@@ -74,6 +78,17 @@ export async function sweepIdleEnvironments(
     if (Number.isNaN(updatedAtMs)) continue;
     if (now.getTime() - updatedAtMs < idleMs) continue;
 
+    // Resolved before the lock: an unaddressable environment is reported and
+    // skipped, never stopped by project id (#618).
+    const target = environmentTarget(environment);
+    if (!target) {
+      logger.info(
+        environmentTelemetry(environment),
+        'Skipped idle environment with no addressable identity; re-provision it (#618)',
+      );
+      continue;
+    }
+
     await deps.lifecycleLock.withProjectLock(environment.projectId, async () => {
       const active = await deps.previewSessions.listActive();
       if (
@@ -83,10 +98,6 @@ export async function sweepIdleEnvironments(
       }
       if ((await deps.runs.listNonTerminal(environment.projectId)).length > 0) return;
 
-      // Address the exact environment, never the project: a project may hold a
-      // candidate and an accepted stack at once, and stopping by project id
-      // stops whichever one the legacy root happens to resolve to (#617).
-      const target = environmentTarget(environment);
       try {
         await deps.environments.stop(target);
         stopped += 1;
