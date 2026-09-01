@@ -317,45 +317,15 @@ describe('orchestrator span coverage', () => {
     expect(initialize).not.toHaveBeenCalled();
   });
 
-  it('preserves an explicitly legacy environment across retry', async () => {
+  it('refuses a run whose previous provisioning predates #617 instead of allocating an empty sibling', async () => {
     const initialize = vi.fn(async () => ({}) as never);
-    let active: PreviewSession | undefined;
-    const activeForProject = vi.fn(async (_projectId: string, environmentId?: string | null) =>
-      environmentId === null && active?.workspaceRef.environmentId === undefined
-        ? active
-        : undefined,
-    );
-    const start = vi.fn(
-      async (input: { workspaceRef: PreviewSession['workspaceRef']; runId?: string }) => {
-        const now = new Date().toISOString();
-        active = {
-          id: `preview-${input.runId}`,
-          workspaceRef: input.workspaceRef,
-          ...(input.runId ? { runId: input.runId } : {}),
-          status: 'running',
-          version: 1,
-          health: { state: 'healthy', consecutiveFailures: 0 },
-          ttl: { seconds: 60 },
-          restartCount: 0,
-          createdAt: now,
-          updatedAt: now,
-          startedAt: now,
-        } satisfies PreviewSession;
-        return { session: active, url: 'http://127.0.0.1/preview' };
-      },
-    );
-    const stop = vi.fn(async () => active!);
     const harness = makeHarness({}, undefined, {
       generatedProjectRuntime: { initialize } as never,
-      previews: { activeForProject, start, renewForProject: vi.fn(), stop } as never,
     });
-    const heartbeat = vi.spyOn(
-      harness.orchestrator as unknown as {
-        startPreviewLeaseHeartbeat(projectId: string, environmentId: string | null): () => void;
-      },
-      'startPreviewLeaseHeartbeat',
-    );
     await seedRun(harness);
+    // The event a pre-#617 release wrote: provisioned, with no identity to
+    // address. #617 kept that topology on retry; #618 removed the address it
+    // needed, so the only honest outcome is remediation.
     await harness.events.append({
       id: 'event-provisioned-legacy',
       projectId: 'project-1',
@@ -366,30 +336,13 @@ describe('orchestrator span coverage', () => {
       data: {},
     });
 
-    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
-    active = undefined; // the original legacy preview expired before manual retry
-    const retried = await harness.service.retry('project-1');
-    if (!retried.currentRunId) throw new Error('retry has no run');
-    await harness.orchestrator.runProject('project-1', undefined, retried.currentRunId);
+    await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
+      /removed \(#618\)/,
+    );
 
-    expect(initialize).toHaveBeenLastCalledWith({ projectId: 'project-1' });
-    const retryEvent = await harness.events.findLatest('project-1', {
-      type: 'project.provisioned',
-      runId: retried.currentRunId,
-    });
-    expect(retryEvent?.data.environment).toBeUndefined();
-    expect(heartbeat.mock.calls.at(-1)).toEqual(['project-1', null]);
-
-    const retryRun = await harness.runs.get(retried.currentRunId);
-    if (!retryRun) throw new Error('retry run missing');
-    await harness.runs.update({ ...retryRun, status: 'failed' }, retryRun.version);
-    await (
-      harness.orchestrator as unknown as {
-        stopPreviewForFailedRun(projectId: string, runId: string): Promise<void>;
-      }
-    ).stopPreviewForFailedRun('project-1', retried.currentRunId);
-    expect(activeForProject.mock.calls.at(-1)).toEqual(['project-1', null]);
-    expect(stop).toHaveBeenCalledWith(`preview-${retried.currentRunId}`);
+    // Par negativo: the alternative is an empty sibling environment, which
+    // strands the legacy stack's data behind an address nothing points at.
+    expect(initialize).not.toHaveBeenCalled();
   });
 
   it('produces one foundry.run trace with foundry.step and foundry.attempt descendants', async () => {

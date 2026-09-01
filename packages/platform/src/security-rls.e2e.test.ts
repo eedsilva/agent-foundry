@@ -21,6 +21,15 @@ import {
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ID = 'project-rls';
+const ENVIRONMENT_ID = 'env-1';
+/** #618: environments are addressed explicitly; the stack lives under its own root. */
+const IDENTITY = {
+  class: 'candidate',
+  projectId: 'project-rls',
+  environmentId: ENVIRONMENT_ID,
+  runCandidateId: 'run-1',
+  projectVersionId: 'version-1',
+} as const;
 const STOP_TIMEOUT_MS = 60_000;
 
 // A real table exercising the owner-RLS baseline documented in
@@ -70,9 +79,16 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
     beforeAll(
       async () => {
         dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-rls-'));
-        workdir = join(dataDir, 'projects', PROJECT_ID, 'environment');
+        workdir = join(
+          dataDir,
+          'projects',
+          PROJECT_ID,
+          'environments',
+          ENVIRONMENT_ID,
+          'environment',
+        );
         const runtime = new SupabaseGeneratedProjectRuntime({ dataDir });
-        await runtime.initialize({ projectId: PROJECT_ID });
+        await runtime.initialize({ projectId: PROJECT_ID, identity: IDENTITY });
         credentials = await readCredentials(workdir, STOP_TIMEOUT_MS);
         await mkdir(join(workdir, 'supabase', 'migrations'), { recursive: true });
         await writeFile(
@@ -80,6 +96,7 @@ describe.runIf(process.env.RUN_SUPABASE_RLS_E2E === 'true')(
           RLS_MIGRATION,
         );
         await runtime.migrate({
+          environmentId: ENVIRONMENT_ID,
           projectId: PROJECT_ID,
           migrationPath: 'supabase/migrations/00000000000002_items.sql',
         });
