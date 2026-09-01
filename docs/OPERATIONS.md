@@ -900,18 +900,20 @@ Supabase stack. `SupabaseGeneratedProjectRuntime#initialize`
 (`packages/platform/src/supabase-runtime.ts`) writes the stack's `NEXT_PUBLIC_SUPABASE_URL`,
 `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` into the candidate's environment-
 scoped `.env` at `DATA_DIR/projects/<projectId>/environments/<environmentId>/.env` (ADR 0080).
-The legacy root keeps `DATA_DIR/projects/<projectId>/.env` for compatibility and remains unknown-class;
-it is never inferred to be accepted. Existing keys are preserved, not overwritten. Email
+The pre-#617 root may still contain `DATA_DIR/projects/<projectId>/.env`, but #618 makes that
+unknown-class environment detection-only: the current runtime does not start, inspect, migrate, or
+otherwise operate it. Existing bytes are preserved and never inferred to be accepted. Email
 confirmation is disabled in the generated `config.toml` (no SMTP in v1), so signup returns an active
 session immediately, same as sign-in.
 
 Password reset is deliberately **not** self-service (`docs/PRODUCT_CONTRACT.md`). To reset a user's
 password as an administrator, use the service-role key from the addressed environment's
 `DATA_DIR/projects/<projectId>/environments/<environmentId>/.env` against its local GoTrue admin
-API. Use `DATA_DIR/projects/<projectId>/.env` only for an explicit pre-#617 legacy environment. If
-that legacy file contains Supabase credentials, `FileSecretStore` rejects a missing environment-
-scoped file instead of falling back; without runtime credentials it may still return operator-only
-secrets, which are insufficient for this reset workflow:
+API. A pre-#617 `DATA_DIR/projects/<projectId>/.env` is not a supported target for this workflow. If
+that legacy file contains Supabase credentials, back up the whole project root and migrate the
+preserved environment to an explicit identity before using this version. `FileSecretStore` rejects
+a missing environment-scoped file instead of falling back; without runtime credentials it may still
+return operator-only secrets, which are insufficient for this reset workflow:
 
 ```bash
 curl -X PUT "$NEXT_PUBLIC_SUPABASE_URL/auth/v1/admin/users/<user-id>" \
@@ -1151,15 +1153,18 @@ local ficar pronta; o padrão é `600000` ms (dez minutos). Em timeout, o runtim
 por até 30 segundos, registra um diagnóstico redigido no evento de provisioning e preserva o
 workdir parcial para inspeção/backup. Depois de corrigir Docker ou Supabase, recovery da mesma run
 recolhe esse workdir; um retry explícito cria outro `WorkflowRun`, mas reutiliza a identidade e a
-stack do Run Candidate preservado. Ele nunca reclassifica ou escolhe uma stack accepted por default;
-projetos pre-#617 com evento de provisioning explicitamente legado continuam no runtime project-wide.
-Se a retenção não for mais necessária,
-faça backup do `DATA_DIR` e use o procedimento explícito de cleanup do runtime; não remova o
-diretório diretamente.
+stack do Run Candidate preservado. Ele nunca reclassifica ou escolhe uma stack accepted por default.
+
+Ambiente pré-#617 sem identidade é exceção: #618 o mantém visível em `listEnvironments()`, mas
+nenhuma operação de lifecycle o aceita. Antes de atualizar, faça backup do root inteiro e migre o
+estado preservado para uma identidade explícita por procedimento revisado. Não existe conversão
+automática; iniciar outra run não converte esse estado. Sem procedimento de migração aprovado,
+mantenha a versão anterior. Não copie metadata, não infira classe e não remova o diretório.
 
 O diretório autoritativo de um ambiente explícito é
 `DATA_DIR/projects/<projectId>/environments/<environmentId>/environment/`; o root legado
-`DATA_DIR/projects/<projectId>/environment/` continua legível sem ganhar classe implícita.
+`DATA_DIR/projects/<projectId>/environment/` continua apenas listável para inventário e backup, sem
+ganhar classe implícita nem poder ser usado como target.
 `environment.json` contém somente identidade, nomes de recursos, paths, portas, endpoints sem
 credenciais e timestamps de saúde. Nunca registre stdout/stderr bruto do Supabase, URLs de banco,
 JWTs ou chaves. Logs podem conter somente `EnvironmentOperationError.operation`, `exitCode` e o

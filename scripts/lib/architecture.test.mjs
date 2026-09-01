@@ -7,6 +7,7 @@ import {
   ALLOWED_INTERNAL_DEPENDENCIES,
   importSpecifiers,
   inspectArchitecture,
+  inspectGeneratedRuntimeCallers,
 } from './architecture.mjs';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -106,6 +107,79 @@ test('aceita fixture limpa para o entrypoint browser', async () => {
     await contractsFixture('export const browserSafe = true;'),
   );
   assert.equal(result.ok, true, result.errors.join('\n'));
+});
+
+test('rejeita as duas famílias de caller ambíguo do GeneratedProjectRuntime (#618)', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'af-runtime-callers-'));
+  await mkdir(join(fixtureRoot, 'apps/api/e2e'), { recursive: true });
+  await mkdir(join(fixtureRoot, 'packages/domain/src'), { recursive: true });
+  await mkdir(join(fixtureRoot, 'packages/platform/src'), { recursive: true });
+  await writeFile(
+    join(fixtureRoot, 'tsconfig.base.json'),
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        baseUrl: '.',
+        paths: { '@agent-foundry/domain': ['packages/domain/src/index.ts'] },
+      },
+    }),
+  );
+  await writeFile(
+    join(fixtureRoot, 'packages/domain/src/ports.ts'),
+    `export interface GeneratedProjectRuntime {
+      initialize(input: { projectId: string; identity: object }): Promise<void>;
+      stop(target: { projectId: string; environmentId: string }): Promise<void>;
+      migrate(input: { projectId: string; environmentId: string; migrationPath: string }): Promise<void>;
+    }`,
+  );
+  await writeFile(join(fixtureRoot, 'packages/domain/src/index.ts'), `export * from './ports.js';`);
+  // Segunda família: o caller concreto resolve para a MethodDeclaration da classe,
+  // não para a MethodSignature da interface, então precisa de par negativo próprio.
+  await writeFile(
+    join(fixtureRoot, 'packages/platform/src/supabase-runtime.ts'),
+    `export class SupabaseGeneratedProjectRuntime {
+      async stop(_target: { projectId: string; environmentId: string }): Promise<void> {}
+    }`,
+  );
+  await writeFile(
+    join(fixtureRoot, 'apps/api/e2e/callers.ts'),
+    `import type { GeneratedProjectRuntime } from '@agent-foundry/domain';
+    import { SupabaseGeneratedProjectRuntime } from '../../../packages/platform/src/supabase-runtime.js';
+    export async function invalid(runtime: GeneratedProjectRuntime) {
+      await runtime.stop('project-1');
+      await runtime.migrate({ projectId: 'project-1', migrationPath: 'migration.sql' });
+      await runtime.initialize({ projectId: 'project-1' });
+    }
+    export async function valid(runtime: GeneratedProjectRuntime) {
+      await runtime.stop({ projectId: 'project-1', environmentId: 'environment-1' });
+      await runtime.migrate({ projectId: 'project-1', environmentId: 'environment-1', migrationPath: 'migration.sql' });
+      await runtime.initialize({ projectId: 'project-1', identity: {} });
+    }
+    export async function concreteInvalid(runtime: SupabaseGeneratedProjectRuntime) {
+      await runtime.stop({ projectId: 'project-1' } as { projectId: string });
+    }
+    export async function concreteValid(runtime: SupabaseGeneratedProjectRuntime) {
+      await runtime.stop({ projectId: 'project-1', environmentId: 'environment-1' });
+    }`,
+  );
+
+  const errors = inspectGeneratedRuntimeCallers(fixtureRoot);
+
+  // `chama ` prefixa o nome qualificado: sem ele `GeneratedProjectRuntime.stop`
+  // casaria também com `SupabaseGeneratedProjectRuntime.stop` e as duas famílias
+  // deixariam de ser distinguíveis.
+  assert.deepEqual(
+    errors.map((error) => error.replace(/^.*:\d+ chama /, '')).sort(),
+    [
+      'GeneratedProjectRuntime.initialize sem identity obrigatório.',
+      'GeneratedProjectRuntime.migrate sem environmentId obrigatório.',
+      'GeneratedProjectRuntime.stop sem environmentId obrigatório.',
+      'SupabaseGeneratedProjectRuntime.stop sem environmentId obrigatório.',
+    ],
+    errors.join('\n'),
+  );
 });
 
 test('platform is a declared leaf workspace', async () => {

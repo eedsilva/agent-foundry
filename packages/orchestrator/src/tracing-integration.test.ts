@@ -336,9 +336,14 @@ describe('orchestrator span coverage', () => {
       data: {},
     });
 
+    const remediation =
+      /Back up the legacy environment root under DATA_DIR for project "project-1".*Starting another run does not convert legacy state/;
     await expect(harness.orchestrator.runProject('project-1', undefined, 'run-1')).rejects.toThrow(
-      /removed \(#618\)/,
+      remediation,
     );
+    await expect(
+      harness.orchestrator.environmentTargetForRun('project-1', 'run-1'),
+    ).rejects.toThrow(remediation);
 
     // Par negativo: the alternative is an empty sibling environment, which
     // strands the legacy stack's data behind an address nothing points at.

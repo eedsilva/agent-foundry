@@ -91,23 +91,22 @@ Do **not** treat an app-only Git snapshot as a substitute for a database backup.
 
 ## 4. Upgrade the application, then reconcile the project under Personal v1
 
-After the old writers are stopped and the backup is verified:
+After the old writers are stopped and the backup is verified, inspect the inventory **before**
+starting Personal v1:
 
-1. start the Personal v1 application version;
-2. open the existing project by its `projectId`;
-3. reconcile runtime state in this order:
-   - `inspect`
-   - `health`
-   - `initialize` only when the legacy project has no runtime metadata yet
-   - `start` when the runtime already exists but is stopped
+1. if runtime metadata has an explicit `identity`, start Personal v1 and reconcile that exact
+   `projectId` + `environmentId` with `inspect`, `health`, and `start` when stopped;
+2. if `DATA_DIR/projects/<projectId>/environment/` exists without an identity, stop the upgrade.
+   #618 keeps that root listable for inventory but rejects it as a lifecycle target;
+3. preserve the project and database backups, then migrate the legacy state through a separately
+   reviewed procedure that assigns an explicit identity. This repository does not convert it
+   automatically, and starting another run does not perform the migration;
+4. without an approved conversion procedure, keep or restore the pre-#618 application version.
 
-Expected outcomes:
-
-- `inspect` and `health` describe the real local runtime without inventing new paths;
-- the workspace remains the same Git repository captured in the inventory;
-- runtime metadata under `environment/` is either adopted as-is or created once by Personal v1.
-
-If `inspect` or `health` reports drift, preserve the workdir and metadata, then reconcile with the existing runtime lifecycle. Do not delete the workdir, call `supabase db reset`, or remove runtime directories by hand.
+Never copy metadata to the new layout, infer candidate/accepted/manual-preview, delete the workdir,
+call `supabase db reset`, or remove runtime directories by hand. Once conversion has completed, the
+workspace must remain the same Git repository captured in the inventory and `inspect`/`health` must
+address the converted environment explicitly.
 
 ## 5. Execute the migration forward-only
 

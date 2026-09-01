@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import { dirname, extname, join, relative, resolve } from 'node:path';
+import ts from 'typescript';
 
 export const ALLOWED_INTERNAL_DEPENDENCIES = new Map([
   ['@agent-foundry/contracts', new Set()],
@@ -84,8 +85,83 @@ export async function inspectArchitecture(rootDir, allowed = ALLOWED_INTERNAL_DE
 
   if (byName.has('@agent-foundry/contracts'))
     await inspectBrowserEntryPoint(rootDir, 'packages/contracts/src/index.ts', errors);
+  if (ts.sys.fileExists(resolve(rootDir, 'packages/domain/src/ports.ts')))
+    errors.push(...inspectGeneratedRuntimeCallers(rootDir));
   detectGraphCycles(graph, errors);
   return { ok: errors.length === 0, errors, graph, packages };
+}
+
+export function inspectGeneratedRuntimeCallers(rootDir) {
+  const root = resolve(rootDir);
+  const config = ts.readConfigFile(resolve(root, 'tsconfig.base.json'), ts.sys.readFile);
+  if (config.error)
+    return ['Não foi possível ler tsconfig.base.json para auditar runtime callers.'];
+  const parsed = ts.parseJsonConfigFileContent(
+    {
+      ...config.config,
+      compilerOptions: { ...config.config.compilerOptions, noEmit: true },
+      include: ['apps/**/*.ts', 'apps/**/*.tsx', 'packages/**/*.ts', 'packages/**/*.tsx'],
+      exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**'],
+    },
+    ts.sys,
+    root,
+  );
+  const program = ts.createProgram(parsed.fileNames, parsed.options);
+  const checker = program.getTypeChecker();
+  const errors = [];
+
+  // This is a provenance guard, not a second typecheck. apps/api/e2e's
+  // unrelated baseline diagnostics remain tracked by #682.
+
+  for (const source of program.getSourceFiles()) {
+    const path = relative(root, source.fileName);
+    if (path.startsWith('..') || (!path.startsWith('apps/') && !path.startsWith('packages/')))
+      continue;
+    function visit(node) {
+      if (ts.isCallExpression(node)) {
+        const declaration = checker.getResolvedSignature(node)?.declaration;
+        const method = generatedRuntimeMethod(declaration, root);
+        if (method) {
+          const parameter = declaration.parameters[0];
+          const required = ['identity', 'environmentId'].find(
+            (field) =>
+              parameter && checker.getPropertyOfType(checker.getTypeAtLocation(parameter), field),
+          );
+          if (!required) return ts.forEachChild(node, visit);
+          const argument = node.arguments[0];
+          const property = argument
+            ? checker.getPropertyOfType(checker.getTypeAtLocation(argument), required)
+            : undefined;
+          if (!property || property.flags & ts.SymbolFlags.Optional) {
+            const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+            errors.push(`${path}:${line + 1} chama ${method} sem ${required} obrigatório.`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+  return errors;
+}
+
+function generatedRuntimeMethod(declaration, root) {
+  if (!declaration?.name || !ts.isIdentifier(declaration.name)) return undefined;
+  const path = relative(root, declaration.getSourceFile().fileName);
+  const owner = declaration.parent;
+  if (
+    path === 'packages/domain/src/ports.ts' &&
+    ts.isInterfaceDeclaration(owner) &&
+    owner.name.text === 'GeneratedProjectRuntime'
+  )
+    return `GeneratedProjectRuntime.${declaration.name.text}`;
+  if (
+    path === 'packages/platform/src/supabase-runtime.ts' &&
+    ts.isClassDeclaration(owner) &&
+    owner.name?.text === 'SupabaseGeneratedProjectRuntime'
+  )
+    return `SupabaseGeneratedProjectRuntime.${declaration.name.text}`;
+  return undefined;
 }
 
 async function inspectBrowserEntryPoint(rootDir, entryPoint, errors) {

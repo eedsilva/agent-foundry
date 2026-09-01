@@ -502,8 +502,7 @@ export class WorkflowOrchestrator {
     if (previousEvent && previousEvent.data.environment === undefined) {
       throw new ValidationError(
         `Project ${projectId} was provisioned before #617 and has no environment identity to ` +
-          'address. The legacy project-wide environment root was removed (#618): start a new ' +
-          'run to provision an environment with an explicit identity.',
+          `address. ${legacyEnvironmentRemediation(projectId)}`,
       );
     }
     const previous = EnvironmentIdentitySchema.safeParse(previousEvent?.data?.environment);
@@ -586,8 +585,7 @@ export class WorkflowOrchestrator {
     if (event.data.environment === undefined) {
       throw new ValidationError(
         `Run ${runId} was provisioned before #617 and has no environment identity to address. ` +
-          'The legacy project-wide environment root was removed (#618): start a new run to ' +
-          'provision an environment with an explicit identity.',
+          legacyEnvironmentRemediation(projectId),
       );
     }
     const recorded = EnvironmentIdentitySchema.safeParse(event?.data?.environment);
@@ -5030,6 +5028,15 @@ export function runError(error: unknown): RunError {
     ...(code ? { code } : {}),
     ...(details.exitCode !== undefined ? { exitCode: details.exitCode } : {}),
   };
+}
+
+function legacyEnvironmentRemediation(projectId: string): string {
+  return (
+    'The legacy project-wide environment root was removed (#618). ' +
+    `Back up the legacy environment root under DATA_DIR for project "${projectId}", migrate ` +
+    'that preserved state to an ' +
+    'explicit environment identity, then retry. Starting another run does not convert legacy state.'
+  );
 }
 
 function projectStatusForRun(run: WorkflowRun): Project['status'] {
