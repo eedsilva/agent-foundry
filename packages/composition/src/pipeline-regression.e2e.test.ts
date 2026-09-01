@@ -181,6 +181,7 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
       // below names that cause, and a teardown error must not mask it (#658).
       teardownTarget = await runtime.orchestrator
         .environmentTargetForRun(project.id, runId)
+        .then((target) => ({ ...target, environmentId: `${target.environmentId}-mutated` }))
         .catch(() => undefined);
 
       const run = await runtime.runs.get(runId);
