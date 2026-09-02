@@ -270,8 +270,11 @@ describe('addressing one environment, not one project (#617)', () => {
     const count = await sweepIdleEnvironments(deps, IDLE_MS, NOW, log);
 
     // Par negativo: the bare project id used to be the fallback address here.
-    // #618 removed it, so the only honest move is to name the environment the
-    // operator has to re-provision — stopping nothing beats stopping a guess.
+    // #618 removed it, so the only honest move is to name the environment and
+    // hand back the same remediation contract the orchestrator gives (back up,
+    // migrate, another run converts nothing) — stopping nothing beats stopping
+    // a guess, and telling the operator to start over would strand the
+    // legacy stack's data.
     expect(count).toBe(0);
     expect(deps.stopMock).not.toHaveBeenCalled();
     expect(log.info).toHaveBeenCalledWith(
@@ -281,7 +284,9 @@ describe('addressing one environment, not one project (#617)', () => {
         environmentClass: null,
         projectVersionId: null,
       },
-      expect.stringContaining('#618'),
+      expect.stringMatching(
+        /Back up its legacy environment root under DATA_DIR.*Starting another run does not convert legacy state \(#618\)/s,
+      ),
     );
   });
 

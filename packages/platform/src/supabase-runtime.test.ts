@@ -3043,12 +3043,24 @@ describe('callers address one environment, not one project (#617)', () => {
     ).not.toBe('stopped');
   });
 
+  it('rejects a project-wide address with the migration contract, not a reset', async () => {
+    const { runtime } = fixture();
+    // #618 removed the project-wide address. The remediation an operator reads
+    // here has to match legacyEnvironmentRemediation(): starting over strands
+    // the legacy stack's data instead of converting it.
+    await expect(
+      runtime.stop({ projectId: 'project-b' } as unknown as Parameters<typeof runtime.stop>[0]),
+    ).rejects.toThrow(
+      /Back up the legacy environment root under DATA_DIR for project "project-b".*Starting another run does not convert legacy state/s,
+    );
+  });
+
   it('lists legacy and explicit environments together', async () => {
     const { runtime } = fixture();
     const candidate = await runtime.initialize({ projectId: 'project-a', identity: CANDIDATE });
     // A pre-#617 record, written where that release put it. #618 removed the
     // address, not the file: listEnvironments still reports it so an operator
-    // can see the stack that has to be re-provisioned.
+    // can see the stack that has to be backed up and migrated.
     await mkdir(join(dataDir, 'projects', 'project-b', 'environment'), { recursive: true });
     await writeFile(
       join(dataDir, 'projects', 'project-b', 'environment', 'environment.json'),

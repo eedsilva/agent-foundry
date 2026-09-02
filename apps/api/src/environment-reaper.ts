@@ -84,7 +84,9 @@ export async function sweepIdleEnvironments(
     if (!target) {
       logger.info(
         environmentTelemetry(environment),
-        'Skipped idle environment with no addressable identity; re-provision it (#618)',
+        'Skipped idle environment with no addressable identity. Back up its legacy environment ' +
+          'root under DATA_DIR, migrate that preserved state to an explicit environment identity, ' +
+          'then retry. Starting another run does not convert legacy state (#618).',
       );
       continue;
     }

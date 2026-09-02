@@ -1130,8 +1130,10 @@ function explicitTarget(input: { projectId: string; environmentId?: string }): E
       `Project environment for "${String(projectId)}" was addressed without an environmentId. ` +
         'The legacy project-wide root was removed (#618): pass { projectId, environmentId } ' +
         "naming the exact environment — WorkflowOrchestrator.environmentTargetForRun resolves a run's target " +
-        'from its project.provisioned event. A pre-#617 environment has no identity to address and ' +
-        'must be re-provisioned; listEnvironments still reports it.',
+        'from its project.provisioned event. A pre-#617 environment has no identity to address; ' +
+        'listEnvironments still reports it. Back up the legacy environment root under DATA_DIR for ' +
+        `project "${String(projectId)}", migrate that preserved state to an explicit environment ` +
+        'identity, then retry. Starting another run does not convert legacy state.',
     );
   }
   const resolved = resolveTarget({ projectId: String(projectId), environmentId });
