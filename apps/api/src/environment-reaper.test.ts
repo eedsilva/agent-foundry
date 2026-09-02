@@ -10,9 +10,12 @@ import { sweepIdleEnvironments, type EnvironmentReaperDeps } from './environment
 const NOW = new Date('2026-08-14T12:00:00.000Z');
 const IDLE_MS = 30 * 60 * 1000;
 
+const ENVIRONMENT_ID = 'env-1';
+
 function environment(overrides: Partial<AppEnvironment> = {}): AppEnvironment {
+  const projectId = overrides.projectId ?? 'proj-1';
   return {
-    projectId: 'proj-1',
+    projectId,
     composeProjectName: 'foundry-proj-1',
     workdir: '/tmp/proj-1',
     network: 'foundry-proj-1',
@@ -22,8 +25,21 @@ function environment(overrides: Partial<AppEnvironment> = {}): AppEnvironment {
     health: { state: 'healthy', checkedAt: '2026-08-14T10:00:00.000Z' },
     createdAt: '2026-08-14T09:00:00.000Z',
     updatedAt: '2026-08-14T10:00:00.000Z',
+    // Every addressable environment carries an identity since #618. A record
+    // without one is pre-#617 state, covered by its own test below.
+    identity: {
+      class: 'candidate',
+      projectId,
+      environmentId: ENVIRONMENT_ID,
+      runCandidateId: 'run-1',
+      projectVersionId: 'version-1',
+    },
     ...overrides,
   };
+}
+
+function targetFor(projectId: string, environmentId = ENVIRONMENT_ID) {
+  return { projectId, environmentId };
 }
 
 function workflowRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
@@ -93,15 +109,14 @@ describe('sweepIdleEnvironments', () => {
     const count = await sweepIdleEnvironments(deps, IDLE_MS, NOW, log);
 
     expect(count).toBe(1);
-    expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
+    expect(deps.stopMock).toHaveBeenCalledWith(targetFor('proj-1'));
     expect(log.info).toHaveBeenCalledWith(
-      // Project, environment and bound version (#617). A record written
-      // before identity existed reports the last two as unknown.
+      // Project, environment and bound version (#617), all three named.
       {
         projectId: 'proj-1',
-        environmentId: null,
-        environmentClass: null,
-        projectVersionId: null,
+        environmentId: ENVIRONMENT_ID,
+        environmentClass: 'candidate',
+        projectVersionId: 'version-1',
       },
       expect.any(String),
     );
@@ -116,7 +131,7 @@ describe('sweepIdleEnvironments', () => {
     const count = await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
 
     expect(count).toBe(1);
-    expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
+    expect(deps.stopMock).toHaveBeenCalledWith(targetFor('proj-1'));
   });
 
   it('does not stop an environment with an unparseable updatedAt (fails closed)', async () => {
@@ -186,16 +201,16 @@ describe('sweepIdleEnvironments', () => {
 
     expect(count).toBe(1);
     expect(deps.stopMock).toHaveBeenCalledTimes(1);
-    expect(deps.stopMock).toHaveBeenCalledWith('proj-completed');
+    expect(deps.stopMock).toHaveBeenCalledWith(targetFor('proj-completed'));
   });
 
   it('logs and continues past a failing stop(), returning the surviving count', async () => {
     const failing = environment({ projectId: 'proj-fail', updatedAt: '2026-08-14T09:00:00.000Z' });
     const ok = environment({ projectId: 'proj-ok', updatedAt: '2026-08-14T09:00:00.000Z' });
-    const stopMock = vi.fn((projectId: string) =>
-      projectId === 'proj-fail'
+    const stopMock = vi.fn((target: { projectId: string }) =>
+      target.projectId === 'proj-fail'
         ? Promise.reject(new Error('docker down'))
-        : Promise.resolve(environment({ projectId })),
+        : Promise.resolve(environment({ projectId: target.projectId })),
     );
     const deps = makeDeps({ environments: [failing, ok], stop: stopMock });
     const log = logger();
@@ -247,13 +262,32 @@ describe('addressing one environment, not one project (#617)', () => {
     });
   });
 
-  it('keeps addressing a pre-identity record by project id', async () => {
-    const legacy = environment({ updatedAt: '2026-08-14T11:00:00.000Z' });
+  it('reports a pre-identity record instead of stopping it by project id (#618)', async () => {
+    const legacy = environment({ updatedAt: '2026-08-14T11:00:00.000Z', identity: undefined });
     const deps = makeDeps({ environments: [legacy] });
+    const log = logger();
 
-    await sweepIdleEnvironments(deps, IDLE_MS, NOW, logger());
+    const count = await sweepIdleEnvironments(deps, IDLE_MS, NOW, log);
 
-    expect(deps.stopMock).toHaveBeenCalledWith('proj-1');
+    // Par negativo: the bare project id used to be the fallback address here.
+    // #618 removed it, so the only honest move is to name the environment and
+    // hand back the same remediation contract the orchestrator gives (back up,
+    // migrate, another run converts nothing) — stopping nothing beats stopping
+    // a guess, and telling the operator to start over would strand the
+    // legacy stack's data.
+    expect(count).toBe(0);
+    expect(deps.stopMock).not.toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledWith(
+      {
+        projectId: 'proj-1',
+        environmentId: null,
+        environmentClass: null,
+        projectVersionId: null,
+      },
+      expect.stringMatching(
+        /Back up its legacy environment root under DATA_DIR.*Starting another run does not convert legacy state \(#618\)/s,
+      ),
+    );
   });
 
   it('logs project, environment and bound version, and invents neither', async () => {
@@ -265,6 +299,7 @@ describe('addressing one environment, not one project (#617)', () => {
           projectId: 'proj-2',
           workdir: '/tmp/proj-2',
           updatedAt: '2026-08-14T11:00:00.000Z',
+          identity: undefined,
         }),
       ],
     });
@@ -280,7 +315,8 @@ describe('addressing one environment, not one project (#617)', () => {
       },
       'Stopped idle environment',
     );
-    // Identity absent means unknown, never `accepted` (#616).
+    // Identity absent means unknown, never `accepted` (#616) — and since #618
+    // it is reported as unaddressable rather than stopped.
     expect(log.info).toHaveBeenCalledWith(
       {
         projectId: 'proj-2',
@@ -288,7 +324,7 @@ describe('addressing one environment, not one project (#617)', () => {
         environmentClass: null,
         projectVersionId: null,
       },
-      'Stopped idle environment',
+      expect.stringContaining('#618'),
     );
   });
 

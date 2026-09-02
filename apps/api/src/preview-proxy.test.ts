@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
+import { recordCandidateEnvironment } from './test-support/environment-fixture.js';
 
 const apps: FastifyInstance[] = [];
 const dirs: string[] = [];
@@ -87,17 +88,7 @@ async function startPreview(baseUrl: string, runtime: Runtime, id: string, fixtu
     }),
   });
   const { project } = (await projectResponse.json()) as { project: { id: string } };
-  const stored = await runtime.projects.get(project.id);
-  if (!stored?.currentRunId) throw new Error('project has no current run');
-  await runtime.events.append({
-    id: `legacy-${stored.currentRunId}`,
-    projectId: project.id,
-    runId: stored.currentRunId,
-    type: 'project.provisioned',
-    createdAt: new Date().toISOString(),
-    message: 'Legacy proxy fixture provisioned.',
-    data: {},
-  });
+  await recordCandidateEnvironment(runtime, project.id);
   await runtime.workspaces.ensure(project.id);
   const workspacePath = runtime.workspaces.workspacePath(project.id);
   const source =

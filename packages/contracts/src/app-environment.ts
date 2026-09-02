@@ -170,11 +170,12 @@ export const AppEnvironmentSchema = z
 export type AppEnvironment = z.infer<typeof AppEnvironmentSchema>;
 
 /**
- * How a caller addresses one environment. A bare project id is the legacy
- * address ADR 0080 replaces: it names the single pre-#617 environment root and
- * stays valid because "remove legacy compatibility" is out of scope for #617.
- * The object form names the exact environment, which is what lets two classes
- * of the same project coexist without sharing a directory, compose project,
- * network, or volume.
+ * How a caller addresses one environment: always the exact one. ADR 0080 gives
+ * a project up to three environment classes, so a project-only address names
+ * whichever stack happens to occupy `projects/<id>` — the pre-#617 legacy root
+ * — and picking one for the caller is exactly the inference ADR 0080 forbids.
+ * #618 removes both legacy spellings: the bare string and the object without
+ * `environmentId`. Pre-#617 state on disk stays readable (listEnvironments), but
+ * it cannot be addressed; a caller that tries gets remediation, not a guess.
  */
-export type EnvironmentTarget = string | { projectId: string; environmentId: string };
+export type EnvironmentTarget = { projectId: string; environmentId: string };

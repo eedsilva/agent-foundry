@@ -693,9 +693,9 @@ export interface BlobStore {
 export interface GeneratedProjectRuntime {
   initialize(input: {
     projectId: string;
-    /** Explicit environment identity (#617). Absent keeps the legacy
-     * single-environment root; nothing may infer a class for it. */
-    identity?: EnvironmentIdentity;
+    /** Explicit environment identity (#617). Required since #618: the legacy
+     * project-wide root is no longer addressable, and nothing infers a class. */
+    identity: EnvironmentIdentity;
   }): Promise<AppEnvironment>;
   start(target: EnvironmentTarget): Promise<AppEnvironment>;
   stop(target: EnvironmentTarget): Promise<AppEnvironment>;
@@ -709,18 +709,20 @@ export interface GeneratedProjectRuntime {
   listEnvironments(): Promise<AppEnvironment[]>;
   previewMigration(input: {
     projectId: string;
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     migrationPath: string;
   }): Promise<MigrationPreview>;
   backupMigration(input: {
     projectId: string;
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     backupPath: string;
   }): Promise<MigrationBackup>;
   migrate(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     migrationPath: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment>;
@@ -735,8 +737,8 @@ export interface GeneratedProjectRuntime {
    */
   applyWorkspaceMigrations(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     workspaceMigrationsDir: string;
     approval?: MigrationApproval;
   }): Promise<AppEnvironment | null>;
@@ -748,51 +750,53 @@ export interface GeneratedProjectRuntime {
    */
   verifySchema(input: {
     projectId: string;
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     tables: SchemaTable[];
   }): Promise<SchemaVerification>;
   seed(input: {
     projectId: string;
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     seedPath: string;
   }): Promise<AppEnvironment>;
   health(target: EnvironmentTarget): Promise<AppEnvironment>;
   reset(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<AppEnvironment>;
   cleanup(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     confirmation: DestructiveEnvironmentConfirmation;
   }): Promise<void>;
   deployFunction(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     functionPath: string;
     artifact: FunctionArtifact;
   }): Promise<FunctionVersion>;
   listFunctionVersions(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     functionName: string;
   }): Promise<FunctionVersion[]>;
   rollbackFunction(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     functionName: string;
     versionId: string;
   }): Promise<FunctionVersion>;
   invokeFunction(input: {
     projectId: string;
-    /** Addresses one environment; absent means the legacy root (#617). */
-    environmentId?: string;
+    /** Addresses one environment; the legacy project-wide root is gone (#618). */
+    environmentId: string;
     functionName: string;
     body?: string;
     headers?: Record<string, string>;

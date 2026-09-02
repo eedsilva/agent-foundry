@@ -61,7 +61,10 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
   let dataDir: string | undefined;
   let projectDirectory: string | undefined;
   let baseline: Awaited<ReturnType<typeof dockerBaseline>> | undefined;
-  let teardownProjectId: string | undefined;
+  /** The Run Candidate's exact address (#618). Held from the moment the run
+   * records it so both the explicit teardown and afterAll stop that stack and
+   * nothing else — the project-only address they used to pass is gone. */
+  let teardownTarget: { projectId: string; environmentId: string } | undefined;
   let teardownSessionId: string | undefined;
   const originalPath = process.env.PATH;
 
@@ -84,19 +87,75 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
     });
   }, 120_000);
 
+  /**
+   * The one teardown both paths use. It stops what the run started, then
+   * measures Docker against beforeAll's baseline — always, including when a
+   * stop above threw, because the containers a failed cleanup leaves behind
+   * are exactly what the comparison is for. Handles stay set when their own
+   * stop failed, so a later pass retries them; nothing is cleared on a guess.
+   * Never throws: it reports, and each caller decides how to fail.
+   */
+  async function teardownAndVerify(): Promise<{
+    previewError: unknown;
+    environmentError: unknown;
+    leakedContainers: string[];
+    leakedNetworks: string[];
+  }> {
+    let previewError: unknown;
+    if (runtime && teardownSessionId) {
+      previewError = await runtime.previewService.stop(teardownSessionId).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      if (!previewError) teardownSessionId = undefined;
+    }
+    let environmentError: unknown;
+    if (runtime?.generatedProjectRuntime && teardownTarget) {
+      environmentError = await runtime.generatedProjectRuntime.stop(teardownTarget).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      if (!environmentError) teardownTarget = undefined;
+    }
+    const before = baseline;
+    if (!before)
+      return { previewError, environmentError, leakedContainers: [], leakedNetworks: [] };
+    const after = await dockerBaseline();
+    return {
+      previewError,
+      environmentError,
+      leakedContainers: [...after.containers].filter((id) => !before.containers.has(id)),
+      leakedNetworks: [...after.networks].filter((id) => !before.networks.has(id)),
+    };
+  }
+
   afterAll(async () => {
     process.env.PATH = originalPath;
-    // Failure-path teardown: a mid-test assertion must not leak the preview
-    // process or the per-project Supabase stack (Docker address-pool
-    // exhaustion is the known local failure mode).
-    if (runtime && teardownSessionId) {
-      await runtime.previewService.stop(teardownSessionId).catch(() => undefined);
+    try {
+      // Runs even when the body already tore down: that path clears its own
+      // handles on success, so this pass finds nothing to stop and only
+      // re-measures. On the failure path it is the only teardown there is —
+      // a mid-test assertion must not leak the preview process or the
+      // per-project Supabase stack (Docker address-pool exhaustion is the
+      // known local failure mode). Reported as its own suite-level failure
+      // next to whatever failed the test, never in place of it.
+      const teardown = await teardownAndVerify();
+      const errors = [teardown.previewError, teardown.environmentError]
+        .filter((error) => error !== undefined)
+        .map((error) => (error instanceof Error ? error : new Error(String(error))));
+      if (errors.length || teardown.leakedContainers.length || teardown.leakedNetworks.length) {
+        throw new AggregateError(
+          errors,
+          `Teardown failed or leaked: containers ${JSON.stringify(teardown.leakedContainers)}, ` +
+            `networks ${JSON.stringify(teardown.leakedNetworks)}`,
+        );
+      }
+    } finally {
+      // Last, and unconditional: the leak comparison above reads Docker, not
+      // this directory, but dropping it would strand a temp dir per failed run.
+      if (dataDir) await rm(dataDir, { recursive: true, force: true });
+      if (projectDirectory) await rm(projectDirectory, { recursive: true, force: true });
     }
-    if (runtime?.generatedProjectRuntime && teardownProjectId) {
-      await runtime.generatedProjectRuntime.stop(teardownProjectId).catch(() => undefined);
-    }
-    if (dataDir) await rm(dataDir, { recursive: true, force: true });
-    if (projectDirectory) await rm(projectDirectory, { recursive: true, force: true });
   }, 180_000);
 
   it(
@@ -104,7 +163,6 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
     async () => {
       if (!runtime || !baseline || !projectDirectory)
         throw new Error('runtime was not initialized');
-      const dockerBefore = baseline;
 
       const project = await runtime.projectService.create({
         name: 'Pipeline regression',
@@ -112,12 +170,18 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
         prd: VALID_STANDARD_PRD,
         projectDirectory,
       });
-      teardownProjectId = project.id;
       const runId = project.currentRunId;
       if (!runId) throw new Error('project has no run');
 
       expect(await runtime.worker.runOnce()).toBe(true);
       await approveAllGates(runtime, runId, 'pipeline-regression');
+      // Resolved through the production resolver, before the status assert, so
+      // a run that fails later is still torn down at its exact address. A
+      // provisioning failure leaves it unset on purpose: describeRunFailure
+      // below names that cause, and a teardown error must not mask it (#658).
+      teardownTarget = await runtime.orchestrator
+        .environmentTargetForRun(project.id, runId)
+        .catch(() => undefined);
 
       const run = await runtime.runs.get(runId);
       // Loaded before the assertion on purpose (#658): a nightly gate that dies
@@ -161,22 +225,26 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
       });
       expect(response.status).toBe(200);
       expect(await response.text()).toContain('Generated fake app');
-      await runtime.previewService.stop(session.id);
-      teardownSessionId = undefined;
+
+      // Pinned before the teardown runs: without a recorded target there is
+      // nothing for it to stop, and the leak comparison below would pass
+      // vacuously on a run that never provisioned anything (#618).
+      expect(teardownTarget).toEqual({
+        projectId: project.id,
+        environmentId: expect.any(String),
+      });
 
       // Environment teardown: stopping the preview and the generated project
-      // runtime must leave no leaked containers or networks (#292).
-      if (runtime.generatedProjectRuntime) {
-        await runtime.generatedProjectRuntime.stop(project.id);
-      }
-      teardownProjectId = undefined;
-      const after = await dockerBaseline();
-      const leakedContainers = [...after.containers].filter(
-        (id) => !dockerBefore.containers.has(id),
-      );
-      const leakedNetworks = [...after.networks].filter((id) => !dockerBefore.networks.has(id));
-      expect(leakedContainers).toEqual([]);
-      expect(leakedNetworks).toEqual([]);
+      // runtime must leave no leaked containers or networks (#292). One call,
+      // one composite assertion — a cleanup that threw and the containers it
+      // left behind are different failures, and reporting only the first hides
+      // whether anything leaked.
+      expect(await teardownAndVerify()).toEqual({
+        previewError: undefined,
+        environmentError: undefined,
+        leakedContainers: [],
+        leakedNetworks: [],
+      });
     },
     RUN_TIMEOUT_MS,
   );
