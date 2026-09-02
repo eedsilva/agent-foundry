@@ -25,6 +25,7 @@ import type {
   RunAuditExport,
   RunRetryDirective,
   StepRun,
+  StoredArtifact,
   WorkflowDefinition,
   WorkflowNode,
   WorkflowRun,
@@ -87,7 +88,9 @@ import {
   transitionWorkflowRun,
   validateStandardPrd,
 } from '@agent-foundry/domain';
+import { createTwoFilesPatch } from 'diff';
 import { isMigrationApprovalGateId, policyHash, workflowHash } from './idempotency.js';
+import { currentPrdApproval } from './prd-approval.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
 const RUN_PROJECT_MAX_ATTEMPTS = 2;
@@ -109,6 +112,24 @@ function runProjectJob(project: Project, run: WorkflowRun, availableAt: string):
     leaseEpoch: 0,
     ...traceContextField(),
   };
+}
+
+/** Deterministic unified diff between two PRD revisions (no timestamps). */
+function revisionDiff(
+  parentRevision: number,
+  parentContent: string,
+  revision: number,
+  content: string,
+): string {
+  return createTwoFilesPatch(
+    `prd@${parentRevision}`,
+    `prd@${revision}`,
+    parentContent,
+    content,
+    undefined,
+    undefined,
+    { context: 3 },
+  );
 }
 
 export class ProjectService {
@@ -455,29 +476,52 @@ export class ProjectService {
       runId: run.id,
       idempotencyKey: identity,
     });
-    const queuedRun = transitionWorkflowRun(run, 'queued', this.clock.now());
-    let queuedProject: Project = { ...project, status: 'queued', updatedAt: now };
-    await this.transactionRunner.run(async (tx) => {
-      await this.appendEvent(
-        projectId,
-        'prd.approved',
-        `PRD Revision ${stored.metadata.revision} approved for the run queue.`,
-        {
-          runId: run.id,
-          dedupeKey: `${run.id}:prd.approved:${identity}`,
-          data: { identity, revision: stored.metadata.revision },
-          tx,
-        },
-      );
-      await this.appendEvent(projectId, 'project.queued', 'Project queued for orchestration.', {
-        runId: run.id,
-        dedupeKey: `${run.id}:project.queued`,
-        tx,
-      });
-      await this.runs.update(queuedRun, run.version, tx);
-      queuedProject = await this.projects.update(queuedProject, project.version, tx);
-      await this.queue.enqueue(runProjectJob(project, run, now), tx);
+    // The run is pinned to the exact approved revision; execution loads the
+    // PRD through this reference (sha256-verified), never through 'latest'.
+    const queuedRun = transitionWorkflowRun(run, 'queued', this.clock.now(), {
+      prd: {
+        name: 'prd',
+        revision: stored.metadata.revision,
+        sha256: stored.metadata.sha256,
+      },
     });
+    let queuedProject: Project = { ...project, status: 'queued', updatedAt: now };
+    try {
+      await this.transactionRunner.run(async (tx) => {
+        await this.appendEvent(
+          projectId,
+          'prd.approved',
+          `PRD Revision ${stored.metadata.revision} approved for the run queue.`,
+          {
+            runId: run.id,
+            dedupeKey: `${run.id}:prd.approved:${identity}`,
+            data: { identity, revision: stored.metadata.revision },
+            tx,
+          },
+        );
+        await this.appendEvent(projectId, 'project.queued', 'Project queued for orchestration.', {
+          runId: run.id,
+          dedupeKey: `${run.id}:project.queued`,
+          tx,
+        });
+        await this.runs.update(queuedRun, run.version, tx);
+        queuedProject = await this.projects.update(queuedProject, project.version, tx);
+        await this.queue.enqueue(runProjectJob(project, run, now), tx);
+      });
+    } catch (error) {
+      if (!(error instanceof VersionConflictError)) throw error;
+      // The run row is the serialization point between approvePrd and
+      // revisePrd. Losing the CAS means either a duplicate approval of the
+      // same identity (converge to its outcome) or an interleaved revision
+      // (surface the standard conflict instead of a raw version error).
+      const latestRun = await this.requireRun(run.id);
+      const latestProject = await this.requireProject(projectId);
+      const approval = await currentPrdApproval(this.artifacts, projectId);
+      if (latestRun.status === 'queued' && approval.approved && approval.identity === identity) {
+        return { project: latestProject, run: latestRun };
+      }
+      throw new PrdApprovalConflictError(input.identity, approval.identity ?? identity);
+    }
     return { project: queuedProject, run: queuedRun };
   }
 
@@ -518,41 +562,151 @@ export class ProjectService {
     const parentIdentity = prdIdentity(String(current.content));
     const identity = prdIdentity(canonicalPrd);
     if (identity === parentIdentity) {
+      // Idempotent replay. A crash between the artifact write and the
+      // workspace/event writes leaves exactly this state, so converge the
+      // side effects (workspace copy, lineage/diff event) instead of
+      // returning success over missing lineage.
+      await this.reconcileRevisionReplay(projectId, run.id, current, questions);
       return { project, identity, revision: current.metadata.revision, questions };
     }
-    const stored = await this.artifacts.put({
-      projectId,
-      name: 'prd',
-      content: canonicalPrd,
-      contentType: 'text/markdown',
-      createdBy: 'user',
-      runId: run.id,
-      expectedRevision: current.metadata.revision,
-    });
+    // The run row serializes revisePrd against approvePrd and against
+    // concurrent revisions: the loser of the CAS re-reads instead of racing.
+    try {
+      await this.transactionRunner.run(async (tx) => {
+        await this.runs.update(
+          { ...run, updatedAt: this.clock.now().toISOString() },
+          run.version,
+          tx,
+        );
+      });
+    } catch (error) {
+      if (!(error instanceof VersionConflictError)) throw error;
+      return this.convergeLostRevision(projectId, identity, questions, error);
+    }
+    let stored: StoredArtifact;
+    try {
+      stored = await this.artifacts.put({
+        projectId,
+        name: 'prd',
+        content: canonicalPrd,
+        contentType: 'text/markdown',
+        createdBy: 'user',
+        runId: run.id,
+        expectedRevision: current.metadata.revision,
+      });
+    } catch (error) {
+      if (!(error instanceof VersionConflictError)) throw error;
+      return this.convergeLostRevision(projectId, identity, questions, error);
+    }
     await this.workspaces.writePrd(projectId, canonicalPrd);
+    await this.appendRevisionEvents(projectId, run.id, {
+      identity,
+      parentIdentity,
+      revision: stored.metadata.revision,
+      diff: revisionDiff(
+        current.metadata.revision,
+        String(current.content),
+        stored.metadata.revision,
+        canonicalPrd,
+      ),
+      questions,
+    });
+    return { project, identity, revision: stored.metadata.revision, questions };
+  }
+
+  /**
+   * Converges a revisePrd that lost the serialization CAS: a concurrent
+   * submission of the same document reads as success (idempotent), anything
+   * else surfaces the original conflict.
+   */
+  private async convergeLostRevision(
+    projectId: string,
+    identity: string,
+    questions: ApplicationEnvelopeQuestion[],
+    original: VersionConflictError,
+  ): Promise<RevisePrdResponse> {
+    const project = await this.requireProject(projectId);
+    const run = project.currentRunId ? await this.runs.get(project.currentRunId) : null;
+    if (!run || run.status !== 'awaiting_approval') {
+      throw new ValidationError('The PRD can only be revised while the run awaits PRD approval.');
+    }
+    const latest = await this.artifacts.getLatest(projectId, 'prd');
+    if (latest && prdIdentity(String(latest.content)) === identity) {
+      await this.reconcileRevisionReplay(projectId, run.id, latest, questions);
+      return { project, identity, revision: latest.metadata.revision, questions };
+    }
+    throw original;
+  }
+
+  /**
+   * Replays the side effects of an already-stored revision — workspace copy
+   * and lineage/diff + Blocking Questions events — all idempotent, so a
+   * crash-interrupted or concurrent revisePrd always converges.
+   */
+  private async reconcileRevisionReplay(
+    projectId: string,
+    runId: string,
+    stored: StoredArtifact,
+    questions: ApplicationEnvelopeQuestion[],
+  ): Promise<void> {
+    await this.workspaces.writePrd(projectId, String(stored.content));
+    // The initial document has no parent revision and its Blocking Questions
+    // event was already emitted by create() under a run-scoped dedupe key.
+    if (stored.metadata.revision <= 1) return;
+    const parent = await this.artifacts.getRevision(projectId, 'prd', stored.metadata.revision - 1);
+    if (!parent) return;
+    await this.appendRevisionEvents(projectId, runId, {
+      identity: prdIdentity(String(stored.content)),
+      parentIdentity: prdIdentity(String(parent.content)),
+      revision: stored.metadata.revision,
+      diff: revisionDiff(
+        parent.metadata.revision,
+        String(parent.content),
+        stored.metadata.revision,
+        String(stored.content),
+      ),
+      questions,
+    });
+  }
+
+  private async appendRevisionEvents(
+    projectId: string,
+    runId: string,
+    input: {
+      identity: string;
+      parentIdentity: string;
+      revision: number;
+      diff: string;
+      questions: ApplicationEnvelopeQuestion[];
+    },
+  ): Promise<void> {
     await this.appendEvent(
       projectId,
       'prd.revised',
-      `PRD Revision ${stored.metadata.revision} supersedes revision ${current.metadata.revision}; any prior approval no longer applies.`,
+      `PRD Revision ${input.revision} supersedes revision ${input.revision - 1}; any prior approval no longer applies.`,
       {
-        runId: run.id,
-        dedupeKey: `prd.revised:${identity}`,
-        data: { identity, parentIdentity, revision: stored.metadata.revision },
+        runId,
+        dedupeKey: `prd.revised:${input.identity}`,
+        data: {
+          identity: input.identity,
+          parentIdentity: input.parentIdentity,
+          revision: input.revision,
+          diff: input.diff,
+        },
       },
     );
-    if (questions.length > 0) {
+    if (input.questions.length > 0) {
       await this.appendEvent(
         projectId,
         'prd.blocking_questions',
         'PRD has Blocking Questions; approval is blocked until a revision resolves them.',
         {
-          runId: run.id,
-          dedupeKey: `prd.blocking_questions:${identity}`,
-          data: { questions },
+          runId,
+          dedupeKey: `prd.blocking_questions:${input.identity}`,
+          data: { questions: input.questions },
         },
       );
     }
-    return { project, identity, revision: stored.metadata.revision, questions };
   }
 
   async get(projectId: string): Promise<Omit<ProjectDetailResponse, 'knowledgeFiles'>> {
@@ -580,7 +734,56 @@ export class ProjectService {
       );
       if (!ready) continue;
       if (project.status !== 'queued' || run.status !== 'queued') continue;
-      await this.queue.enqueue(runProjectJob(project, run, this.clock.now().toISOString()));
+      // #602 fail-closed: a queued row without a current approval (legacy
+      // state or corruption) is never republished — it converges to failed
+      // with an explicit event instead of silently building an unapproved PRD.
+      const approval = await currentPrdApproval(this.artifacts, project.id);
+      if (!approval.approved || !approval.prd) {
+        const message =
+          'Queued run has no approval for the current PRD Revision; queue publication refused.';
+        const failedRun = transitionWorkflowRun(run, 'failed', this.clock.now(), {
+          error: { name: 'PrdApprovalMissingError', message },
+        });
+        await this.transactionRunner.run(async (tx) => {
+          await this.runs.update(failedRun, run.version, tx);
+          await this.projects.update(
+            {
+              ...project,
+              status: 'failed',
+              error: message,
+              updatedAt: this.clock.now().toISOString(),
+            },
+            project.version,
+            tx,
+          );
+          await this.appendEvent(project.id, 'project.queue_publication_refused', message, {
+            runId: run.id,
+            dedupeKey: `${run.id}:project.queue_publication_refused`,
+            tx,
+          });
+        });
+        continue;
+      }
+      // A pre-pin queued run gains its pin here so execution never falls back
+      // to 'latest'.
+      let recoveredRun = run;
+      if (!run.prd) {
+        recoveredRun = await this.runs.update(
+          {
+            ...run,
+            prd: {
+              name: 'prd',
+              revision: approval.prd.metadata.revision,
+              sha256: approval.prd.metadata.sha256,
+            },
+            updatedAt: this.clock.now().toISOString(),
+          },
+          run.version,
+        );
+      }
+      await this.queue.enqueue(
+        runProjectJob(project, recoveredRun, this.clock.now().toISOString()),
+      );
       await this.appendEvent(
         project.id,
         'project.queued',
@@ -669,7 +872,37 @@ export class ProjectService {
         'Project initialization failed; retry is blocked until workspace recovery is implemented.',
       );
     }
-    if (input?.prompt) await this.workspaces.writePrd(projectId, input.prompt);
+    // #602: retry is an enqueue surface, so PRD-backed projects obey the same
+    // gate as approvePrd. Projects without a PRD artifact retain their
+    // pre-#602 retry semantics.
+    const approval = await currentPrdApproval(this.artifacts, projectId);
+    if (approval.prd && previousRun?.status === 'awaiting_approval') {
+      if (input?.prompt) {
+        await this.revisePrd(projectId, { prd: input.prompt });
+        return this.requireProject(projectId);
+      }
+      throw new ValidationError(
+        `Run ${previousRun.id} is awaiting PRD approval; approve the current PRD Revision instead of retrying.`,
+      );
+    }
+    if (approval.prd && (input?.prompt || !approval.approved)) {
+      const reopened = await this.reopenForApproval(project, previousRun, input);
+      if (input?.prompt) {
+        await this.revisePrd(projectId, { prd: input.prompt });
+        return this.requireProject(projectId);
+      }
+      return reopened;
+    }
+    if (input?.prompt && !approval.prd) {
+      await this.workspaces.writePrd(projectId, input.prompt);
+    }
+    const prdReference: ArtifactReference | undefined = approval.prd
+      ? {
+          name: 'prd',
+          revision: approval.prd.metadata.revision,
+          sha256: approval.prd.metadata.sha256,
+        }
+      : undefined;
     const now = this.clock.now().toISOString();
     const campaignPreview = previousRun?.execution?.campaign?.preview ?? this.validationCampaign;
     const runId = this.ids.next();
@@ -681,6 +914,7 @@ export class ProjectService {
       version: 1,
       createdAt: now,
       updatedAt: now,
+      ...(prdReference ? { prd: prdReference } : {}),
       ...(campaignPreview
         ? {
             execution: {
@@ -711,24 +945,66 @@ export class ProjectService {
     delete updated.currentNodeId;
     delete updated.error;
 
-    const job: QueueJob = {
-      id: this.ids.next(),
-      type: 'run-project',
-      projectId,
-      workflowId: project.workflowId,
-      runId,
-      attempts: 0,
-      maxAttempts: RUN_PROJECT_MAX_ATTEMPTS,
-      createdAt: now,
-      availableAt: now,
-      leaseEpoch: 0,
-      ...traceContextField(),
-    };
-
     return this.transactionRunner.run(async (tx) => {
       const saved = await this.projects.update(updated, project.version, tx);
-      await this.queue.enqueue(job, tx);
+      await this.queue.enqueue(runProjectJob(saved, run, now), tx);
       await this.appendEvent(projectId, 'project.queued', 'Project manually re-queued.', { tx });
+      return saved;
+    });
+  }
+
+  /**
+   * Fail-closed retry path (#602): without a current approval nothing may be
+   * queued, so retry re-arms the approval flow with a fresh run instead of
+   * publishing a job. approvePrd (or revisePrd + approvePrd) is the only way
+   * forward from here.
+   */
+  private async reopenForApproval(
+    project: Project,
+    previousRun: WorkflowRun | null,
+    input?: RetryProjectRequest,
+  ): Promise<Project> {
+    const now = this.clock.now().toISOString();
+    const campaignPreview = previousRun?.execution?.campaign?.preview ?? this.validationCampaign;
+    const runId = this.ids.next();
+    const run: WorkflowRun = {
+      id: runId,
+      projectId: project.id,
+      workflowId: project.workflowId,
+      status: 'awaiting_approval',
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      ...(campaignPreview
+        ? {
+            execution: {
+              activeElapsedMs: 0,
+              consecutiveRepairs: 0,
+              campaign: createValidationCampaignExecution(campaignPreview),
+            },
+          }
+        : {}),
+    };
+    await this.runs.create(run);
+    if (input?.override) {
+      await this.createModelOverride(runId, { ...input.override, scope: { kind: 'run' } });
+    }
+    const updated: Project = {
+      ...project,
+      status: 'awaiting_approval',
+      updatedAt: now,
+      currentRunId: runId,
+    };
+    delete updated.currentNodeId;
+    delete updated.error;
+    return this.transactionRunner.run(async (tx) => {
+      const saved = await this.projects.update(updated, project.version, tx);
+      await this.appendEvent(
+        project.id,
+        'prd.approval_reopened',
+        'Retry reopened PRD approval; nothing was queued.',
+        { runId, dedupeKey: `${runId}:prd.approval_reopened`, tx },
+      );
       return saved;
     });
   }

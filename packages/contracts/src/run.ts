@@ -227,6 +227,9 @@ export const WorkflowRunSchema = z
     pause: RunPauseSnapshotSchema.optional(),
     retry: RunRetryDirectiveSchema.optional(),
     execution: RunExecutionStateSchema.optional(),
+    // #602: the exact PRD Revision this run was approved for. Execution loads
+    // the PRD through this pin (sha256-verified), never through 'latest'.
+    prd: ArtifactReferenceSchema.optional(),
   })
   .strict()
   .superRefine((run, context) => {

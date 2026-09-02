@@ -26,6 +26,18 @@ import { CONVERSATION_WORKFLOW_ID } from './conversation-step-config.js';
 import { classifyMessage } from './message-classifier.js';
 import type { ConversationService } from './conversation-service.js';
 import { sha256 } from './idempotency.js';
+import { currentPrdApproval } from './prd-approval.js';
+
+// #602: these operation kinds invoke Task Agents and can mutate the
+// workspace, so they obey the same gate as the run queue — no job without a
+// current approval of the latest PRD Revision. 'explain' is read-only advice
+// and stays ungated alongside classify/message/revise/approve.
+const PRD_GATED_OPERATION_KINDS: ReadonlySet<string> = new Set([
+  'plan',
+  'build',
+  'repair',
+  'visual-edit',
+]);
 
 export class OperationService {
   constructor(
@@ -180,6 +192,17 @@ export class OperationService {
     if (!message) throw new NotFoundError(`Message ${messageId} not found`);
     if (input.kind === 'build' && !input.planOperationId && !input.directExecution) {
       throw new ValidationError('Build requires an approved planOperationId or directExecution');
+    }
+    if (PRD_GATED_OPERATION_KINDS.has(input.kind)) {
+      const approval = await currentPrdApproval(this.artifacts, projectId);
+      // Projects created before #602 have no PRD artifact and retain their
+      // legacy operation flow. Once a PRD exists, fail closed until its exact
+      // current revision is approved.
+      if (approval.prd && !approval.approved) {
+        throw new ValidationError(
+          `A ${input.kind} operation invokes Task Agents and requires an approval of the current PRD Revision; approve the PRD first.`,
+        );
+      }
     }
 
     let artifactReferences: Operation['artifactReferences'] = [];

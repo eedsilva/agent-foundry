@@ -1,4 +1,5 @@
 const REQUIREMENT_ID = /^(?:FR|BR|NFR)-\d{3}$/;
+const CAPABILITY_SLUG = /^[a-z][a-z0-9-]*$/;
 const MAX_DOMAIN_ENTITIES = 8;
 
 const SUPPORTED_CAPABILITIES = new Set([
@@ -109,7 +110,7 @@ export type ApplicationEnvelopeRejection = {
 };
 
 export type ApplicationEnvelopeQuestion = {
-  code: 'ambiguous-capability';
+  code: 'ambiguous-capability' | 'unclassified-requirement' | 'invalid-capability-syntax';
   requirementId: string;
   capability: string;
   message: string;
@@ -134,13 +135,34 @@ export function validateSupportedApplicationEnvelope(
   let domainEntities = 0;
 
   for (const requirement of requirements) {
-    const capability = requirement.capability.trim().toLowerCase();
+    const capability = requirement.capability;
     if (!REQUIREMENT_ID.test(requirement.id)) {
       questions.push({
         code: 'ambiguous-capability',
         requirementId: requirement.id,
         capability,
         message: `Capability ${capability} needs a valid PRD requirement identifier.`,
+      });
+      continue;
+    }
+    // Mandatory classification (#602): a requirement with no marker at all is
+    // extracted with an empty capability, and a marker whose slug is not the
+    // exact lowercase form never silently disappears — both block approval.
+    if (capability === '') {
+      questions.push({
+        code: 'unclassified-requirement',
+        requirementId: requirement.id,
+        capability,
+        message: `Requirement ${requirement.id} declares no capability classification; every FR/BR/NFR item needs at least one \`capability:<slug>\` marker.`,
+      });
+      continue;
+    }
+    if (!CAPABILITY_SLUG.test(capability)) {
+      questions.push({
+        code: 'invalid-capability-syntax',
+        requirementId: requirement.id,
+        capability,
+        message: `Capability marker ${JSON.stringify(capability)} on ${requirement.id} is not a valid lowercase slug.`,
       });
       continue;
     }

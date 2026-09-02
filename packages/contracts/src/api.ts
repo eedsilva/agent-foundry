@@ -182,7 +182,7 @@ export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 /** Blocking Question raised by Supported Application Envelope classification (#602). */
 export const PrdBlockingQuestionSchema = z
   .object({
-    code: z.literal('ambiguous-capability'),
+    code: z.enum(['ambiguous-capability', 'unclassified-requirement', 'invalid-capability-syntax']),
     requirementId: z.string(),
     capability: z.string(),
     message: z.string(),

@@ -173,30 +173,55 @@ export function prdIdentity(markdown: string): string {
   return createHash('sha256').update(markdown).digest('hex');
 }
 
-const CAPABILITY_MARKER = /`capability:([a-z][a-z0-9-]*)`/g;
+const CAPABILITY_MARKER = /`(capability):([^`]*)`/gi;
 const REQUIREMENT_LINE = /^\s*-\s+\*\*((?:FR|BR|NFR|AC)-\d{3})\*\*/;
 
 /**
  * Deterministic capability extraction for the Supported Application Envelope
  * (#602). Only explicit backticked `capability:<slug>` markers count — prose
- * is never interpreted. A marker attaches to the FR/BR/NFR/AC bullet it
- * appears under; markers outside any identifier (or under an AC identifier)
- * surface downstream as Blocking Questions because the envelope classifier
- * requires a valid FR/BR/NFR identifier.
+ * is never interpreted. A marker attaches to the requirement bullet only when
+ * it sits on the bullet's own line or an indented continuation of it; any
+ * non-indented line ends the item, so a marker in a loose paragraph never
+ * inherits the previous identifier. Every FR/BR/NFR item is emitted even
+ * without markers (empty capability), and a marker whose keyword or slug is
+ * not the exact lowercase form is emitted verbatim — the envelope classifier
+ * turns both into Blocking Questions instead of letting them disappear.
  */
 export function extractEnvelopeRequirements(
   markdown: string,
 ): Array<{ id: string; capability: string }> {
   const requirements: Array<{ id: string; capability: string }> = [];
   let currentId = '';
+  let currentNeedsClassification = false;
+  let currentMarkers = 0;
+  const closeCurrent = () => {
+    if (currentNeedsClassification && currentMarkers === 0) {
+      requirements.push({ id: currentId, capability: '' });
+    }
+    currentId = '';
+    currentNeedsClassification = false;
+    currentMarkers = 0;
+  };
   for (const line of stripFencedCode(normalizeDocument(markdown)).split('\n')) {
-    if (/^##\s/.test(line)) currentId = '';
     const definition = REQUIREMENT_LINE.exec(line);
-    if (definition) currentId = definition[1]!;
+    if (definition) {
+      closeCurrent();
+      currentId = definition[1]!;
+      currentNeedsClassification = !currentId.startsWith('AC-');
+    } else if (/^\S/.test(line)) {
+      closeCurrent();
+    }
     for (const match of line.matchAll(CAPABILITY_MARKER)) {
-      requirements.push({ id: currentId, capability: match[1]! });
+      const keyword = match[1]!;
+      const slug = match[2]!;
+      if (currentId) currentMarkers += 1;
+      requirements.push({
+        id: currentId,
+        capability: keyword === 'capability' ? slug : `${keyword}:${slug}`,
+      });
     }
   }
+  closeCurrent();
   return requirements;
 }
 

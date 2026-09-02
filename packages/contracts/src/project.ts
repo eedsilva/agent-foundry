@@ -108,6 +108,8 @@ export const ProjectEventSchema = z
       'prd.blocking_questions',
       'prd.approved',
       'prd.revised',
+      'prd.approval_reopened',
+      'project.queue_publication_refused',
       'scaffold.applied',
       'project.initialization_ready',
       'project.queued',

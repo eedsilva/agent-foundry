@@ -145,6 +145,7 @@ import {
   summarizeValidationUsage,
   validationStepKey,
 } from './validation-budget.js';
+import { currentPrdApproval } from './prd-approval.js';
 import type { PreviewService } from './preview-service.js';
 import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
@@ -751,6 +752,7 @@ export class WorkflowOrchestrator {
         await this.finalizePause(run.id, projectId, workflow);
         return;
       }
+      run = await this.ensurePrdApprovedForExecution(run);
       // Before provisioning, not after (#617): the run's environment is bound
       // to the ProjectVersion of the scaffold commit, and `ensureGit` is what
       // creates that commit.
@@ -2219,6 +2221,12 @@ export class WorkflowOrchestrator {
     // Pause only takes effect between steps: an in-flight step always
     // finishes (or fails) before the run parks.
     if (run.status === 'pause_requested') throw new RunPausedError(runId, nodeId);
+    // #602: a run approved for a specific PRD Revision always loads that exact
+    // revision (sha256-verified), never 'latest' — a concurrent revision can
+    // no longer leak an unapproved document into execution.
+    if (run.prd && !pinnedArtifacts.some((artifact) => artifact.name === run.prd!.name)) {
+      pinnedArtifacts = [...pinnedArtifacts, run.prd];
+    }
     // Re-resolved every boundary so a mid-run policy edit blocks the next
     // step instead of silently governing it; the hash gate below proves the
     // copy used by this step is the one the run was pinned to.
@@ -3956,6 +3964,7 @@ export class WorkflowOrchestrator {
         profile,
         signal,
         outputSchema,
+        inputArtifacts,
         workspaceRef,
         systemPrompt,
         worktree,
@@ -4408,6 +4417,7 @@ export class WorkflowOrchestrator {
     profile: TaskProfile,
     signal: AbortSignal,
     outputSchema: AgentExecutionRequest['outputSchema'],
+    inputArtifacts: StoredArtifact[],
     workspaceRef: string,
     systemPrompt: string | undefined,
     worktree?: string,
@@ -4441,6 +4451,7 @@ export class WorkflowOrchestrator {
           mutatesWorkspace: step.mutatesWorkspace,
           timeoutMs: this.options.agentTimeoutMs,
           outputSchema,
+          inputArtifacts: inputArtifacts.map(artifactReference),
           ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         },
         workspace: {
@@ -4573,6 +4584,47 @@ export class WorkflowOrchestrator {
       );
     }
     return artifact;
+  }
+
+  private async ensurePrdApprovedForExecution(run: WorkflowRun): Promise<WorkflowRun> {
+    // A run with a PRD pin has already passed the project-level gate. An
+    // awaiting_approval status can then belong to the workflow's human gate,
+    // which must be resumable without a second PRD approval.
+    if (run.prd) {
+      await this.loadArtifactReference(run.projectId, run.prd);
+      return run;
+    }
+    if (run.status === 'awaiting_approval') {
+      const current = await currentPrdApproval(this.artifacts, run.projectId);
+      if (current.prd) {
+        throw new ValidationError(
+          `Run ${run.id} is awaiting PRD approval; execution is not allowed before approval.`,
+        );
+      }
+      return run;
+    }
+
+    const approval = await currentPrdApproval(this.artifacts, run.projectId);
+    // Projects created before #602 have no PRD artifact and retain legacy
+    // execution semantics; a PRD-driven project must prove approval first.
+    if (!approval.prd) return run;
+    if (!approval.approved) {
+      throw new ValidationError(
+        `Run ${run.id} has no approval for the current PRD Revision; execution is not allowed.`,
+      );
+    }
+    return this.runs.update(
+      {
+        ...run,
+        prd: {
+          name: 'prd',
+          revision: approval.prd.metadata.revision,
+          sha256: approval.prd.metadata.sha256,
+        },
+        updatedAt: this.clock.now().toISOString(),
+      },
+      run.version,
+    );
   }
 
   private async recordQualityOutcome(artifact: StoredArtifact, approved: boolean): Promise<void> {

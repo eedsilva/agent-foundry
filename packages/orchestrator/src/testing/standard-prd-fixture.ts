@@ -25,7 +25,7 @@ Organize personal tasks with a measurable weekly completion view.
 
 ## 6. Functional requirements / Requisitos funcionais
 
-- **FR-001**: The owner can create a task.
+- **FR-001**: The owner can create a task. \`capability:user-owned-crud\`
 
 ## 7. Conceptual data and ownership / Dados conceituais e propriedade
 
@@ -33,7 +33,7 @@ Organize personal tasks with a measurable weekly completion view.
 
 ## 8. Business rules / Regras de negócio
 
-- **BR-001**: A task belongs to exactly one owner.
+- **BR-001**: A task belongs to exactly one owner. \`capability:ownership\`
 
 ## 9. Authentication and permissions / Autenticação e permissões
 
@@ -41,7 +41,7 @@ Organize personal tasks with a measurable weekly completion view.
 
 ## 10. Non-functional requirements / Requisitos não funcionais
 
-- **NFR-001**: The task list is keyboard accessible.
+- **NFR-001**: The task list is keyboard accessible. \`capability:interface-language\`
 
 ## 11. Acceptance criteria / Critérios de aceite
 

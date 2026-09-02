@@ -319,6 +319,7 @@ describe('extractEnvelopeRequirements', () => {
       { id: 'FR-001', capability: 'user-owned-crud' },
       { id: 'FR-002', capability: 'file-upload' },
       { id: 'BR-001', capability: 'ownership' },
+      { id: 'NFR-001', capability: '' },
     ]);
   });
 
@@ -327,7 +328,12 @@ describe('extractEnvelopeRequirements', () => {
       3: `${section(3).content}\n- Task tracking \`capability:filtering\``,
     });
 
-    expect(extractEnvelopeRequirements(source)).toEqual([{ id: '', capability: 'filtering' }]);
+    expect(extractEnvelopeRequirements(source)).toEqual([
+      { id: '', capability: 'filtering' },
+      { id: 'FR-001', capability: '' },
+      { id: 'BR-001', capability: '' },
+      { id: 'NFR-001', capability: '' },
+    ]);
   });
 
   it('resets attribution at section boundaries and ignores fenced code', () => {
@@ -336,10 +342,66 @@ describe('extractEnvelopeRequirements', () => {
       7: `${section(7).content}\n- Notes \`capability:domain-entity\``,
     });
 
-    expect(extractEnvelopeRequirements(source)).toEqual([{ id: '', capability: 'domain-entity' }]);
+    expect(extractEnvelopeRequirements(source)).toEqual([
+      { id: 'FR-001', capability: '' },
+      { id: '', capability: 'domain-entity' },
+      { id: 'BR-001', capability: '' },
+      { id: 'NFR-001', capability: '' },
+    ]);
   });
 
-  it('returns no requirements for a document without markers', () => {
-    expect(extractEnvelopeRequirements(prd())).toEqual([]);
+  it('emits every unmarked FR/BR/NFR item with an empty capability', () => {
+    expect(extractEnvelopeRequirements(prd())).toEqual([
+      { id: 'FR-001', capability: '' },
+      { id: 'BR-001', capability: '' },
+      { id: 'NFR-001', capability: '' },
+    ]);
+  });
+
+  it('never lets a loose paragraph inherit the previous requirement identifier', () => {
+    const source = prd({
+      6: [
+        '- **FR-001**: Create task. `capability:user-owned-crud`',
+        '',
+        'A loose paragraph. `capability:filtering`',
+      ].join('\n'),
+    });
+
+    expect(extractEnvelopeRequirements(source)).toContainEqual({
+      id: '',
+      capability: 'filtering',
+    });
+    expect(extractEnvelopeRequirements(source)).not.toContainEqual({
+      id: 'FR-001',
+      capability: 'filtering',
+    });
+  });
+
+  it('emits markers with invalid case or syntax verbatim instead of dropping them', () => {
+    const source = prd({
+      6: [
+        '- **FR-001**: Upload. `capability:File-Upload`',
+        '- **FR-002**: Sync. `CAPABILITY:realtime`',
+      ].join('\n'),
+    });
+
+    const extracted = extractEnvelopeRequirements(source);
+    expect(extracted).toContainEqual({ id: 'FR-001', capability: 'File-Upload' });
+    expect(extracted).toContainEqual({ id: 'FR-002', capability: 'CAPABILITY:realtime' });
+  });
+
+  it('does not let an AC marker satisfy the classification of the requirement it verifies', () => {
+    const source = prd({
+      11: [
+        '- **AC-001** — Verifies: FR-001, BR-001, NFR-001 `capability:user-owned-crud`',
+        '  - Given an authenticated owner',
+        '  - When the owner creates a task',
+        '  - Then the task appears in the owner task list.',
+      ].join('\n'),
+    });
+
+    const extracted = extractEnvelopeRequirements(source);
+    expect(extracted).toContainEqual({ id: 'AC-001', capability: 'user-owned-crud' });
+    expect(extracted).toContainEqual({ id: 'FR-001', capability: '' });
   });
 });

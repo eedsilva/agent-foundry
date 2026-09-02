@@ -69,6 +69,7 @@ export function transitionWorkflowRun(
     error?: RunError;
     pause?: WorkflowRun['pause'];
     retry?: WorkflowRun['retry'];
+    prd?: WorkflowRun['prd'];
   } = {},
 ): WorkflowRun {
   assertTransition('workflow-run', run.status, status, workflowRunTransitions);

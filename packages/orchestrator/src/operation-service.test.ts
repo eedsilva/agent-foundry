@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   isWorkflowRunStatusTerminal,
   type AgentArtifact,
+  type StoredArtifact,
   type WorkflowRun,
 } from '@agent-foundry/contracts';
 import {
   NotFoundError,
+  prdIdentity,
   ValidationError,
   type ArtifactStore,
   type Clock,
@@ -91,6 +93,42 @@ function noArtifacts(): ArtifactStore {
   };
 }
 
+const APPROVED_PRD_CONTENT = 'approved prd fixture';
+
+function approvedPrdArtifact(projectId: string, name: string): StoredArtifact {
+  const metadata = {
+    projectId,
+    name,
+    revision: 1,
+    contentType: name === 'prd' ? 'text/markdown' : 'application/json',
+    createdAt: '2026-07-18T11:00:00.000Z',
+    createdBy: 'user',
+    sha256: prdIdentity(APPROVED_PRD_CONTENT),
+  };
+  return name === 'prd'
+    ? { metadata, content: APPROVED_PRD_CONTENT }
+    : { metadata, content: { schemaVersion: '1', identity: prdIdentity(APPROVED_PRD_CONTENT) } };
+}
+
+/** Task-Agent operations require a current PRD approval (#602); overlay a
+ * PRD and optionally its approval so both sides of the gate are testable. */
+function withPrd(artifacts: ArtifactStore, approved = true): ArtifactStore {
+  return {
+    put: (input) => artifacts.put(input),
+    putBlob: (input, source) => artifacts.putBlob(input, source),
+    getBlobStream: (projectId, name, revision) =>
+      artifacts.getBlobStream(projectId, name, revision),
+    getRevision: (projectId, name, revision) => artifacts.getRevision(projectId, name, revision),
+    listLatest: (projectId) => artifacts.listLatest(projectId),
+    listMetadata: (projectId, name) => artifacts.listMetadata(projectId, name),
+    reapExpired: (now) => artifacts.reapExpired(now),
+    getLatest: (projectId, name) =>
+      name === 'prd' || (name === 'prd-approval' && approved)
+        ? Promise.resolve(approvedPrdArtifact(projectId, name))
+        : artifacts.getLatest(projectId, name),
+  };
+}
+
 async function seedMessage(conversations: MemoryConversations, projectId = 'project-1') {
   await conversations.createConversation({
     id: projectId,
@@ -107,11 +145,12 @@ async function seedMessage(conversations: MemoryConversations, projectId = 'proj
   });
 }
 
-function setup(overrides: { artifacts?: ArtifactStore } = {}) {
+function setup(overrides: { artifacts?: ArtifactStore; approvedPrd?: boolean } = {}) {
   const conversations = new MemoryConversations();
   const runs = new MemoryRuns();
   const queue = new MemoryQueue();
-  const artifacts = overrides.artifacts ?? noArtifacts();
+  const rawArtifacts = overrides.artifacts ?? noArtifacts();
+  const artifacts = withPrd(rawArtifacts, overrides.approvedPrd !== false);
   const projects = new InMemoryProjects({ on: true });
   const clock = new FixedClock();
   const ids = new SequentialIds();
@@ -197,6 +236,33 @@ describe('OperationService.promoteVisualEdit', () => {
 });
 
 describe('OperationService.start', () => {
+  it.each(['plan', 'repair', 'visual-edit'] as const)(
+    'rejects %s before creating a run or queue job without PRD approval',
+    async (kind) => {
+      const { service, conversations, runs, queue } = setup({ approvedPrd: false });
+      const message = await seedMessage(conversations);
+
+      await expect(service.start('project-1', message.id, { kind } as never)).rejects.toThrow(
+        ValidationError,
+      );
+
+      expect(await runs.list()).toEqual([]);
+      expect(queue.enqueued).toEqual([]);
+    },
+  );
+
+  it('rejects direct build before creating a run or queue job without PRD approval', async () => {
+    const { service, conversations, runs, queue } = setup({ approvedPrd: false });
+    const message = await seedMessage(conversations);
+
+    await expect(
+      service.start('project-1', message.id, { kind: 'build', directExecution: true }),
+    ).rejects.toThrow(ValidationError);
+
+    expect(await runs.list()).toEqual([]);
+    expect(queue.enqueued).toEqual([]);
+  });
+
   it('creates a queued plan operation, run, and job', async () => {
     const { service, runs, queue, conversations } = setup();
     const message = await seedMessage(conversations);

@@ -33,8 +33,8 @@ The board shows three fixed columns, card actions, and loading, empty, error, an
 
 ## 6. Functional requirements / Requisitos funcionais
 
-- **FR-001**: The user can create, move, and delete cards.
-- **FR-002**: Card state persists across reloads.
+- **FR-001**: The user can create, move, and delete cards. \`capability:user-owned-crud\`
+- **FR-002**: Card state persists across reloads. \`capability:user-owned-crud\`
 
 ## 7. Conceptual data and ownership / Dados conceituais e propriedade
 
@@ -42,7 +42,7 @@ One board contains cards, and each card belongs to exactly one of the three fixe
 
 ## 8. Business rules / Regras de negócio
 
-- **BR-001**: Every card is in exactly one fixed column.
+- **BR-001**: Every card is in exactly one fixed column. \`capability:ownership\`
 
 ## 9. Authentication and permissions / Autenticação e permissões
 
@@ -50,7 +50,7 @@ No authentication is required; there is no sign-in, session, user record, or mul
 
 ## 10. Non-functional requirements / Requisitos não funcionais
 
-- **NFR-001**: Card creation, movement, and deletion are keyboard accessible.
+- **NFR-001**: Card creation, movement, and deletion are keyboard accessible. \`capability:interface-language\`
 
 ## 11. Acceptance criteria / Critérios de aceite
 
