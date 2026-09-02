@@ -937,12 +937,18 @@ export class WorkflowOrchestrator {
       }
       if (error instanceof EmergencyCeilingError) {
         const latest = await this.requireRun(run.id);
-        if (latest.status === 'cancel_requested' || latest.status === 'cancelled') {
+        // The cancellation watcher aborts the signal with EmergencyCeilingError
+        // when its poll observes the ceiling first. That abort must not skip
+        // finalization: this job is nacked permanent, so nothing else would
+        // ever converge the run out of 'running'. Cancellation and lease loss
+        // still preempt.
+        if (!(signal.reason instanceof EmergencyCeilingError)) {
           throwIfCancelled(signal, run.id);
+        }
+        if (latest.status === 'cancel_requested' || latest.status === 'cancelled') {
           await this.finalizeCancellation(run.id, projectId);
           return;
         }
-        throwIfCancelled(signal, run.id);
         if (!(await this.finalizeEmergencyCeiling(run.id, projectId))) return;
         throw error;
       }
