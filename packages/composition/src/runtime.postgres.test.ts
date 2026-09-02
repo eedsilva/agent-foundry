@@ -10,6 +10,7 @@ import {
 } from '@agent-foundry/persistence';
 import { createRuntime } from './runtime.js';
 import { approveAllGates, probeDocker, VALID_STANDARD_PRD } from './testing-helpers.js';
+import { approveCurrentPrd } from './prd-approval.js';
 
 const dockerAvailable = probeDocker();
 if (process.env.CI && !dockerAvailable) {
@@ -100,6 +101,7 @@ maybeDescribe('Postgres-backed runtime', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory,
     });
+    await approveCurrentPrd(runtime, project.id);
     expect(await runtime.projects.get(project.id)).toMatchObject({ id: project.id });
 
     if (!project.currentRunId) {

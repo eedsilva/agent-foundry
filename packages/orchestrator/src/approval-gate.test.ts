@@ -1,7 +1,7 @@
 import { ApprovalDecisionSchema } from '@agent-foundry/contracts';
 import { LeaseLostError } from '@agent-foundry/domain';
 import { describe, expect, it } from 'vitest';
-import { makeHarness, makeStores, seedRun } from './testing/harness.js';
+import { approveCurrentPrd, makeHarness, makeStores, seedRun } from './testing/harness.js';
 import { WorkerLoop } from './worker-loop.js';
 
 describe('approval gates halt the run for a human decision (#13)', () => {
@@ -156,6 +156,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     const [originalJob] = harness.enqueued;
     expect(originalJob).toMatchObject({ type: 'run-project', maxAttempts: 2 });
     harness.failNextEnqueue(new Error('queue unavailable'));
@@ -191,6 +192,7 @@ describe('approval gates halt the run for a human decision (#13)', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     const [originalJob] = harness.enqueued;
     harness.queueForWorker(originalJob!);
     const worker = new WorkerLoop(

@@ -105,6 +105,9 @@ export const ProjectEventSchema = z
     projectId: PathSegmentSchema,
     type: z.enum([
       'project.created',
+      'prd.blocking_questions',
+      'prd.approved',
+      'prd.revised',
       'scaffold.applied',
       'project.initialization_ready',
       'project.queued',

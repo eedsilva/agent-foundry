@@ -164,6 +164,42 @@ export function validateStandardPrd(markdown: string): StandardPrdValidationResu
   };
 }
 
+/**
+ * Identity of a stored PRD Revision (#602): the hash approvals must reference.
+ * For a PRD Standard document this equals `validateStandardPrd(...).prd.identity`
+ * because the stored content is the canonical markdown itself.
+ */
+export function prdIdentity(markdown: string): string {
+  return createHash('sha256').update(markdown).digest('hex');
+}
+
+const CAPABILITY_MARKER = /`capability:([a-z][a-z0-9-]*)`/g;
+const REQUIREMENT_LINE = /^\s*-\s+\*\*((?:FR|BR|NFR|AC)-\d{3})\*\*/;
+
+/**
+ * Deterministic capability extraction for the Supported Application Envelope
+ * (#602). Only explicit backticked `capability:<slug>` markers count — prose
+ * is never interpreted. A marker attaches to the FR/BR/NFR/AC bullet it
+ * appears under; markers outside any identifier (or under an AC identifier)
+ * surface downstream as Blocking Questions because the envelope classifier
+ * requires a valid FR/BR/NFR identifier.
+ */
+export function extractEnvelopeRequirements(
+  markdown: string,
+): Array<{ id: string; capability: string }> {
+  const requirements: Array<{ id: string; capability: string }> = [];
+  let currentId = '';
+  for (const line of stripFencedCode(normalizeDocument(markdown)).split('\n')) {
+    if (/^##\s/.test(line)) currentId = '';
+    const definition = REQUIREMENT_LINE.exec(line);
+    if (definition) currentId = definition[1]!;
+    for (const match of line.matchAll(CAPABILITY_MARKER)) {
+      requirements.push({ id: currentId, capability: match[1]! });
+    }
+  }
+  return requirements;
+}
+
 function normalizeDocument(markdown: string): string {
   return markdown
     .replace(/\r\n?/g, '\n')

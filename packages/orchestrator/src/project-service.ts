@@ -31,9 +31,17 @@ import type {
   ValidationCampaignPreview,
   ValidationPreflightReport,
 } from '@agent-foundry/contracts';
+import type {
+  ApplicationEnvelopeQuestion,
+  ApprovePrdRequest,
+  ApprovePrdResponse,
+  RevisePrdRequest,
+  RevisePrdResponse,
+} from '@agent-foundry/contracts';
 import {
   createValidationCampaignExecution,
   FeedbackArtifactSchema,
+  validateSupportedApplicationEnvelope,
 } from '@agent-foundry/contracts';
 import type {
   ApprovalDecisionRepository,
@@ -58,10 +66,14 @@ import type {
   WorkflowRepository,
 } from '@agent-foundry/domain';
 import {
+  ApplicationEnvelopeRejectedError,
   ApprovalConflictError,
+  extractEnvelopeRequirements,
   latestArtifactsByName,
   NotFoundError,
   errorMessage,
+  PrdApprovalConflictError,
+  prdIdentity,
   ResumeBlockedError,
   StandardPrdRejectedError,
   ValidationError,
@@ -162,9 +174,17 @@ export class ProjectService {
     }
     const workflow = await this.workflows.get(input.workflowId);
     let canonicalPrd = input.prd;
+    let questions: ApplicationEnvelopeQuestion[] = [];
     if (workflow.stack === 'nextjs') {
       if (!validation.ok) throw new StandardPrdRejectedError(validation.issues);
       canonicalPrd = validation.prd.canonicalMarkdown;
+      const envelope = validateSupportedApplicationEnvelope(
+        extractEnvelopeRequirements(canonicalPrd),
+      );
+      if (envelope.rejections.length > 0) {
+        throw new ApplicationEnvelopeRejectedError(envelope.rejections);
+      }
+      questions = envelope.questions;
     }
     const policyId = input.policyId ?? 'default';
     await this.policies.get(policyId);
@@ -196,13 +216,15 @@ export class ProjectService {
       projectId,
       input.projectDirectory,
     );
+    // #602: nothing reaches the run queue before an explicit PRD approval, so
+    // the project and its run are born awaiting that decision.
     const project: Project = {
       id: projectId,
       name: input.name,
       workflowId: input.workflowId,
       policyId,
       projectDirectory,
-      status: 'queued',
+      status: 'awaiting_approval',
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -212,7 +234,7 @@ export class ProjectService {
       id: runId,
       projectId,
       workflowId: input.workflowId,
-      status: 'queued',
+      status: 'awaiting_approval',
       version: 1,
       createdAt: now,
       updatedAt: now,
@@ -235,7 +257,6 @@ export class ProjectService {
     const stagedRun = transitionWorkflowRun(run, 'failed', this.clock.now(), {
       error: { name: 'ProjectInitializationError', message: INITIALIZATION_INTERRUPTED },
     });
-    const job = runProjectJob(project, run, now);
     let createdProject = project;
     let scaffoldFiles: Array<{ path: string; content: string }> = [];
     try {
@@ -334,15 +355,18 @@ export class ProjectService {
         'Project initialization completed; queue publication pending.',
         { runId, dedupeKey: `${runId}:project.initialization_ready` },
       );
+      // #602: no queue publication here — approvePrd owns the only enqueue.
       await this.transactionRunner.run(async (tx) => {
-        await this.appendEvent(project.id, 'project.queued', 'Project queued for orchestration.', {
-          runId,
-          dedupeKey: `${runId}:project.queued`,
-          tx,
-        });
+        if (questions.length > 0) {
+          await this.appendEvent(
+            project.id,
+            'prd.blocking_questions',
+            'PRD has Blocking Questions; approval is blocked until a revision resolves them.',
+            { runId, dedupeKey: `${runId}:prd.blocking_questions:1`, data: { questions }, tx },
+          );
+        }
         await this.runs.update(run, stagedRun.version, tx);
         createdProject = await this.projects.update(project, stagedProject.version, tx);
-        await this.queue.enqueue(job, tx);
       });
     } catch (error) {
       const message = errorMessage(error);
@@ -355,6 +379,180 @@ export class ProjectService {
     }
 
     return createdProject;
+  }
+
+  /**
+   * Approves the current PRD Revision by its exact identity hash and performs
+   * the only queue publication for a new run (#602). A stale hash conflicts;
+   * envelope rejections and Blocking Questions block approval; replaying an
+   * approval that already queued the run is a no-op.
+   */
+  async approvePrd(projectId: string, input: ApprovePrdRequest): Promise<ApprovePrdResponse> {
+    const project = await this.requireProject(projectId);
+    if (!project.currentRunId) {
+      throw new ValidationError(`Project ${projectId} has no run awaiting PRD approval.`);
+    }
+    const run = await this.requireRun(project.currentRunId);
+    const stored = await this.artifacts.getLatest(projectId, 'prd');
+    if (!stored) throw new NotFoundError(`Artifact prd not found in project ${projectId}`);
+    const canonicalPrd = String(stored.content);
+    const identity = prdIdentity(canonicalPrd);
+    if (input.identity !== identity) throw new PrdApprovalConflictError(input.identity, identity);
+    if (run.status !== 'awaiting_approval') {
+      const approval = await this.artifacts.getLatest(projectId, 'prd-approval');
+      const approved = (approval?.content as { identity?: string } | undefined)?.identity;
+      if (approved !== identity) {
+        throw new ValidationError(`Run ${run.id} is not awaiting PRD approval.`);
+      }
+      // File-mode crash window: the run reached 'queued' but the project row
+      // or queue publication may not have landed. Both writes are idempotent
+      // (job id dedupe; status check), so replaying converges instead of
+      // reporting success over missing state.
+      if (run.status === 'queued') {
+        let convergedProject = project;
+        await this.transactionRunner.run(async (tx) => {
+          if (project.status === 'awaiting_approval') {
+            convergedProject = await this.projects.update(
+              { ...project, status: 'queued', updatedAt: this.clock.now().toISOString() },
+              project.version,
+              tx,
+            );
+          }
+          await this.queue.enqueue(runProjectJob(project, run, this.clock.now().toISOString()), tx);
+        });
+        return { project: convergedProject, run };
+      }
+      return { project, run };
+    }
+    const workflow = await this.workflows.get(project.workflowId);
+    if (workflow.stack === 'nextjs') {
+      const envelope = validateSupportedApplicationEnvelope(
+        extractEnvelopeRequirements(canonicalPrd),
+      );
+      if (envelope.rejections.length > 0) {
+        throw new ApplicationEnvelopeRejectedError(envelope.rejections);
+      }
+      if (envelope.questions.length > 0) {
+        throw new ValidationError(
+          'PRD approval is blocked while Blocking Questions remain unresolved.',
+        );
+      }
+    }
+    const now = this.clock.now().toISOString();
+    // Outside the transaction for the same FK reason as create(); the
+    // idempotency key makes a crash-then-retry converge on one approval.
+    await this.artifacts.put({
+      projectId,
+      name: 'prd-approval',
+      content: {
+        schemaVersion: '1',
+        identity,
+        prdRevision: stored.metadata.revision,
+        actor: input.actor,
+        decidedAt: now,
+      },
+      createdBy: 'user',
+      runId: run.id,
+      idempotencyKey: identity,
+    });
+    const queuedRun = transitionWorkflowRun(run, 'queued', this.clock.now());
+    let queuedProject: Project = { ...project, status: 'queued', updatedAt: now };
+    await this.transactionRunner.run(async (tx) => {
+      await this.appendEvent(
+        projectId,
+        'prd.approved',
+        `PRD Revision ${stored.metadata.revision} approved for the run queue.`,
+        {
+          runId: run.id,
+          dedupeKey: `${run.id}:prd.approved:${identity}`,
+          data: { identity, revision: stored.metadata.revision },
+          tx,
+        },
+      );
+      await this.appendEvent(projectId, 'project.queued', 'Project queued for orchestration.', {
+        runId: run.id,
+        dedupeKey: `${run.id}:project.queued`,
+        tx,
+      });
+      await this.runs.update(queuedRun, run.version, tx);
+      queuedProject = await this.projects.update(queuedProject, project.version, tx);
+      await this.queue.enqueue(runProjectJob(project, run, now), tx);
+    });
+    return { project: queuedProject, run: queuedRun };
+  }
+
+  /**
+   * Replaces the PRD with a new immutable revision while the run still awaits
+   * approval (#602). Identical content is idempotent; a changed document gets
+   * a new identity, so any approval of the old hash no longer matches.
+   */
+  async revisePrd(projectId: string, input: RevisePrdRequest): Promise<RevisePrdResponse> {
+    const project = await this.requireProject(projectId);
+    if (!project.currentRunId) {
+      throw new ValidationError(`Project ${projectId} has no run awaiting PRD approval.`);
+    }
+    const run = await this.requireRun(project.currentRunId);
+    if (run.status !== 'awaiting_approval') {
+      throw new ValidationError('The PRD can only be revised while the run awaits PRD approval.');
+    }
+    const workflow = await this.workflows.get(project.workflowId);
+    const validation = validateStandardPrd(input.prd);
+    let canonicalPrd = input.prd;
+    let questions: ApplicationEnvelopeQuestion[] = [];
+    if (workflow.stack === 'nextjs') {
+      if (!validation.ok) throw new StandardPrdRejectedError(validation.issues);
+      canonicalPrd = validation.prd.canonicalMarkdown;
+      const envelope = validateSupportedApplicationEnvelope(
+        extractEnvelopeRequirements(canonicalPrd),
+      );
+      if (envelope.rejections.length > 0) {
+        throw new ApplicationEnvelopeRejectedError(envelope.rejections);
+      }
+      questions = envelope.questions;
+    } else if (!validation.ok) {
+      const maxLengthIssues = validation.issues.filter((issue) => issue.code === 'max-length');
+      if (maxLengthIssues.length > 0) throw new StandardPrdRejectedError(maxLengthIssues);
+    }
+    const current = await this.artifacts.getLatest(projectId, 'prd');
+    if (!current) throw new NotFoundError(`Artifact prd not found in project ${projectId}`);
+    const parentIdentity = prdIdentity(String(current.content));
+    const identity = prdIdentity(canonicalPrd);
+    if (identity === parentIdentity) {
+      return { project, identity, revision: current.metadata.revision, questions };
+    }
+    const stored = await this.artifacts.put({
+      projectId,
+      name: 'prd',
+      content: canonicalPrd,
+      contentType: 'text/markdown',
+      createdBy: 'user',
+      runId: run.id,
+      expectedRevision: current.metadata.revision,
+    });
+    await this.workspaces.writePrd(projectId, canonicalPrd);
+    await this.appendEvent(
+      projectId,
+      'prd.revised',
+      `PRD Revision ${stored.metadata.revision} supersedes revision ${current.metadata.revision}; any prior approval no longer applies.`,
+      {
+        runId: run.id,
+        dedupeKey: `prd.revised:${identity}`,
+        data: { identity, parentIdentity, revision: stored.metadata.revision },
+      },
+    );
+    if (questions.length > 0) {
+      await this.appendEvent(
+        projectId,
+        'prd.blocking_questions',
+        'PRD has Blocking Questions; approval is blocked until a revision resolves them.',
+        {
+          runId: run.id,
+          dedupeKey: `prd.blocking_questions:${identity}`,
+          data: { questions },
+        },
+      );
+    }
+    return { project, identity, revision: stored.metadata.revision, questions };
   }
 
   async get(projectId: string): Promise<Omit<ProjectDetailResponse, 'knowledgeFiles'>> {

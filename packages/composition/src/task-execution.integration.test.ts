@@ -19,6 +19,7 @@ import type { AgentExecutor } from '@agent-foundry/domain';
 import { MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime, type Runtime } from './runtime.js';
 import { approveAllGates, VALID_STANDARD_PRD } from './testing-helpers.js';
+import { approveCurrentPrd } from './prd-approval.js';
 
 /**
  * PRD → plan → operator approval → per-task execution. Deliberately stops
@@ -206,6 +207,7 @@ async function startProject(
     prd: VALID_STANDARD_PRD,
     projectDirectory,
   });
+  await approveCurrentPrd(runtime, project.id);
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
   return { id: project.id, runId: project.currentRunId };
 }

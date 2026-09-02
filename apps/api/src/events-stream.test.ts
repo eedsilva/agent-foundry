@@ -52,7 +52,16 @@ async function createProject(baseUrl: string): Promise<string> {
     }),
   });
   expect(response.status).toBe(202);
-  const { project } = (await response.json()) as { project: { id: string } };
+  const { project, identity } = (await response.json()) as {
+    project: { id: string };
+    identity: string;
+  };
+  const approval = await fetch(`${baseUrl}/projects/${project.id}/prd/approval`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ identity, actor: { kind: 'user', id: 'operator' } }),
+  });
+  expect(approval.status).toBe(202);
   return project.id;
 }
 

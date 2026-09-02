@@ -18,6 +18,7 @@ import type { AgentExecutor } from '@agent-foundry/domain';
 import { CodexCliExecutor, MockAgentExecutor } from '@agent-foundry/executors';
 import { createRuntime, type Runtime } from './runtime.js';
 import { approveAllGates, VALID_STANDARD_PRD } from './testing-helpers.js';
+import { approveCurrentPrd } from './prd-approval.js';
 
 /**
  * The 5 rubric criterion ids this test expects back on a real run (#475).
@@ -268,6 +269,7 @@ async function startJudgedRun(options: JudgedRunOptions = {}): Promise<{
     prd: VALID_STANDARD_PRD,
     projectDirectory,
   });
+  await approveCurrentPrd(runtime, project.id);
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
   return { runtime, runId: project.currentRunId, projectId: project.id, judge };
 }

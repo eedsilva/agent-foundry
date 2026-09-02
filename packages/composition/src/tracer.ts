@@ -12,6 +12,7 @@ import {
 import { NotFoundError, ValidationError } from '@agent-foundry/domain';
 import { MAX_QUEUE_BACKOFF_MS } from '@agent-foundry/persistence';
 import { loadJsonDirectory } from './dogfood.js';
+import { approveCurrentPrd } from './prd-approval.js';
 import { createRuntime, type Runtime } from './runtime.js';
 
 const PREVIEW_PROBE_TIMEOUT_MS = 2_000;
@@ -206,6 +207,9 @@ async function startTracerRun(
     ...(options.policyId ? { policyId: options.policyId } : {}),
   });
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
+  // The tracer drives the operator journey, so it takes the PRD approval step
+  // itself before the run may enter the queue (#602).
+  await approveCurrentPrd(runtime, project.id, `tracer-${scenario.id}`);
   return { runtime, project, runId: project.currentRunId };
 }
 

@@ -370,7 +370,18 @@ async function createProject(policyId?: string): Promise<string> {
     }),
   });
   expect(response.status).toBe(202);
-  const { project } = (await response.json()) as { project: { id: string } };
+  const { project, identity } = (await response.json()) as {
+    project: { id: string };
+    identity: string;
+  };
+  // #602: the queue only accepts the run after the operator approves the
+  // exact PRD Revision identity returned by intake.
+  const approval = await apiFetch(`/projects/${project.id}/prd/approval`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ identity, actor: { kind: 'user', id: 'golden-e2e-operator' } }),
+  });
+  expect(approval.status).toBe(202);
   return project.id;
 }
 

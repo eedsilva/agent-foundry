@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from './runtime.js';
+import { approveCurrentPrd } from './prd-approval.js';
 
 const WORKFLOW = `
 schemaVersion: '1'
@@ -92,6 +93,7 @@ describe('persisted override catalog drift', () => {
         workflowId: 'override-drift-v1',
         projectDirectory,
       });
+      await approveCurrentPrd(runtime, project.id);
       const runId = project.currentRunId!;
       await runtime.projectService.createModelOverride(runId, {
         scope:
@@ -123,6 +125,7 @@ describe('persisted override catalog drift', () => {
       workflowId: 'override-drift-v1',
       projectDirectory,
     });
+    await approveCurrentPrd(runtime, project.id);
     const runId = project.currentRunId!;
     expect(await runtime.worker.runOnce()).toBe(true);
     const [completedStep] = await runtime.stepRuns.list(runId);

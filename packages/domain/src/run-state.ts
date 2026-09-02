@@ -31,7 +31,10 @@ const workflowRunTransitions: Record<WorkflowRunStatus, readonly WorkflowRunStat
   // decides whether that means completing, resuming, or terminal rejection.
   // 'running' tolerates a stray redelivery while parked, same as 'paused':
   // the gate just re-halts idempotently instead of crashing the run.
-  awaiting_approval: ['queued', 'running', 'cancel_requested', 'cancelled', 'rejected'],
+  // 'failed' covers initialization staging (#602): a run now begins life
+  // awaiting PRD approval, and interrupted initialization must still be able
+  // to converge it to a terminal failure.
+  awaiting_approval: ['queued', 'running', 'cancel_requested', 'cancelled', 'rejected', 'failed'],
   cancel_requested: ['cancelled', 'failed'],
   cancelled: [],
   // Step retry re-opens a finished run; completed steps are reused by

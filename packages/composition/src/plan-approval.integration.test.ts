@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRuntime, type Runtime } from './runtime.js';
+import { approveCurrentPrd } from './prd-approval.js';
 // Issue #297's Status App remains explicitly single-user and no-auth. #643 only
 // reformats that product contract; it must not let a reviewer invent access
 // control while making the fixture pass Standard PRD 1.
@@ -95,6 +96,7 @@ async function startStatusAppRun(workerId: string): Promise<{
     prd: STATUS_APP_PRD,
     projectDirectory,
   });
+  await approveCurrentPrd(runtime, project.id);
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
   expect(await runtime.worker.runOnce()).toBe(true);
   return { runtime, projectId: project.id, runId: project.currentRunId };

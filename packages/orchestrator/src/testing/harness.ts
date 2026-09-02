@@ -88,6 +88,7 @@ import {
   type WorkflowRepository,
   type WorkflowRunRepository,
   type WorkspaceManager,
+  prdIdentity,
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
@@ -1712,4 +1713,14 @@ export function liveStepRun(harness: Harness, stepId: string): StepRun {
   const live = harness.stepRuns.byStepId('run-1', stepId).filter((step) => !step.invalidatedAt);
   assert.strictEqual(live.length, 1);
   return live[0]!;
+}
+
+/** Approves the project's current PRD Revision by its stored identity (#602). */
+export async function approveCurrentPrd(harness: Harness, projectId: string) {
+  const stored = await harness.artifacts.getLatest(projectId, 'prd');
+  if (!stored) throw new Error(`Project ${projectId} has no prd artifact to approve.`);
+  return harness.service.approvePrd(projectId, {
+    identity: prdIdentity(String(stored.content)),
+    actor: { kind: 'user', id: 'operator' },
+  });
 }

@@ -231,7 +231,9 @@ export const WorkflowRunSchema = z
   .strict()
   .superRefine((run, context) => {
     validateLifecycleTimestamps(run.status, run, context, {
-      initial: ['queued'],
+      // A run is born awaiting PRD approval and only enters the queue on an
+      // explicit approval (#602), so both states may precede startedAt.
+      initial: ['queued', 'awaiting_approval'],
       terminal: ['completed', 'failed', 'cancelled', 'rejected'],
     });
     if (run.status === 'failed' && !run.error) {

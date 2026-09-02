@@ -395,3 +395,34 @@ describe('AlertStrip non-running variants keep their existing role/content shape
     expect(markup).not.toContain('class="text-ink-muted shrink-0"');
   });
 });
+
+describe('pre-run PRD approval strip (#602)', () => {
+  it('offers the approval action while the run has never started', () => {
+    const markup = renderStrip({
+      run: makeRun(),
+      prdApproval: { blockingQuestions: null },
+    });
+
+    expect(markup).toContain('Aprovação do PRD pendente');
+    expect(markup).toContain('Aprovar PRD e iniciar build');
+  });
+
+  it('shows Blocking Questions instead of the approval action', () => {
+    const markup = renderStrip({
+      run: makeRun(),
+      prdApproval: { blockingQuestions: 'Capability quantum-sync is not classified.' },
+    });
+
+    expect(markup).toContain('Capability quantum-sync is not classified.');
+    expect(markup).not.toContain('Aprovar PRD e iniciar build');
+  });
+
+  it('yields to the mid-run gate once the run has started', () => {
+    const markup = renderStrip({
+      run: makeRun({ startedAt: '2026-08-10T00:00:00.000Z' }),
+      prdApproval: { blockingQuestions: null },
+    });
+
+    expect(markup).not.toContain('Aprovação do PRD pendente');
+  });
+});
