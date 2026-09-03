@@ -185,26 +185,6 @@ async function readWebVitals(page: Page): Promise<{
     };
   });
 }
-const BROWSER_TEST_PLAN = {
-  schemaVersion: '1' as const,
-  status: 'completed' as const,
-  summary: 'Minimal smoke plan for the fixture root route.',
-  data: {
-    schemaVersion: '1',
-    id: 'smoke-plan',
-    title: 'Smoke check root route',
-    viewport: { width: 1280, height: 720 },
-    steps: [
-      {
-        id: 'load-root',
-        title: 'Load the root page',
-        action: { kind: 'goto', path: '/' },
-        assertions: [{ kind: 'url', path: '/' }],
-      },
-    ],
-  },
-};
-
 /** Inspector panels stay mounted but hidden; open the tab before asserting on it. */
 async function openInspectorTab(page: Page, label: string) {
   await page.getByRole('tab', { name: label }).click();
@@ -236,9 +216,8 @@ async function createProjectDirectory(): Promise<string> {
 }
 // #548: EXECUTOR_MODE: 'real' below spawns the real ClaudeCliExecutor /
 // CodexCliExecutor classes, which resolve the `claude` / `codex` command by
-// name on PATH. The suite ran no agent step before the UI-quality judge
-// policy below was added — golden-flow-e2e-v1.yaml has no 'agent' node —
-// so nothing previously required these to resolve to anything at all.
+// name on PATH. The workflow now uses an agent step to produce its
+// `browser-test.plan`, and the policy below invokes the UI-quality judge.
 // Prepending the checked-in fake CLIs (same fixtures fake-cli.integration.test.ts
 // uses) makes this self-contained rather than depending on an external PATH.
 const FAKE_CLI_DIR = resolve(REPO_ROOT, 'packages/executors/src/fixtures/fake-cli');
@@ -392,7 +371,7 @@ function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   return fetch(`${apiBaseUrl}${path}`, { ...init, headers });
 }
 
-async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
+async function seedWorkspaceAndRouteArtifacts(projectId: string): Promise<void> {
   await runtime.workspaces.ensure(projectId);
   const workspacePath = runtime.workspaces.workspacePath(projectId);
   const fixtureSource = await readFile(FIXTURE_SCRIPT, 'utf8');
@@ -414,17 +393,6 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
     join(workspacePath, 'package-lock.json'),
     JSON.stringify({ name: 'golden-flow-e2e-fixture', lockfileVersion: 3, packages: {} }),
   );
-  // Reuses the 'prd' artifact name (see golden-flow-e2e-v1.yaml comment):
-  // project creation already wrote revision 1 (the placeholder PRD text);
-  // this adds revision 2 with the real browser test plan content, which
-  // `getLatest` then resolves for the verify-browser node.
-  await runtime.artifacts.put({
-    projectId,
-    name: 'prd',
-    content: BROWSER_TEST_PLAN,
-    contentType: 'application/json',
-    createdBy: 'golden-flow-e2e',
-  });
   const profileDefaults = {
     role: 'developer',
     taxonomyVersion: '2',
@@ -469,7 +437,7 @@ async function seedWorkspaceAndPlan(projectId: string): Promise<void> {
 }
 
 // Seeds RouterDecisionLogEntry rows directly through the repository port,
-// the same way seedWorkspaceAndPlan seeds routeDecision artifact metadata via
+// the same way seedWorkspaceAndRouteArtifacts seeds routeDecision artifact metadata via
 // runtime.router.route() rather than driving a full workflow run: the golden
 // -flow-e2e-v1.yaml fixture has no quality-loop node, so nothing here would
 // ever produce a RouterDecisionLogEntry through a live run. Task 6's
@@ -721,7 +689,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
   page,
 }) => {
   const projectId = await createProject(UI_QUALITY_POLICY_ID);
-  await seedWorkspaceAndPlan(projectId);
+  await seedWorkspaceAndRouteArtifacts(projectId);
   expect(await runtime.worker.runOnce()).toBe(true);
   await stopProvisionedPreview(projectId);
 
@@ -867,7 +835,11 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
     .getByRole('heading', { name: 'repair', exact: true })
     .locator('..');
   await expect(repairRoutes).toContainText('repair/integration · taxonomy v2');
-  await expect(routesPanel.getByTestId('route-card').locator('h4')).toHaveCount(3);
+  const verificationRoutes = routesPanel
+    .getByRole('heading', { name: 'verification', exact: true })
+    .locator('..');
+  await expect(verificationRoutes).toContainText('verification/tests · taxonomy v2');
+  await expect(routesPanel.getByTestId('route-card').locator('h4')).toHaveCount(4);
 
   await page.getByRole('button', { name: 'Iniciar preview' }).click();
   const iframe = page.getByTestId('preview-frame');
@@ -881,7 +853,7 @@ test('golden flow: change request, preview, browser tests, diff approval, axe', 
 
   await page.getByRole('button', { name: 'Console, rede e testes' }).click();
   await expect(
-    page.getByRole('region', { name: 'Preview' }).getByText('Load the root page'),
+    page.getByRole('region', { name: 'Preview' }).getByText('Open the app'),
   ).toBeVisible();
   await expect(page.getByTestId('screenshot-thumb').first()).toBeVisible();
 
@@ -1055,7 +1027,7 @@ test('golden flow: attach reference, plan, build, visual edit, revert, rebuild',
   page,
 }) => {
   const projectId = await createProject();
-  await seedWorkspaceAndPlan(projectId);
+  await seedWorkspaceAndRouteArtifacts(projectId);
   await mkdir(join(runtime.workspaces.workspacePath(projectId), 'src'));
   const greetingPath = join(runtime.workspaces.workspacePath(projectId), 'src', 'Greeting.tsx');
   await writeFile(greetingPath, "export const greetingBackground = '#eee';\n", { flag: 'wx' });
