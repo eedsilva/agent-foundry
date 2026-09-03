@@ -499,6 +499,7 @@ export async function createRuntime(
     ids,
     conversationService,
     workspaces,
+    projectMutationLock,
   );
   const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
@@ -658,6 +659,12 @@ async function createMetadataStores(
   }
   const sql = createPostgresClient(config.databaseUrl);
   await assertSchemaCurrent(sql);
+  // A session lock reserves its connection for the whole critical section, and
+  // the section itself does I/O through `sql`; sharing one pool deadlocks as
+  // soon as concurrent sections reach `max` — every connection is held by a
+  // section waiting for a connection. The locks get their own pool so the
+  // critical sections always have `sql` to make progress with.
+  const lockSql = createPostgresClient(config.databaseUrl);
   return {
     projects: new PostgresProjectRepository(sql),
     runs: new PostgresWorkflowRunRepository(sql),
@@ -671,7 +678,7 @@ async function createMetadataStores(
     stepEvents: new PostgresStepEventRepository(sql),
     sql,
     transactionRunner: new PostgresTransactionRunner(sql),
-    projectMutationLock: new PostgresProjectMutationLock(sql),
+    projectMutationLock: new PostgresProjectMutationLock(lockSql),
   };
 }
 

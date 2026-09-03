@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -307,7 +308,9 @@ async function seedRun(
       prdRevision: prd.metadata.revision,
     },
     createdBy: 'test',
-    idempotencyKey: 'seeded-prd-approval',
+    idempotencyKey: createHash('sha256')
+      .update(`${prdIdentity('approved test PRD')}:${prd.metadata.revision}`)
+      .digest('hex'),
   });
   await stores.projects.create({
     id: 'project-1',

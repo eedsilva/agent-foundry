@@ -2225,9 +2225,13 @@ export class WorkflowOrchestrator {
     if (run.status === 'pause_requested') throw new RunPausedError(runId, nodeId);
     // #602: a run approved for a specific PRD Revision always loads that exact
     // revision (sha256-verified), never 'latest' — a concurrent revision can
-    // no longer leak an unapproved document into execution.
-    if (run.prd && !pinnedArtifacts.some((artifact) => artifact.name === run.prd!.name)) {
-      pinnedArtifacts = [...pinnedArtifacts, run.prd];
+    // no longer leak an unapproved document into execution. The run's pin
+    // overrides any same-named reference pinned upstream: for-each-task pins
+    // its implement inputs from 'latest' before reaching this boundary, so
+    // merely appending when absent would let that stale reference win.
+    if (run.prd) {
+      const pin = run.prd;
+      pinnedArtifacts = [...pinnedArtifacts.filter((artifact) => artifact.name !== pin.name), pin];
     }
     // Re-resolved every boundary so a mid-run policy edit blocks the next
     // step instead of silently governing it; the hash gate below proves the

@@ -75,6 +75,47 @@ maybeDescribe('Postgres-backed runtime', () => {
     await expect(runtime.checkReadiness()).resolves.toBeUndefined();
   }, 30_000);
 
+  it('runs concurrent project mutation sections without starving the store pool', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-postgres-lock-pool-'));
+    temporaryDirectories.push(dataDir);
+    const runtime = await createRuntime({
+      ...process.env,
+      REPO_ROOT: rootDir,
+      DATA_DIR: dataDir,
+      PERSISTENCE_MODE: 'postgres',
+      DATABASE_URL: databaseUrl,
+      EXECUTOR_MODE: 'mock',
+      AUTO_INSTALL_DEPENDENCIES: 'false',
+      WORKER_ID: 'postgres-lock-pool-worker',
+    });
+
+    // One concurrent section per connection in the store pool (max: 10 in
+    // postgres/client.ts). Each holds its session-lock connection for the
+    // whole section and does store I/O inside it: sharing a single pool
+    // deadlocks here, with every connection held by a section waiting for one.
+    const sections = Array.from({ length: 10 }, (_, index) =>
+      runtime.projectMutationLock.runExclusive(`lock-pool-probe-${index}`, () =>
+        runtime.projects.get(`lock-pool-probe-${index}`),
+      ),
+    );
+    let starved: NodeJS.Timeout | undefined;
+    try {
+      await expect(
+        Promise.race([
+          Promise.all(sections),
+          new Promise((_resolve, reject) => {
+            starved = setTimeout(
+              () => reject(new Error('project mutation lock starved the store pool')),
+              20_000,
+            );
+          }),
+        ]),
+      ).resolves.toHaveLength(10);
+    } finally {
+      if (starved) clearTimeout(starved);
+    }
+  }, 60_000);
+
   it('boots, round-trips a project through Postgres, and drives a mock run to completion', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'agent-foundry-postgres-runtime-'));
     const projectDirectory = await mkdtemp(

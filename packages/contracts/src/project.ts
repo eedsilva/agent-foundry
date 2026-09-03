@@ -57,6 +57,18 @@ export const StoredArtifactSchema = z.object({
 });
 export type StoredArtifact = z.infer<typeof StoredArtifactSchema>;
 
+/**
+ * Content of a stored 'prd-approval' artifact (#602). Only the fields the
+ * approval gate trusts are pinned; loose so audit fields (actor, decidedAt)
+ * can grow without invalidating persisted approvals.
+ */
+export const PrdApprovalArtifactContentSchema = z.looseObject({
+  schemaVersion: z.literal('1'),
+  identity: z.string().regex(/^[a-f0-9]{64}$/),
+  prdRevision: z.number().int().positive(),
+});
+export type PrdApprovalArtifactContent = z.infer<typeof PrdApprovalArtifactContentSchema>;
+
 export const FeedbackArtifactSchema = z
   .object({
     schemaVersion: z.literal('1'),

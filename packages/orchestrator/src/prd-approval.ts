@@ -1,6 +1,6 @@
-import type { StoredArtifact } from '@agent-foundry/contracts';
+import { PrdApprovalArtifactContentSchema, type StoredArtifact } from '@agent-foundry/contracts';
 import { prdIdentity, type ArtifactStore } from '@agent-foundry/domain';
-import { prdArtifactMatchesReference } from './idempotency.js';
+import { prdArtifactMatchesReference, sha256 } from './idempotency.js';
 
 export const PRD_GATED_OPERATION_KINDS: ReadonlySet<string> = new Set([
   'plan',
@@ -38,8 +38,21 @@ export async function currentPrdApproval(
       sha256: prd.metadata.sha256,
     });
   const identity = prdIsIntact ? prdIdentity(prd.content as string) : undefined;
-  const approvalContent = approval?.content as
-    { identity?: string; prdRevision?: number } | undefined;
+  // The approval's decision fields must still be the ones its writer recorded.
+  // metadata.sha256 cannot verify JSON content across stores (Postgres jsonb
+  // reorders keys on readback), but approvePrd writes idempotencyKey =
+  // sha256(`${identity}:${prdRevision}`) in every store — recomputing it binds
+  // content to metadata, so a mutated identity/revision fails closed.
+  const parsed = approval
+    ? PrdApprovalArtifactContentSchema.safeParse(approval.content)
+    : undefined;
+  const approvalContent =
+    approval &&
+    parsed?.success &&
+    approval.metadata.idempotencyKey ===
+      sha256(`${parsed.data.identity}:${parsed.data.prdRevision}`)
+      ? parsed.data
+      : undefined;
   const approvedIdentity = approvalContent?.identity;
   const approvedRevision = approvalContent?.prdRevision;
   return {

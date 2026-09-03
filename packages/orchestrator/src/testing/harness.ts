@@ -74,6 +74,7 @@ import {
   type ModelOverrideRepository,
   type ModelRouter,
   type PolicyRepository,
+  type ProjectMutationLock,
   type ProjectRepository,
   type RouterDecisionLogRepository,
   type SecretStore,
@@ -1356,6 +1357,8 @@ export function makeHarness(
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
     systemPrompts?: SystemPromptRepository;
+    /** Shared with the test so it can play a lock-abiding PRD writer (#602). */
+    lock?: ProjectMutationLock;
   } = {},
 ) {
   const stores = existing ?? makeStores();
@@ -1608,6 +1611,7 @@ export function makeHarness(
     undefined,
     opts.validationCampaign,
     opts.validationPreflight,
+    opts.lock,
   );
   return {
     ...stores,
@@ -1675,7 +1679,11 @@ export async function seedRun(harness: Harness): Promise<void> {
       prdRevision: prd.metadata.revision,
     },
     createdBy: 'test',
-    idempotencyKey: createHash('sha256').update('seeded-prd-approval').digest('hex'),
+    // Mirrors approvePrd's canonical key — currentPrdApproval recomputes it to
+    // prove the persisted decision fields still match their metadata (#602).
+    idempotencyKey: createHash('sha256')
+      .update(`${prdIdentity('approved test PRD')}:${prd.metadata.revision}`)
+      .digest('hex'),
   });
   await harness.projects.create({
     id: 'project-1',

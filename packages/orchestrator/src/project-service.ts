@@ -107,7 +107,8 @@ const INITIALIZATION_INTERRUPTED =
 
 // ponytail: process-local fallback for direct unit construction; production injects the
 // file or PostgreSQL lock so separate workers share the same project boundary.
-class InProcessProjectMutationLock implements ProjectMutationLock {
+// Exported so tests can hand ProjectService and OperationService one shared lock.
+export class InProcessProjectMutationLock implements ProjectMutationLock {
   private readonly tails = new Map<string, Promise<void>>();
 
   async runExclusive<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
@@ -893,6 +894,19 @@ export class ProjectService {
   }
 
   async retry(projectId: string, input?: RetryProjectRequest): Promise<Project> {
+    // #602 clarification: retry is an enqueue surface, so the whole of it —
+    // approval check, queued-run persistence, and the retry({prompt}) revision
+    // — is one atomic section under the project mutation lock, the same
+    // section OperationService.createQueuedOperation holds. The revision
+    // branches call revisePrdLocked directly (never revisePrd: the lock is
+    // non-reentrant); releasing between decision and revision would let
+    // approvePrd queue the PRD the caller asked to replace.
+    return this.projectMutationLock.runExclusive(projectId, () =>
+      this.retryLocked(projectId, input),
+    );
+  }
+
+  private async retryLocked(projectId: string, input?: RetryProjectRequest): Promise<Project> {
     const project = await this.requireProject(projectId);
     if (project.status === 'running' || project.status === 'queued') return project;
     const previousRun = project.currentRunId ? await this.runs.get(project.currentRunId) : null;
@@ -914,7 +928,7 @@ export class ProjectService {
     }
     if (previousRun?.status === 'awaiting_approval') {
       if (input?.prompt) {
-        await this.revisePrd(projectId, { prd: input.prompt });
+        await this.revisePrdLocked(projectId, { prd: input.prompt });
         return this.requireProject(projectId);
       }
       throw new ValidationError(
@@ -924,7 +938,7 @@ export class ProjectService {
     if (input?.prompt || !approval.approved) {
       const reopened = await this.reopenForApproval(project, previousRun, input);
       if (input?.prompt) {
-        await this.revisePrd(projectId, { prd: input.prompt });
+        await this.revisePrdLocked(projectId, { prd: input.prompt });
         return this.requireProject(projectId);
       }
       return reopened;

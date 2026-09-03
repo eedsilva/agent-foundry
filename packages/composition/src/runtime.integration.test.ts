@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -1267,6 +1268,13 @@ describe('runtime composition', () => {
         decidedAt: createdAt,
       },
       createdBy: 'user',
+      idempotencyKey: createHash('sha256')
+        .update(
+          `${prdIdentity(
+            'Build a small persistent issue tracker with deterministic tests and production build checks.',
+          )}:1`,
+        )
+        .digest('hex'),
     });
     const legacyJob = JSON.parse(
       await readFile(

@@ -18,7 +18,8 @@ import {
 } from '@agent-foundry/domain';
 import { OperationService } from './operation-service.js';
 import { currentPrdApproval } from './prd-approval.js';
-import { InMemoryProjects, MemoryConversations } from './testing/harness.js';
+import { InProcessProjectMutationLock } from './project-service.js';
+import { InMemoryArtifacts, InMemoryProjects, MemoryConversations } from './testing/harness.js';
 import { ConversationService } from './conversation-service.js';
 
 class FixedClock implements Clock {
@@ -116,6 +117,15 @@ function approvedPrdArtifact(projectId: string, name: string): StoredArtifact {
     contentType: name === 'prd' ? 'text/markdown' : 'application/json',
     createdAt: '2026-07-18T11:00:00.000Z',
     createdBy: 'user',
+    // approvePrd's canonical key — currentPrdApproval recomputes it to prove
+    // the persisted decision fields still match their metadata (#602).
+    ...(name === 'prd-approval'
+      ? {
+          idempotencyKey: createHash('sha256')
+            .update(`${prdIdentity(APPROVED_PRD_CONTENT)}:1`)
+            .digest('hex'),
+        }
+      : {}),
     sha256: createHash('sha256').update(JSON.stringify(content)).digest('hex'),
   };
   return { metadata, content };
@@ -179,6 +189,7 @@ function setup(
     clock,
     ids,
   );
+  const lock = new InProcessProjectMutationLock();
   const service = new OperationService(
     conversations,
     runs,
@@ -188,8 +199,9 @@ function setup(
     ids,
     conversationService,
     { workspacePath: (projectId) => `/fake/${projectId}/workspace` },
+    lock,
   );
-  return { conversations, runs, queue, artifacts, projects, conversationService, service };
+  return { conversations, runs, queue, artifacts, projects, conversationService, service, lock };
 }
 
 const visualEdit = {
@@ -383,6 +395,111 @@ describe('OperationService.start', () => {
       NotFoundError,
     );
   });
+
+  it('holds the project lock across the approval check, queued persistence and publication', async () => {
+    const conversations = new MemoryConversations();
+    const runs = new MemoryRuns();
+    const queue = new MemoryQueue();
+    const store = new InMemoryArtifacts({ on: true });
+    const clock = new FixedClock();
+    const ids = new SequentialIds();
+    const lock = new InProcessProjectMutationLock();
+    const identity = prdIdentity(APPROVED_PRD_CONTENT);
+    await store.put({
+      projectId: 'project-1',
+      name: 'prd',
+      content: APPROVED_PRD_CONTENT,
+      contentType: 'text/markdown',
+      createdBy: 'user',
+    });
+    await store.put({
+      projectId: 'project-1',
+      name: 'prd-approval',
+      content: { schemaVersion: '1', identity, prdRevision: 1 },
+      createdBy: 'user',
+      idempotencyKey: createHash('sha256').update(`${identity}:1`).digest('hex'),
+    });
+
+    const order: string[] = [];
+    queue.onEnqueue = async () => {
+      // Publication is I/O: yield first, so a writer waiting on the lock gets
+      // its turn here whenever the section was released before publishing.
+      await new Promise((resolve) => setImmediate(resolve));
+      order.push('job-enqueued');
+    };
+    let lockedRevision: Promise<void> | undefined;
+    const artifacts: ArtifactStore = {
+      put: (input) => store.put(input),
+      putBlob: (input, source) => store.putBlob(input, source),
+      getBlobStream: (projectId, name, revision) => store.getBlobStream(projectId, name, revision),
+      getRevision: (projectId, name, revision) => store.getRevision(projectId, name, revision),
+      listLatest: () => store.listLatest(),
+      listMetadata: (projectId, name) => store.listMetadata(projectId, name),
+      reapExpired: () => store.reapExpired(),
+      getLatest: async (projectId, name) => {
+        const artifact = await store.getLatest(projectId, name);
+        if (name === 'prd-approval' && lockedRevision === undefined) {
+          // A lock-abiding PRD writer (what revisePrd/retry({prompt}) is)
+          // arrives in the middle of the approval check…
+          lockedRevision = lock.runExclusive('project-1', async () => {
+            await store.put({
+              projectId: 'project-1',
+              name: 'prd',
+              content: 'revised prd',
+              contentType: 'text/markdown',
+              createdBy: 'user',
+            });
+            order.push('prd-revised');
+          });
+          // …and this yield would let it land between check and persistence
+          // if the queued-operation section did not hold the same lock.
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        return artifact;
+      },
+    };
+    const wrappedRuns: WorkflowRunRepository = {
+      create: (run) => {
+        order.push('run-persisted');
+        return runs.create(run);
+      },
+      get: (runId) => runs.get(runId),
+      list: () => runs.list(),
+      listNonTerminal: (projectId) => runs.listNonTerminal(projectId),
+      update: (run) => runs.update(run),
+    };
+    const projects = new InMemoryProjects({ on: true });
+    const conversationService = new ConversationService(
+      projects,
+      wrappedRuns,
+      artifacts,
+      conversations,
+      clock,
+      ids,
+    );
+    const service = new OperationService(
+      conversations,
+      wrappedRuns,
+      queue,
+      artifacts,
+      clock,
+      ids,
+      conversationService,
+      { workspacePath: (projectId) => `/fake/${projectId}/workspace` },
+      lock,
+    );
+    const message = await seedMessage(conversations);
+
+    const operation = await service.start('project-1', message.id, { kind: 'plan' });
+    await lockedRevision;
+
+    // #602 clarification: nothing may be persisted as queued *or published*
+    // once its approval is obsolete — so both the run and the job must land
+    // before the revision writer gets in.
+    expect(order).toEqual(['run-persisted', 'job-enqueued', 'prd-revised']);
+    expect((await runs.get(operation.runId!))!.prd).toMatchObject({ name: 'prd', revision: 1 });
+    expect((await store.getLatest('project-1', 'prd'))!.metadata.revision).toBe(2);
+  });
 });
 
 describe('currentPrdApproval', () => {
@@ -402,6 +519,48 @@ describe('currentPrdApproval', () => {
     );
 
     expect(result.approved).toBe(false);
+  });
+
+  it('fails closed when the approval content was mutated under stale metadata', async () => {
+    const prd = approvedPrdArtifact('project-1', 'prd');
+    const approval = approvedPrdArtifact('project-1', 'prd-approval');
+    const getLatest = async (_projectId: string, name: string) => (name === 'prd' ? prd : approval);
+    // Baseline proves the fixture is a current approval — the refusal below
+    // then comes from the mutation, not from a broken fixture.
+    expect((await currentPrdApproval({ getLatest }, 'project-1')).approved).toBe(true);
+
+    // A newer revision lands, and the persisted decision fields are rewritten
+    // to bless it while the artifact's metadata stays what the writer signed.
+    prd.metadata.revision = 2;
+    approval.content = {
+      schemaVersion: '1',
+      identity: prdIdentity(APPROVED_PRD_CONTENT),
+      prdRevision: 2,
+    };
+
+    const result = await currentPrdApproval({ getLatest }, 'project-1');
+    expect(result.approved).toBe(false);
+    expect(result.approvedRevision).toBeUndefined();
+  });
+
+  it('fails closed on an approval artifact that does not parse', async () => {
+    const prd = approvedPrdArtifact('project-1', 'prd');
+    const approval = approvedPrdArtifact('project-1', 'prd-approval');
+    // Decision fields and idempotencyKey are all consistent — only the schema
+    // rejects this (missing schemaVersion). The pre-schema cast accepted it,
+    // so this case pins PrdApprovalArtifactContentSchema, not the key check.
+    approval.content = {
+      identity: prdIdentity(APPROVED_PRD_CONTENT),
+      prdRevision: 1,
+    };
+
+    const result = await currentPrdApproval(
+      { getLatest: async (_projectId, name) => (name === 'prd' ? prd : approval) },
+      'project-1',
+    );
+
+    expect(result.approved).toBe(false);
+    expect(result.approvedIdentity).toBeUndefined();
   });
 });
 
@@ -794,6 +953,32 @@ describe('OperationService.decideChangeRequest', () => {
       action: 'confirm',
       kind: 'plan',
     });
+  });
+
+  it('publishes the job while still holding the project lock', async () => {
+    const { service, conversations, queue, lock } = setup();
+    const message = await seedMessage(conversations);
+    const changeRequest = await service.classify('project-1', message.id);
+    const order: string[] = [];
+    let waiter: Promise<void> | undefined;
+    queue.onEnqueue = async () => {
+      // A lock-abiding PRD writer (revisePrd/retry({prompt})) queues up while
+      // the job is being published; it may only run after publication.
+      waiter ??= lock.runExclusive('project-1', () => {
+        order.push('lock-acquired');
+        return Promise.resolve();
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      order.push('job-enqueued');
+    };
+
+    await service.decideChangeRequest('project-1', changeRequest.id, {
+      action: 'confirm',
+      kind: 'plan',
+    });
+    await waiter;
+
+    expect(order).toEqual(['job-enqueued', 'lock-acquired']);
   });
 
   it('confirming a plan classification starts an Operation with changeRequestId set', async () => {
