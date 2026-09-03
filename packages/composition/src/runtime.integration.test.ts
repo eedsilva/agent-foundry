@@ -1171,6 +1171,11 @@ describe('runtime composition', () => {
       EXECUTOR_MODE: 'mock',
       AUTO_INSTALL_DEPENDENCIES: 'false',
       WORKER_ID: 'failed-run-worker',
+      // 1ms pins the watcher-vs-catch race: the cancellation watcher must
+      // observe the ceiling and abort the signal before the ceiling catch
+      // runs, which used to skip finalizeEmergencyCeiling and leave the run
+      // 'running' forever. At the default 500ms this only raced intermittently.
+      CANCEL_POLL_INTERVAL_MS: '1',
     });
     Object.defineProperty(runtime.executors, 'executor', { value: new AlwaysFailExecutor() });
     const project = await runtime.projectService.create({
