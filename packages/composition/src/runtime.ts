@@ -33,6 +33,7 @@ import {
   FileModelOverrideRepository,
   FileQualityObservationRepository,
   FileRouterDecisionLogRepository,
+  FileProjectMutationLock,
   FileProjectRepository,
   FilePreviewLifecycleLock,
   FilePreviewLogRepository,
@@ -55,6 +56,7 @@ import {
   PostgresApprovalRequestRepository,
   PostgresArtifactStore,
   PostgresConversationRepository,
+  PostgresProjectMutationLock,
   type PostgresDb,
   PostgresEventStore,
   PostgresJobQueue,
@@ -94,6 +96,7 @@ import type {
   ExecutorRegistry,
   EventStore,
   JobQueue,
+  ProjectMutationLock,
   ProjectRepository,
   PreviewLifecycleLock,
   StepAttemptRepository,
@@ -156,6 +159,7 @@ export interface Runtime {
   verifier: WorkspaceVerifier;
   browserVerifier: PlaywrightBrowserVerifier;
   browserVerification: BrowserVerificationCoordinator;
+  projectMutationLock: ProjectMutationLock;
   projectService: ProjectService;
   validationEvidence: ValidationEvidenceService;
   conversationService: ConversationService;
@@ -232,6 +236,7 @@ export async function createRuntime(
     stepEvents,
     sql,
     transactionRunner,
+    projectMutationLock,
   } = await createMetadataStores(config, blobStore);
   const checkReadiness = async (): Promise<void> => {
     if (sql) await sql`select 1`;
@@ -453,6 +458,7 @@ export async function createRuntime(
     qualityObservationService,
     validationCampaign,
     readCurrentValidationPreflight,
+    projectMutationLock,
   );
   if (config.persistenceMode === 'file') {
     await projectService.recoverQueuedProjects();
@@ -543,6 +549,7 @@ export async function createRuntime(
     ...(runValidationCampaignPreflight
       ? { runValidationPreflight: runValidationCampaignPreflight }
       : {}),
+    projectMutationLock,
     projects,
     runs,
     stepRuns,
@@ -626,6 +633,7 @@ async function createMetadataStores(
   stepEvents: StepEventRepository;
   sql?: PostgresDb;
   transactionRunner: TransactionRunner;
+  projectMutationLock: ProjectMutationLock;
 }> {
   if (config.persistenceMode === 'file') {
     return {
@@ -640,6 +648,7 @@ async function createMetadataStores(
       events: new FileEventStore(config.dataDir),
       stepEvents: new FileStepEventRepository(config.dataDir),
       transactionRunner: new NoopTransactionRunner(),
+      projectMutationLock: new FileProjectMutationLock(config.dataDir),
     };
   }
   // loadRuntimeConfig already enforces DATABASE_URL when PERSISTENCE_MODE=postgres; this guards
@@ -662,6 +671,7 @@ async function createMetadataStores(
     stepEvents: new PostgresStepEventRepository(sql),
     sql,
     transactionRunner: new PostgresTransactionRunner(sql),
+    projectMutationLock: new PostgresProjectMutationLock(sql),
   };
 }
 

@@ -54,6 +54,7 @@ import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
 import { ProjectVersionService } from './project-version-service.js';
 import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
+import { PRD_GATED_OPERATION_KINDS } from './prd-approval.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
@@ -101,6 +102,14 @@ export class ConversationOperationRunner {
     }
     if (operation.runId !== runId) {
       throw new ValidationError(`Operation ${operationId} is not bound to workflow run ${runId}`);
+    }
+    if (PRD_GATED_OPERATION_KINDS.has(operation.kind)) {
+      if (!initialRun.prd) {
+        throw new ValidationError(
+          `Run ${runId} has no approved PRD pin; Task-Agent execution is not allowed.`,
+        );
+      }
+      await this.loadArtifactReference(projectId, initialRun.prd);
     }
     const kind: 'plan' | 'build' | 'repair' | 'visual-edit' =
       operation.kind === 'build' || operation.kind === 'repair' || operation.kind === 'visual-edit'
@@ -584,6 +593,23 @@ export class ConversationOperationRunner {
     );
     if (!message) throw new NotFoundError(`Message ${messageId} not found`);
     return message;
+  }
+
+  private async loadArtifactReference(
+    projectId: string,
+    reference: ArtifactReference,
+  ): Promise<StoredArtifact> {
+    const artifact = await this.artifacts.getRevision(
+      projectId,
+      reference.name,
+      reference.revision,
+    );
+    if (!artifact || artifact.metadata.sha256 !== reference.sha256) {
+      throw new ValidationError(
+        `Artifact ${reference.name} revision ${reference.revision} does not match the approved PRD pin.`,
+      );
+    }
+    return artifact;
   }
 
   private async loadPlanArtifact(

@@ -160,12 +160,15 @@ sequenceDiagram
     UI->>API: POST /projects {name, prd, workflowId, projectDirectory}
     API->>PS: create(input)
     PS->>G: reserve projectDirectory
-    PS->>S: create Project + WorkflowRun failed during initialization
+    PS->>S: create Project + WorkflowRun awaiting_approval
     PS->>G: initialize workspace + write PRD.md
     PS->>A: put(prd)
-    PS->>S: record Project + WorkflowRun queued
+    API-->>UI: 202 Project awaiting approval
+
+    UI->>API: POST /projects/:id/prd/approval {identity}
+    API->>PS: approvePrd(input)
+    PS->>S: pin approved PRD + set Project/WorkflowRun queued
     PS->>Q: enqueue(run-project + runId)
-    API-->>UI: 202 Project
 
     W->>Q: claim(workerId)
     Q-->>W: job
@@ -224,7 +227,9 @@ Além do pipeline de projeto inteiro, o orquestrador suporta uma via de execuç�
 
 ### `OperationService` e `ConversationOperationRunner`
 
-`OperationService` (packages/orchestrator) aceita um início de operação de conversa, valida as constraint (uma `'build'` deve referenciar um plano aprovado OU ter `directExecution: true`), constrói um `TaskProfile` da operação, e enfileira um novo tipo de job `run-conversation-operation` carregando a identidade da execução.
+`OperationService` (packages/orchestrator) aceita um início de operação de conversa, valida as constraint (uma `'build'` deve referenciar um plano aprovado OU ter `directExecution: true`), exige aprovação da revisão PRD atual para `plan`, `build`, `repair` e `visual-edit`, fixa `{name, revision, sha256}` no `WorkflowRun`, constrói um `TaskProfile` da operação, e enfileira um novo tipo de job `run-conversation-operation` carregando a identidade da execução.
+
+O `ConversationOperationRunner` recarrega a revisão exata do pin antes da primeira chamada a um Task Agent. `classify`, mensagens, revisão e aprovação permanecem determinísticos ou humanos e não criam esse job. Retry, recovery e execução sem approval/pin atual falham fechado; continuidades de um run já iniciado usam o pin existente, sem um segundo subsistema de approval.
 
 `ConversationOperationRunner` (packages/orchestrator) consome esse job type na `WorkerLoop`, executando:
 

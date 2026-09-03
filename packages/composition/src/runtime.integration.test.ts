@@ -18,7 +18,7 @@ import {
   UI_QUALITY_JUDGE_JSON_SCHEMA,
   UI_QUALITY_RUBRIC_V1,
 } from '@agent-foundry/contracts';
-import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
+import { prdIdentity, SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
 import {
   MockAgentExecutor,
   MockExecutorRegistry,
@@ -1252,6 +1252,20 @@ describe('runtime composition', () => {
       content:
         'Build a small persistent issue tracker with deterministic tests and production build checks.',
       contentType: 'text/markdown',
+      createdBy: 'user',
+    });
+    await runtime.artifacts.put({
+      projectId: 'legacy-project',
+      name: 'prd-approval',
+      content: {
+        schemaVersion: '1',
+        identity: prdIdentity(
+          'Build a small persistent issue tracker with deterministic tests and production build checks.',
+        ),
+        prdRevision: 1,
+        actor: { kind: 'user', id: 'legacy-test' },
+        decidedAt: createdAt,
+      },
       createdBy: 'user',
     });
     const legacyJob = JSON.parse(

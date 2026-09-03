@@ -339,8 +339,15 @@ class InMemoryArtifacts implements ArtifactStore {
     );
     return Promise.resolve(matches.at(-1) ?? null);
   }
-  getRevision(): Promise<StoredArtifact | null> {
-    return Promise.resolve(null);
+  getRevision(projectId: string, name: string, revision: number): Promise<StoredArtifact | null> {
+    return Promise.resolve(
+      this.artifacts.find(
+        (artifact) =>
+          artifact.metadata.projectId === projectId &&
+          artifact.metadata.name === name &&
+          artifact.metadata.revision === revision,
+      ) ?? null,
+    );
   }
   listLatest(): Promise<StoredArtifact[]> {
     return Promise.resolve([...this.artifacts]);
@@ -709,6 +716,13 @@ function makeHarness(
 
 async function seedRun(harness: ReturnType<typeof makeHarness>): Promise<void> {
   const now = harness.clock.now().toISOString();
+  const prd = await harness.artifacts.put({
+    projectId: 'project-1',
+    name: 'prd',
+    content: 'approved test PRD',
+    contentType: 'text/markdown',
+    createdBy: 'test',
+  });
   await harness.projects.create({
     id: 'project-1',
     name: 'Cancellation fixture',
@@ -728,6 +742,11 @@ async function seedRun(harness: ReturnType<typeof makeHarness>): Promise<void> {
     version: 1,
     createdAt: now,
     updatedAt: now,
+    prd: {
+      name: 'prd',
+      revision: prd.metadata.revision,
+      sha256: prd.metadata.sha256,
+    },
   });
 }
 

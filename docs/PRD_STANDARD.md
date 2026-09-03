@@ -68,7 +68,7 @@ Interface language: <BCP 47 tag, for example pt-BR or en-US>
 
 ## 6. Functional requirements / Requisitos funcionais
 
-- **FR-001**: <Required observable behavior>
+- **FR-001**: <Required observable behavior> `capability:<slug>`
 
 ## 7. Conceptual data and ownership / Dados conceituais e propriedade
 
@@ -82,7 +82,7 @@ Interface language: <BCP 47 tag, for example pt-BR or en-US>
 
 ## 8. Business rules / Regras de negócio
 
-- **BR-001**: <Domain rule or invariant>
+- **BR-001**: <Domain rule or invariant> `capability:<slug>`
 
 ## 9. Authentication and permissions / Autenticação e permissões
 
@@ -94,7 +94,7 @@ Interface language: <BCP 47 tag, for example pt-BR or en-US>
 
 ## 10. Non-functional requirements / Requisitos não funcionais
 
-- **NFR-001**: <Observable accessibility, responsiveness, performance, reliability, or security condition>
+- **NFR-001**: <Observable accessibility, responsiveness, performance, reliability, or security condition> `capability:<slug>`
 
 ## 11. Acceptance criteria / Critérios de aceite
 

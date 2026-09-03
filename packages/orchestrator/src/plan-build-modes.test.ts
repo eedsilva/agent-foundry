@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  prdIdentity,
   type ArtifactStore,
   type Clock,
   type EventStore,
@@ -122,6 +123,24 @@ async function runOperation(kind: 'plan' | 'build') {
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
   const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+  const prdContent = 'approved test PRD';
+  const prd = await artifacts.put({
+    projectId: 'project-1',
+    name: 'prd',
+    content: prdContent,
+    contentType: 'text/markdown',
+    createdBy: 'test',
+  });
+  await artifacts.put({
+    projectId: 'project-1',
+    name: 'prd-approval',
+    content: {
+      schemaVersion: '1',
+      identity: prdIdentity(prdContent),
+      prdRevision: prd.metadata.revision,
+    },
+    createdBy: 'test',
+  });
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces({ on: true });

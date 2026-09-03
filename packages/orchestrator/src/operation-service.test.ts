@@ -16,6 +16,7 @@ import {
   type WorkflowRunRepository,
 } from '@agent-foundry/domain';
 import { OperationService } from './operation-service.js';
+import { currentPrdApproval } from './prd-approval.js';
 import { InMemoryProjects, MemoryConversations } from './testing/harness.js';
 import { ConversationService } from './conversation-service.js';
 
@@ -107,12 +108,19 @@ function approvedPrdArtifact(projectId: string, name: string): StoredArtifact {
   };
   return name === 'prd'
     ? { metadata, content: APPROVED_PRD_CONTENT }
-    : { metadata, content: { schemaVersion: '1', identity: prdIdentity(APPROVED_PRD_CONTENT) } };
+    : {
+        metadata,
+        content: {
+          schemaVersion: '1',
+          identity: prdIdentity(APPROVED_PRD_CONTENT),
+          prdRevision: 1,
+        },
+      };
 }
 
 /** Task-Agent operations require a current PRD approval (#602); overlay a
  * PRD and optionally its approval so both sides of the gate are testable. */
-function withPrd(artifacts: ArtifactStore, approved = true): ArtifactStore {
+function withPrd(artifacts: ArtifactStore, approved = true, includePrd = true): ArtifactStore {
   return {
     put: (input) => artifacts.put(input),
     putBlob: (input, source) => artifacts.putBlob(input, source),
@@ -123,7 +131,7 @@ function withPrd(artifacts: ArtifactStore, approved = true): ArtifactStore {
     listMetadata: (projectId, name) => artifacts.listMetadata(projectId, name),
     reapExpired: (now) => artifacts.reapExpired(now),
     getLatest: (projectId, name) =>
-      name === 'prd' || (name === 'prd-approval' && approved)
+      (name === 'prd' && includePrd) || (name === 'prd-approval' && approved)
         ? Promise.resolve(approvedPrdArtifact(projectId, name))
         : artifacts.getLatest(projectId, name),
   };
@@ -145,12 +153,18 @@ async function seedMessage(conversations: MemoryConversations, projectId = 'proj
   });
 }
 
-function setup(overrides: { artifacts?: ArtifactStore; approvedPrd?: boolean } = {}) {
+function setup(
+  overrides: { artifacts?: ArtifactStore; approvedPrd?: boolean; includePrd?: boolean } = {},
+) {
   const conversations = new MemoryConversations();
   const runs = new MemoryRuns();
   const queue = new MemoryQueue();
   const rawArtifacts = overrides.artifacts ?? noArtifacts();
-  const artifacts = withPrd(rawArtifacts, overrides.approvedPrd !== false);
+  const artifacts = withPrd(
+    rawArtifacts,
+    overrides.approvedPrd !== false,
+    overrides.includePrd !== false,
+  );
   const projects = new InMemoryProjects({ on: true });
   const clock = new FixedClock();
   const ids = new SequentialIds();
@@ -263,6 +277,18 @@ describe('OperationService.start', () => {
     expect(queue.enqueued).toEqual([]);
   });
 
+  it('rejects a legacy Task-Agent operation before creating a run or queue job without a PRD', async () => {
+    const { service, conversations, runs, queue } = setup({ includePrd: false });
+    const message = await seedMessage(conversations);
+
+    await expect(service.start('project-1', message.id, { kind: 'plan' })).rejects.toThrow(
+      ValidationError,
+    );
+
+    expect(await runs.list()).toEqual([]);
+    expect(queue.enqueued).toEqual([]);
+  });
+
   it('creates a queued plan operation, run, and job', async () => {
     const { service, runs, queue, conversations } = setup();
     const message = await seedMessage(conversations);
@@ -272,6 +298,11 @@ describe('OperationService.start', () => {
     expect(operation).toMatchObject({ kind: 'plan', approval: { status: 'pending' } });
     expect(operation.runId).toBeDefined();
     expect((await runs.get(operation.runId!))?.status).toBe('queued');
+    expect((await runs.get(operation.runId!))?.prd).toEqual({
+      name: 'prd',
+      revision: 1,
+      sha256: prdIdentity(APPROVED_PRD_CONTENT),
+    });
     expect(queue.enqueued).toHaveLength(1);
     expect(queue.enqueued[0]).toMatchObject({
       type: 'run-conversation-operation',
@@ -348,6 +379,26 @@ describe('OperationService.start', () => {
     await expect(service.start('project-1', 'missing', { kind: 'plan' })).rejects.toThrow(
       NotFoundError,
     );
+  });
+});
+
+describe('currentPrdApproval', () => {
+  it('does not revive an approval from an earlier revision when the hash repeats', async () => {
+    const identity = prdIdentity(APPROVED_PRD_CONTENT);
+    const prd = approvedPrdArtifact('project-1', 'prd');
+    const approval = approvedPrdArtifact('project-1', 'prd-approval');
+    prd.metadata.revision = 3;
+    approval.metadata.revision = 1;
+    approval.content = { schemaVersion: '1', identity, prdRevision: 1 };
+
+    const result = await currentPrdApproval(
+      {
+        getLatest: async (_projectId, name) => (name === 'prd' ? prd : approval),
+      },
+      'project-1',
+    );
+
+    expect(result.approved).toBe(false);
   });
 });
 

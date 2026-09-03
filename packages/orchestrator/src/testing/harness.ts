@@ -1658,6 +1658,25 @@ export interface HasExecuteStep {
 
 export async function seedRun(harness: Harness): Promise<void> {
   const now = harness.clock.now().toISOString();
+  const prd = await harness.artifacts.put({
+    projectId: 'project-1',
+    name: 'prd',
+    content: 'approved test PRD',
+    contentType: 'text/markdown',
+    createdBy: 'test',
+    idempotencyKey: createHash('sha256').update('seeded-prd').digest('hex'),
+  });
+  await harness.artifacts.put({
+    projectId: 'project-1',
+    name: 'prd-approval',
+    content: {
+      schemaVersion: '1',
+      identity: prdIdentity('approved test PRD'),
+      prdRevision: prd.metadata.revision,
+    },
+    createdBy: 'test',
+    idempotencyKey: createHash('sha256').update('seeded-prd-approval').digest('hex'),
+  });
   await harness.projects.create({
     id: 'project-1',
     name: 'Run controls fixture',
@@ -1677,6 +1696,11 @@ export async function seedRun(harness: Harness): Promise<void> {
     version: 1,
     createdAt: now,
     updatedAt: now,
+    prd: {
+      name: 'prd',
+      revision: prd.metadata.revision,
+      sha256: prd.metadata.sha256,
+    },
   });
 }
 

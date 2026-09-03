@@ -56,6 +56,7 @@ import type {
   ModelRouter,
   ModelOverrideRepository,
   PolicyRepository,
+  ProjectMutationLock,
   ProjectRepository,
   ResumeDiagnostic,
   StepAttemptRepository,
@@ -89,7 +90,7 @@ import {
   validateStandardPrd,
 } from '@agent-foundry/domain';
 import { createTwoFilesPatch } from 'diff';
-import { isMigrationApprovalGateId, policyHash, workflowHash } from './idempotency.js';
+import { isMigrationApprovalGateId, policyHash, sha256, workflowHash } from './idempotency.js';
 import { currentPrdApproval } from './prd-approval.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
@@ -97,6 +98,29 @@ const RUN_PROJECT_MAX_ATTEMPTS = 2;
 const INITIALIZATION_FAILURE_ATTEMPTS = 2;
 const INITIALIZATION_INTERRUPTED =
   'Project initialization was interrupted before queue publication.';
+
+// ponytail: process-local fallback for direct unit construction; production injects the
+// file or PostgreSQL lock so separate workers share the same project boundary.
+class InProcessProjectMutationLock implements ProjectMutationLock {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  async runExclusive<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(projectId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    this.tails.set(projectId, tail);
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.tails.get(projectId) === tail) this.tails.delete(projectId);
+    }
+  }
+}
 
 function runProjectJob(project: Project, run: WorkflowRun, availableAt: string): QueueJob {
   return {
@@ -155,6 +179,7 @@ export class ProjectService {
     private readonly qualityObservations?: QualityObservationService,
     private readonly validationCampaign?: ValidationCampaignPreview,
     private readonly validationPreflight?: () => Promise<ValidationPreflightReport | undefined>,
+    private readonly projectMutationLock: ProjectMutationLock = new InProcessProjectMutationLock(),
   ) {}
 
   async createModelOverride(
@@ -409,6 +434,15 @@ export class ProjectService {
    * approval that already queued the run is a no-op.
    */
   async approvePrd(projectId: string, input: ApprovePrdRequest): Promise<ApprovePrdResponse> {
+    return this.projectMutationLock.runExclusive(projectId, () =>
+      this.approvePrdLocked(projectId, input),
+    );
+  }
+
+  private async approvePrdLocked(
+    projectId: string,
+    input: ApprovePrdRequest,
+  ): Promise<ApprovePrdResponse> {
     const project = await this.requireProject(projectId);
     if (!project.currentRunId) {
       throw new ValidationError(`Project ${projectId} has no run awaiting PRD approval.`);
@@ -420,9 +454,8 @@ export class ProjectService {
     const identity = prdIdentity(canonicalPrd);
     if (input.identity !== identity) throw new PrdApprovalConflictError(input.identity, identity);
     if (run.status !== 'awaiting_approval') {
-      const approval = await this.artifacts.getLatest(projectId, 'prd-approval');
-      const approved = (approval?.content as { identity?: string } | undefined)?.identity;
-      if (approved !== identity) {
+      const approval = await currentPrdApproval(this.artifacts, projectId);
+      if (!approval.approved || approval.identity !== identity || !approval.prd) {
         throw new ValidationError(`Run ${run.id} is not awaiting PRD approval.`);
       }
       // File-mode crash window: the run reached 'queued' but the project row
@@ -430,6 +463,18 @@ export class ProjectService {
       // (job id dedupe; status check), so replaying converges instead of
       // reporting success over missing state.
       if (run.status === 'queued') {
+        const pin: ArtifactReference = {
+          name: 'prd',
+          revision: approval.prd.metadata.revision,
+          sha256: approval.prd.metadata.sha256,
+        };
+        const queuedRun =
+          run.prd?.revision === pin.revision && run.prd.sha256 === pin.sha256
+            ? run
+            : await this.runs.update(
+                { ...run, prd: pin, updatedAt: this.clock.now().toISOString() },
+                run.version,
+              );
         let convergedProject = project;
         await this.transactionRunner.run(async (tx) => {
           if (project.status === 'awaiting_approval') {
@@ -439,9 +484,12 @@ export class ProjectService {
               tx,
             );
           }
-          await this.queue.enqueue(runProjectJob(project, run, this.clock.now().toISOString()), tx);
+          await this.queue.enqueue(
+            runProjectJob(project, queuedRun, this.clock.now().toISOString()),
+            tx,
+          );
         });
-        return { project: convergedProject, run };
+        return { project: convergedProject, run: queuedRun };
       }
       return { project, run };
     }
@@ -474,7 +522,7 @@ export class ProjectService {
       },
       createdBy: 'user',
       runId: run.id,
-      idempotencyKey: identity,
+      idempotencyKey: sha256(`${identity}:${stored.metadata.revision}`),
     });
     // The run is pinned to the exact approved revision; execution loads the
     // PRD through this reference (sha256-verified), never through 'latest'.
@@ -506,7 +554,7 @@ export class ProjectService {
         });
         await this.runs.update(queuedRun, run.version, tx);
         queuedProject = await this.projects.update(queuedProject, project.version, tx);
-        await this.queue.enqueue(runProjectJob(project, run, now), tx);
+        await this.queue.enqueue(runProjectJob(project, queuedRun, now), tx);
       });
     } catch (error) {
       if (!(error instanceof VersionConflictError)) throw error;
@@ -531,6 +579,15 @@ export class ProjectService {
    * a new identity, so any approval of the old hash no longer matches.
    */
   async revisePrd(projectId: string, input: RevisePrdRequest): Promise<RevisePrdResponse> {
+    return this.projectMutationLock.runExclusive(projectId, () =>
+      this.revisePrdLocked(projectId, input),
+    );
+  }
+
+  private async revisePrdLocked(
+    projectId: string,
+    input: RevisePrdRequest,
+  ): Promise<RevisePrdResponse> {
     const project = await this.requireProject(projectId);
     if (!project.currentRunId) {
       throw new ValidationError(`Project ${projectId} has no run awaiting PRD approval.`);
@@ -738,7 +795,13 @@ export class ProjectService {
       // state or corruption) is never republished — it converges to failed
       // with an explicit event instead of silently building an unapproved PRD.
       const approval = await currentPrdApproval(this.artifacts, project.id);
-      if (!approval.approved || !approval.prd) {
+      const approvedPrd = approval.prd;
+      const pinMatchesApproval =
+        !run.prd ||
+        (approvedPrd !== null &&
+          run.prd.revision === approvedPrd.metadata.revision &&
+          run.prd.sha256 === approvedPrd.metadata.sha256);
+      if (!approval.approved || !approvedPrd || !pinMatchesApproval) {
         const message =
           'Queued run has no approval for the current PRD Revision; queue publication refused.';
         const failedRun = transitionWorkflowRun(run, 'failed', this.clock.now(), {
@@ -773,8 +836,8 @@ export class ProjectService {
             ...run,
             prd: {
               name: 'prd',
-              revision: approval.prd.metadata.revision,
-              sha256: approval.prd.metadata.sha256,
+              revision: approvedPrd.metadata.revision,
+              sha256: approvedPrd.metadata.sha256,
             },
             updatedAt: this.clock.now().toISOString(),
           },
@@ -873,10 +936,14 @@ export class ProjectService {
       );
     }
     // #602: retry is an enqueue surface, so PRD-backed projects obey the same
-    // gate as approvePrd. Projects without a PRD artifact retain their
-    // pre-#602 retry semantics.
+    // gate as approvePrd. Projects without a PRD artifact fail closed.
     const approval = await currentPrdApproval(this.artifacts, projectId);
-    if (approval.prd && previousRun?.status === 'awaiting_approval') {
+    if (!approval.prd) {
+      throw new ValidationError(
+        `Project ${projectId} has no PRD artifact; retry requires an approved PRD Revision.`,
+      );
+    }
+    if (previousRun?.status === 'awaiting_approval') {
       if (input?.prompt) {
         await this.revisePrd(projectId, { prd: input.prompt });
         return this.requireProject(projectId);
@@ -885,7 +952,7 @@ export class ProjectService {
         `Run ${previousRun.id} is awaiting PRD approval; approve the current PRD Revision instead of retrying.`,
       );
     }
-    if (approval.prd && (input?.prompt || !approval.approved)) {
+    if (input?.prompt || !approval.approved) {
       const reopened = await this.reopenForApproval(project, previousRun, input);
       if (input?.prompt) {
         await this.revisePrd(projectId, { prd: input.prompt });
@@ -893,16 +960,11 @@ export class ProjectService {
       }
       return reopened;
     }
-    if (input?.prompt && !approval.prd) {
-      await this.workspaces.writePrd(projectId, input.prompt);
-    }
-    const prdReference: ArtifactReference | undefined = approval.prd
-      ? {
-          name: 'prd',
-          revision: approval.prd.metadata.revision,
-          sha256: approval.prd.metadata.sha256,
-        }
-      : undefined;
+    const prdReference: ArtifactReference = {
+      name: 'prd',
+      revision: approval.prd.metadata.revision,
+      sha256: approval.prd.metadata.sha256,
+    };
     const now = this.clock.now().toISOString();
     const campaignPreview = previousRun?.execution?.campaign?.preview ?? this.validationCampaign;
     const runId = this.ids.next();
@@ -914,7 +976,7 @@ export class ProjectService {
       version: 1,
       createdAt: now,
       updatedAt: now,
-      ...(prdReference ? { prd: prdReference } : {}),
+      prd: prdReference,
       ...(campaignPreview
         ? {
             execution: {

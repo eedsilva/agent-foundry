@@ -477,6 +477,23 @@ Migração é somente de leitura: policies sem `browserAllowedOrigins` e steps s
 browser por tarefa continua disponível em `for-each-task`; não há wiring standalone para remover na
 cauda atual. Preserve reports e attempts existentes para investigação, sem backfill.
 
+## Gate de PRD e recovery
+
+Um projeto novo fica em `awaiting_approval` depois de `create`; somente `approvePrd` pode publicar o
+primeiro job `run-project`. `revisePrd` cria uma revisão imutável, com `parentIdentity` e diff
+determinístico, e invalida qualquer approval anterior. Approval e revisão são serializados por
+projeto; a decisão também registra a revisão aprovada, não apenas o hash do conteúdo.
+
+Operações `plan`, `build`, `repair` e `visual-edit` exigem approval da revisão PRD atual antes de
+criar o `WorkflowRun` ou o job `run-conversation-operation`. O run carrega o pin
+`{name, revision, sha256}` e o runner recarrega exatamente esse artifact antes de chamar o Task
+Agent. `classify`, mensagens, revisão e approval não passam por esse gate de execução.
+
+Não existe bypass legacy: sem PRD, approval atual ou pin íntegro, retry, recovery e execução falham
+fechado. Recovery só republica um run `queued` cujo pin coincide com a revisão aprovada; estado
+inconsistente é marcado como falho e recebe evento explícito. A continuação de um run já iniciado
+usa o pin original e não cria um segundo subsistema de approval.
+
 ## Recovery manual da fila
 
 Por padrão, um job de projeto tem uma única tentativa de orquestração. Fallbacks de modelo e loops de reparo já acontecem dentro dessa tentativa; repetir o workflow inteiro automaticamente pode duplicar custo e revisões. O endpoint de retry torna uma nova execução uma decisão explícita.

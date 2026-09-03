@@ -271,6 +271,11 @@ export interface TransactionRunner {
   run<T>(fn: (tx: Tx) => Promise<T>): Promise<T>;
 }
 
+/** Serializes multi-store mutations whose invariant spans more than one write. */
+export interface ProjectMutationLock {
+  runExclusive<T>(projectId: string, fn: () => Promise<T>): Promise<T>;
+}
+
 export interface WorkflowRepository {
   get(workflowId: string): Promise<WorkflowDefinition>;
   list(): Promise<WorkflowDefinition[]>;

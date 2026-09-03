@@ -4587,44 +4587,11 @@ export class WorkflowOrchestrator {
   }
 
   private async ensurePrdApprovedForExecution(run: WorkflowRun): Promise<WorkflowRun> {
-    // A run with a PRD pin has already passed the project-level gate. An
-    // awaiting_approval status can then belong to the workflow's human gate,
-    // which must be resumable without a second PRD approval.
-    if (run.prd) {
-      await this.loadArtifactReference(run.projectId, run.prd);
-      return run;
+    if (!run.prd) {
+      throw new ValidationError(`Run ${run.id} has no approved PRD pin; execution is not allowed.`);
     }
-    if (run.status === 'awaiting_approval') {
-      const current = await currentPrdApproval(this.artifacts, run.projectId);
-      if (current.prd) {
-        throw new ValidationError(
-          `Run ${run.id} is awaiting PRD approval; execution is not allowed before approval.`,
-        );
-      }
-      return run;
-    }
-
-    const approval = await currentPrdApproval(this.artifacts, run.projectId);
-    // Projects created before #602 have no PRD artifact and retain legacy
-    // execution semantics; a PRD-driven project must prove approval first.
-    if (!approval.prd) return run;
-    if (!approval.approved) {
-      throw new ValidationError(
-        `Run ${run.id} has no approval for the current PRD Revision; execution is not allowed.`,
-      );
-    }
-    return this.runs.update(
-      {
-        ...run,
-        prd: {
-          name: 'prd',
-          revision: approval.prd.metadata.revision,
-          sha256: approval.prd.metadata.sha256,
-        },
-        updatedAt: this.clock.now().toISOString(),
-      },
-      run.version,
-    );
+    await this.loadArtifactReference(run.projectId, run.prd);
+    return run;
   }
 
   private async recordQualityOutcome(artifact: StoredArtifact, approved: boolean): Promise<void> {
@@ -4846,6 +4813,12 @@ export class WorkflowOrchestrator {
     workflowId: string,
     requestedRunId?: string,
   ): Promise<WorkflowRun> {
+    const approval = await currentPrdApproval(this.artifacts, project.id);
+    if (!approval.approved || !approval.prd) {
+      throw new ValidationError(
+        `Project ${project.id} has no approved PRD Revision; execution is not allowed.`,
+      );
+    }
     const timestamp = this.clock.now().toISOString();
     const run: WorkflowRun = {
       id: requestedRunId ?? this.ids.next(),
@@ -4855,6 +4828,11 @@ export class WorkflowOrchestrator {
       version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
+      prd: {
+        name: 'prd',
+        revision: approval.prd.metadata.revision,
+        sha256: approval.prd.metadata.sha256,
+      },
       ...(this.validationCampaign
         ? {
             execution: {

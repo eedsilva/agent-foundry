@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api';
@@ -61,6 +62,26 @@ class SequentialIds implements IdGenerator {
     this.counter += 1;
     return `id-${String(this.counter).padStart(4, '0')}`;
   }
+}
+
+const APPROVED_PRD_CONTENT = 'approved prd fixture';
+const APPROVED_PRD_SHA256 = createHash('sha256')
+  .update(JSON.stringify(APPROVED_PRD_CONTENT))
+  .digest('hex');
+const APPROVED_PRD_REFERENCE = {
+  name: 'prd',
+  revision: 1,
+  sha256: APPROVED_PRD_SHA256,
+};
+
+function seedApprovedPrd(artifacts: ArtifactStore): void {
+  void artifacts.put({
+    projectId: 'project-1',
+    name: 'prd',
+    content: APPROVED_PRD_CONTENT,
+    contentType: 'text/markdown',
+    createdBy: 'user',
+  });
 }
 
 class MemoryProjectVersions implements ProjectVersionRepository {
@@ -207,6 +228,7 @@ function setup(
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
   const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+  seedApprovedPrd(artifacts);
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces({ on: true });
@@ -368,6 +390,7 @@ async function seedVisualEdit(
     version: 1,
     createdAt: '2026-07-18T12:00:00.000Z',
     updatedAt: '2026-07-18T12:00:00.000Z',
+    prd: APPROVED_PRD_REFERENCE,
   });
   await conversations.createOperation({
     id: operationId,
@@ -389,6 +412,7 @@ async function seed(
   runs: WorkflowRunRepository,
   kind: 'plan' | 'build' | 'explain' | 'repair',
   suffix = '1',
+  includePrd = true,
 ): Promise<{ runId: string; operationId: string }> {
   await conversations.createConversation({
     id: 'project-1',
@@ -413,6 +437,7 @@ async function seed(
     version: 1,
     createdAt: '2026-07-18T12:00:00.000Z',
     updatedAt: '2026-07-18T12:00:00.000Z',
+    ...(includePrd && kind !== 'explain' ? { prd: APPROVED_PRD_REFERENCE } : {}),
   });
   await conversations.createOperation({
     id: operationId,
@@ -432,6 +457,22 @@ async function seed(
 }
 
 describe('ConversationOperationRunner', () => {
+  it('rejects a queued Task-Agent operation without a PRD pin before creating execution state', async () => {
+    const { runs, stepRuns, executor, runner, conversations } = setup();
+    const { runId, operationId } = await seed(
+      conversations,
+      runs,
+      'build',
+      'missing-prd-pin',
+      false,
+    );
+
+    await expect(runner.run('project-1', runId, operationId)).rejects.toThrow(/PRD pin/i);
+
+    expect(executor.requests).toEqual([]);
+    expect(await stepRuns.list(runId)).toEqual([]);
+  });
+
   it('runs a repair as a mutating operation and records its committed version', async () => {
     const { runs, workspaces, conversations, projectVersions, events, runner } = setup();
     const { runId, operationId } = await seed(conversations, runs, 'repair', 'repair');
@@ -515,7 +556,9 @@ describe('ConversationOperationRunner', () => {
     );
 
     expect(await stepRuns.list(runId)).toEqual([]);
-    expect(await artifacts.listLatest('project-1')).toEqual([]);
+    expect(await artifacts.listLatest('project-1')).toEqual([
+      expect.objectContaining({ metadata: expect.objectContaining({ name: 'prd' }) }),
+    ]);
     expect(workspaces.checkpoints).toEqual([]);
     expect(workspaces.dirty).toBe(false);
   });
@@ -531,7 +574,9 @@ describe('ConversationOperationRunner', () => {
     );
 
     expect(await stepRuns.list(runId)).toEqual([]);
-    expect(await artifacts.listLatest('project-1')).toEqual([]);
+    expect(await artifacts.listLatest('project-1')).toEqual([
+      expect.objectContaining({ metadata: expect.objectContaining({ name: 'prd' }) }),
+    ]);
     expect(workspaces.checkpoints).toEqual([]);
     expect(workspaces.dirty).toBe(false);
   });
@@ -1023,6 +1068,7 @@ describe('ConversationOperationRunner', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
@@ -1098,6 +1144,7 @@ describe('ConversationOperationRunner', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
@@ -1182,6 +1229,7 @@ describe('ConversationOperationRunner', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
@@ -1236,6 +1284,7 @@ describe('ConversationOperationRunner', () => {
       version: 1,
       createdAt: '2026-07-18T12:00:00.000Z',
       updatedAt: '2026-07-18T12:00:00.000Z',
+      prd: APPROVED_PRD_REFERENCE,
     });
     // Simulates OperationService.start() copying the approved plan's own
     // artifactReferences onto a new build operation, before this run ever
@@ -1270,6 +1319,7 @@ describe('ConversationOperationRunner', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true });
     events.onBeforeAppend = () => {
       throw new Error('event store unavailable');
@@ -1325,6 +1375,7 @@ describe('ConversationOperationRunner', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
@@ -1372,6 +1423,7 @@ describe('ConversationOperationRunner', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();
@@ -1422,6 +1474,7 @@ describe('ConversationOperationRunner', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true });
     events.onBeforeAppend = () => {
       throw new Error('event store unavailable');
@@ -1812,6 +1865,7 @@ describe('ConversationOperationRunner context compilation', () => {
       version: 1,
       createdAt: '2026-07-18T12:00:00.000Z',
       updatedAt: '2026-07-18T12:00:00.000Z',
+      prd: APPROVED_PRD_REFERENCE,
     });
     await conversations.createOperation({
       id: operationId,
@@ -1979,6 +2033,7 @@ describe('ConversationOperationRunner foundry.operation span', () => {
     const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
     const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
     const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+    seedApprovedPrd(artifacts);
     const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
     const stepEvents = new InMemoryStepEvents();
     const conversations = new MemoryConversations();

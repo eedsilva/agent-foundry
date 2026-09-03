@@ -1,6 +1,13 @@
 import type { StoredArtifact } from '@agent-foundry/contracts';
 import { prdIdentity, type ArtifactStore } from '@agent-foundry/domain';
 
+export const PRD_GATED_OPERATION_KINDS: ReadonlySet<string> = new Set([
+  'plan',
+  'build',
+  'repair',
+  'visual-edit',
+]);
+
 /**
  * #602 invariant: an approval is current only when the latest 'prd-approval'
  * artifact references the identity of the latest 'prd' artifact. Every
@@ -15,6 +22,7 @@ export async function currentPrdApproval(
   prd: StoredArtifact | null;
   identity?: string;
   approvedIdentity?: string;
+  approvedRevision?: number;
   approved: boolean;
 }> {
   const [prd, approval] = await Promise.all([
@@ -22,11 +30,18 @@ export async function currentPrdApproval(
     artifacts.getLatest(projectId, 'prd-approval'),
   ]);
   const identity = prd ? prdIdentity(String(prd.content)) : undefined;
-  const approvedIdentity = (approval?.content as { identity?: string } | undefined)?.identity;
+  const approvalContent = approval?.content as
+    { identity?: string; prdRevision?: number } | undefined;
+  const approvedIdentity = approvalContent?.identity;
+  const approvedRevision = approvalContent?.prdRevision;
   return {
     prd,
     ...(identity !== undefined ? { identity } : {}),
     ...(approvedIdentity !== undefined ? { approvedIdentity } : {}),
-    approved: identity !== undefined && approvedIdentity === identity,
+    ...(approvedRevision !== undefined ? { approvedRevision } : {}),
+    approved:
+      identity !== undefined &&
+      approvedIdentity === identity &&
+      approvedRevision === prd?.metadata.revision,
   };
 }

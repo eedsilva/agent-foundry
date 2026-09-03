@@ -1575,6 +1575,44 @@ describe('PRD approval gate (#602)', () => {
       (await harness.events.list(project.id)).filter((event) => event.type === 'prd.revised'),
     ).toHaveLength(1);
   });
+
+  it('serializes approval behind a revision before reading or publishing a job', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    let releaseRevision!: () => void;
+    let revisionCasReached!: () => void;
+    const revisionPaused = new Promise<void>((resolve) => {
+      revisionCasReached = resolve;
+    });
+    const continueRevision = new Promise<void>((resolve) => {
+      releaseRevision = resolve;
+    });
+    harness.runs.onAfterUpdate = async (run) => {
+      if (run.status === 'awaiting_approval' && run.version === 3) {
+        revisionCasReached();
+        await continueRevision;
+      }
+    };
+
+    const revision = harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+    await revisionPaused;
+    const approval = harness.service.approvePrd(project.id, {
+      identity: prdIdentity('Build it'),
+      actor,
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.enqueued).toEqual([]);
+    releaseRevision();
+    await expect(revision).resolves.toMatchObject({ revision: 2 });
+    await expect(approval).rejects.toMatchObject({ name: 'PrdApprovalConflictError' });
+    expect(harness.enqueued).toEqual([]);
+  });
 });
 
 describe('PRD approval gate (#602) — enqueue surfaces', () => {
@@ -1720,7 +1758,7 @@ describe('PRD approval gate (#602) — enqueue surfaces', () => {
 
     await expect(
       harness.orchestrator.runProject(project.id, harness.workflow.id, queuedRun.id),
-    ).rejects.toThrow(/approval/i);
+    ).rejects.toThrow(/approved PRD pin|approval/i);
 
     expect(harness.executor.requests).toEqual([]);
   });

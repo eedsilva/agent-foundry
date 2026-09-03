@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { KnowledgeFile, Message } from '@agent-foundry/contracts';
+import { prdIdentity } from '@agent-foundry/domain';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
@@ -49,6 +50,15 @@ async function createProject(runtime: Runtime, name = 'Conversation API'): Promi
       projectDirectory: await createProjectDirectory(),
     })
   ).id;
+}
+
+async function approveCurrentPrd(runtime: Runtime, projectId: string): Promise<void> {
+  const stored = await runtime.artifacts.getLatest(projectId, 'prd');
+  if (!stored) throw new Error(`Project ${projectId} has no PRD artifact`);
+  await runtime.projectService.approvePrd(projectId, {
+    identity: prdIdentity(String(stored.content)),
+    actor: { kind: 'user', id: 'conversation-test' },
+  });
 }
 
 function post(baseUrl: string, path: string, body: unknown): Promise<Response> {
@@ -569,12 +579,24 @@ describe('conversation API', () => {
     expect(new Set(combined.map((message) => message.sequence)).size).toBe(503);
   });
 
-  it('starts a plan operation, blocks an ungated build, and allows an explicit direct build', async () => {
+  it('requires current PRD approval before creating Task-Agent operations', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime);
     const message = await createMessage(baseUrl, projectId, 'Add a dark mode toggle');
     const opsPath = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
 
+    const planBeforeApproval = await post(baseUrl, opsPath, { kind: 'plan' });
+    expect(planBeforeApproval.status).toBe(400);
+    const buildBeforeApproval = await post(baseUrl, opsPath, {
+      kind: 'build',
+      directExecution: true,
+    });
+    expect(buildBeforeApproval.status).toBe(400);
+    const repairBeforeApproval = await post(baseUrl, opsPath, { kind: 'repair' });
+    expect(repairBeforeApproval.status).toBe(400);
+    expect(await runtime.conversations.listOperations(projectId)).toEqual([]);
+
+    await approveCurrentPrd(runtime, projectId);
     const planResponse = await post(baseUrl, opsPath, { kind: 'plan' });
     expect(planResponse.status).toBe(201);
     const { operation: plan } = (await planResponse.json()) as {
@@ -583,8 +605,8 @@ describe('conversation API', () => {
     expect(plan.runId).toBeDefined();
     expect(plan.contextSources).toEqual([]);
 
-    const ungatedBuild = await post(baseUrl, opsPath, { kind: 'build' });
-    expect(ungatedBuild.status).toBe(400);
+    const buildWithoutPlan = await post(baseUrl, opsPath, { kind: 'build' });
+    expect(buildWithoutPlan.status).toBe(400);
 
     const decideBeforeCompletion = await post(
       baseUrl,
@@ -611,6 +633,7 @@ describe('conversation API', () => {
   it('edits a completed plan proposal with revision conflict protection before Build inherits it', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime);
+    await approveCurrentPrd(runtime, projectId);
     const message = await createMessage(baseUrl, projectId, 'Add a dark mode toggle');
     const opsPath = `/projects/${projectId}/conversation/messages/${message.id}/operations`;
     const { operation: plan } = (await (await post(baseUrl, opsPath, { kind: 'plan' })).json()) as {
@@ -741,6 +764,7 @@ describe('classify and decide change request', () => {
   it('classifies a message, lets the user confirm it as-is, and starts a plan operation', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime);
+    await approveCurrentPrd(runtime, projectId);
     const messageResponse = await post(baseUrl, `/projects/${projectId}/conversation/messages`, {
       role: 'user',
       content: [{ type: 'text', text: 'Let us think about the onboarding flow.' }],
@@ -775,6 +799,7 @@ describe('classify and decide change request', () => {
   it('lets the user correct a build suggestion to plan before anything executes', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime);
+    await approveCurrentPrd(runtime, projectId);
     const messageResponse = await post(baseUrl, `/projects/${projectId}/conversation/messages`, {
       role: 'user',
       content: [{ type: 'text', text: 'Add a login page with email and password.' }],
@@ -802,6 +827,7 @@ describe('classify and decide change request', () => {
   it('roadmap scenario: a later requirement change classifies and references an earlier confirmed decision', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(runtime);
+    await approveCurrentPrd(runtime, projectId);
 
     const firstMessage = await post(baseUrl, `/projects/${projectId}/conversation/messages`, {
       role: 'user',
