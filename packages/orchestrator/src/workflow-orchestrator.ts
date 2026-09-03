@@ -151,8 +151,10 @@ import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
 import {
   approvalGateIdempotencyKey,
+  artifactMatchesReference,
   migrationApprovalGateId,
   policyHash,
+  prdArtifactMatchesReference,
   stepIdempotencyKey,
   workflowHash,
 } from './idempotency.js';
@@ -4578,19 +4580,22 @@ export class WorkflowOrchestrator {
       reference.name,
       reference.revision,
     );
-    if (!artifact || artifact.metadata.sha256 !== reference.sha256) {
+    if (!artifact || !artifactMatchesReference(artifact, reference)) {
       throw new NotFoundError(
-        `Artifact ${reference.name} revision ${reference.revision} not found`,
+        `Artifact ${reference.name} revision ${reference.revision} does not match its pinned reference`,
       );
     }
     return artifact;
   }
 
   private async ensurePrdApprovedForExecution(run: WorkflowRun): Promise<WorkflowRun> {
-    if (!run.prd) {
+    if (run.prd?.name !== 'prd') {
       throw new ValidationError(`Run ${run.id} has no approved PRD pin; execution is not allowed.`);
     }
-    await this.loadArtifactReference(run.projectId, run.prd);
+    const artifact = await this.loadArtifactReference(run.projectId, run.prd);
+    if (!prdArtifactMatchesReference(artifact, run.prd)) {
+      throw new ValidationError(`Run ${run.id} has no approved PRD pin; execution is not allowed.`);
+    }
     return run;
   }
 

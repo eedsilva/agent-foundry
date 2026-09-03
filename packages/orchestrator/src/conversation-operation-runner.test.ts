@@ -473,6 +473,35 @@ describe('ConversationOperationRunner', () => {
     expect(await stepRuns.list(runId)).toEqual([]);
   });
 
+  it('executes a Task-Agent operation with the pinned PRD revision, not a newer revision', async () => {
+    const { runs, artifacts, workspaces, executor, runner, conversations } = setup();
+    await artifacts.put({
+      projectId: 'project-1',
+      name: 'prd',
+      content: 'unapproved newer PRD',
+      contentType: 'text/markdown',
+      createdBy: 'user',
+    });
+    const { runId, operationId } = await seed(conversations, runs, 'plan');
+
+    await runner.run('project-1', runId, operationId);
+
+    expect(executor.requests.at(-1)?.inputArtifacts).toContainEqual(APPROVED_PRD_REFERENCE);
+    expect(workspaces.lastRequestMarkdown).toContain(APPROVED_PRD_CONTENT);
+    expect(workspaces.lastRequestMarkdown).not.toContain('unapproved newer PRD');
+  });
+
+  it('rejects a pinned PRD whose content no longer matches its stored hash', async () => {
+    const { runs, artifacts, stepRuns, executor, runner, conversations } = setup();
+    (artifacts as unknown as InMemoryArtifacts).artifacts[0]!.content = 'tampered PRD';
+    const { runId, operationId } = await seed(conversations, runs, 'build', 'tampered-prd');
+
+    await expect(runner.run('project-1', runId, operationId)).rejects.toThrow(/PRD pin/i);
+
+    expect(executor.requests).toEqual([]);
+    expect(await stepRuns.list(runId)).toEqual([]);
+  });
+
   it('runs a repair as a mutating operation and records its committed version', async () => {
     const { runs, workspaces, conversations, projectVersions, events, runner } = setup();
     const { runId, operationId } = await seed(conversations, runs, 'repair', 'repair');
@@ -1639,6 +1668,7 @@ describe('ConversationOperationRunner context compilation', () => {
       const [stepRun] = await stepRuns.list(runId);
       const [attempt] = await stepAttempts.list(runId, stepRun!.id);
       expect(attempt?.inputArtifacts).toEqual([
+        APPROVED_PRD_REFERENCE,
         {
           name: metadata.name,
           revision: metadata.revision,
@@ -1700,7 +1730,7 @@ describe('ConversationOperationRunner context compilation', () => {
       await runner.run('project-1', operation.runId, operation.operationId);
 
       const request = executor.requests.at(-1);
-      expect(request?.inputArtifacts).toEqual([]);
+      expect(request?.inputArtifacts).toEqual(kind === 'repair' ? [APPROVED_PRD_REFERENCE] : []);
       expect(request?.prompt).not.toContain('knowledge-design');
       expect(workspaces.lastRunInputFiles).toEqual([]);
       expect(workspaces.lastInputPaths).toEqual([]);
@@ -1744,7 +1774,7 @@ describe('ConversationOperationRunner context compilation', () => {
     await runner.run('project-1', operation.runId, operation.operationId);
 
     const request = executor.requests.at(-1);
-    expect(request?.inputArtifacts).toEqual([]);
+    expect(request?.inputArtifacts).toEqual([APPROVED_PRD_REFERENCE]);
     expect(request?.prompt).not.toContain('knowledge-design');
     expect(workspaces.lastRunInputFiles).toEqual([]);
     expect(workspaces.lastInputPaths).toEqual([]);

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   isWorkflowRunStatusTerminal,
@@ -95,8 +96,19 @@ function noArtifacts(): ArtifactStore {
 }
 
 const APPROVED_PRD_CONTENT = 'approved prd fixture';
+const APPROVED_PRD_SHA256 = createHash('sha256')
+  .update(JSON.stringify(APPROVED_PRD_CONTENT))
+  .digest('hex');
 
 function approvedPrdArtifact(projectId: string, name: string): StoredArtifact {
+  const content =
+    name === 'prd'
+      ? APPROVED_PRD_CONTENT
+      : {
+          schemaVersion: '1',
+          identity: prdIdentity(APPROVED_PRD_CONTENT),
+          prdRevision: 1,
+        };
   const metadata = {
     projectId,
     name,
@@ -104,18 +116,9 @@ function approvedPrdArtifact(projectId: string, name: string): StoredArtifact {
     contentType: name === 'prd' ? 'text/markdown' : 'application/json',
     createdAt: '2026-07-18T11:00:00.000Z',
     createdBy: 'user',
-    sha256: prdIdentity(APPROVED_PRD_CONTENT),
+    sha256: createHash('sha256').update(JSON.stringify(content)).digest('hex'),
   };
-  return name === 'prd'
-    ? { metadata, content: APPROVED_PRD_CONTENT }
-    : {
-        metadata,
-        content: {
-          schemaVersion: '1',
-          identity: prdIdentity(APPROVED_PRD_CONTENT),
-          prdRevision: 1,
-        },
-      };
+  return { metadata, content };
 }
 
 /** Task-Agent operations require a current PRD approval (#602); overlay a
@@ -301,7 +304,7 @@ describe('OperationService.start', () => {
     expect((await runs.get(operation.runId!))?.prd).toEqual({
       name: 'prd',
       revision: 1,
-      sha256: prdIdentity(APPROVED_PRD_CONTENT),
+      sha256: APPROVED_PRD_SHA256,
     });
     expect(queue.enqueued).toHaveLength(1);
     expect(queue.enqueued[0]).toMatchObject({

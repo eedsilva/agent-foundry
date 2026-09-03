@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
 import { describe, expect, it, vi } from 'vitest';
@@ -290,7 +291,7 @@ class InMemoryArtifacts implements ArtifactStore {
       contentType: input.contentType ?? 'application/json',
       createdAt: new Date().toISOString(),
       createdBy: input.createdBy,
-      sha256: 'f'.repeat(64),
+      sha256: createHash('sha256').update(JSON.stringify(input.content)).digest('hex'),
     };
     const stored: StoredArtifact = { metadata, content: input.content };
     this.artifacts.push(stored);
@@ -319,7 +320,7 @@ class InMemoryArtifacts implements ArtifactStore {
       createdBy: input.createdBy,
       storage: 'blob',
       sizeBytes: content.byteLength,
-      sha256: 'f'.repeat(64),
+      sha256: createHash('sha256').update(content).digest('hex'),
     };
     this.blobs.push({ metadata, buffer: content });
     return metadata;

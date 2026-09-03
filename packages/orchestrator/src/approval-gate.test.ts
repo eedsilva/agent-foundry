@@ -85,6 +85,46 @@ describe('approval gates halt the run for a human decision (#13)', () => {
     ).toMatchObject({ action: 'approve', decidedBy: 'ed', note: 'Scope matches the PRD.' });
   });
 
+  it('refuses an approval continuation when the run lost its approved PRD pin', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const run = (await harness.runs.get('run-1'))!;
+    await harness.runs.update({ ...run, prd: undefined }, run.version);
+
+    await expect(
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'approve',
+        decidedBy: 'ed',
+      }),
+    ).rejects.toThrow(/approved PRD pin/i);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    expect((await harness.projects.get('project-1'))?.status).toBe('awaiting_approval');
+    expect(harness.enqueued).toEqual([]);
+  });
+
+  it('refuses rejection before recording a decision when the run lost its approved PRD pin', async () => {
+    const harness = makeHarness({}, undefined, { gate: {} });
+    await seedRun(harness);
+    await harness.orchestrator.runProject('project-1', undefined, 'run-1');
+    const [entry] = await harness.service.listApprovals('run-1');
+    const run = (await harness.runs.get('run-1'))!;
+    await harness.runs.update({ ...run, prd: undefined }, run.version);
+
+    await expect(
+      harness.service.decideApproval('run-1', entry!.request.id, {
+        action: 'reject',
+        decidedBy: 'ed',
+      }),
+    ).rejects.toThrow(/approved PRD pin/i);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('awaiting_approval');
+    expect((await harness.service.listApprovals('run-1'))[0]?.decision).toBeNull();
+    expect(harness.enqueued).toEqual([]);
+  });
+
   it('rejects and ends the run when no return step is configured', async () => {
     const harness = makeHarness({}, undefined, { gate: {} });
     await seedRun(harness);

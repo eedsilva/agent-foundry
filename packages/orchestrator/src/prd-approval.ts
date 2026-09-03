@@ -1,5 +1,6 @@
 import type { StoredArtifact } from '@agent-foundry/contracts';
 import { prdIdentity, type ArtifactStore } from '@agent-foundry/domain';
+import { prdArtifactMatchesReference } from './idempotency.js';
 
 export const PRD_GATED_OPERATION_KINDS: ReadonlySet<string> = new Set([
   'plan',
@@ -29,7 +30,14 @@ export async function currentPrdApproval(
     artifacts.getLatest(projectId, 'prd'),
     artifacts.getLatest(projectId, 'prd-approval'),
   ]);
-  const identity = prd ? prdIdentity(String(prd.content)) : undefined;
+  const prdIsIntact =
+    prd !== null &&
+    prdArtifactMatchesReference(prd, {
+      name: prd.metadata.name,
+      revision: prd.metadata.revision,
+      sha256: prd.metadata.sha256,
+    });
+  const identity = prdIsIntact ? prdIdentity(prd.content as string) : undefined;
   const approvalContent = approval?.content as
     { identity?: string; prdRevision?: number } | undefined;
   const approvedIdentity = approvalContent?.identity;

@@ -90,7 +90,13 @@ import {
   validateStandardPrd,
 } from '@agent-foundry/domain';
 import { createTwoFilesPatch } from 'diff';
-import { isMigrationApprovalGateId, policyHash, sha256, workflowHash } from './idempotency.js';
+import {
+  isMigrationApprovalGateId,
+  policyHash,
+  prdArtifactMatchesReference,
+  sha256,
+  workflowHash,
+} from './idempotency.js';
 import { currentPrdApproval } from './prd-approval.js';
 import type { QualityObservationService } from './quality-observation-service.js';
 
@@ -450,7 +456,7 @@ export class ProjectService {
     const run = await this.requireRun(project.currentRunId);
     const stored = await this.artifacts.getLatest(projectId, 'prd');
     if (!stored) throw new NotFoundError(`Artifact prd not found in project ${projectId}`);
-    const canonicalPrd = String(stored.content);
+    const canonicalPrd = storedPrdContent(stored);
     const identity = prdIdentity(canonicalPrd);
     if (input.identity !== identity) throw new PrdApprovalConflictError(input.identity, identity);
     if (run.status !== 'awaiting_approval') {
@@ -468,13 +474,15 @@ export class ProjectService {
           revision: approval.prd.metadata.revision,
           sha256: approval.prd.metadata.sha256,
         };
-        const queuedRun =
-          run.prd?.revision === pin.revision && run.prd.sha256 === pin.sha256
-            ? run
-            : await this.runs.update(
-                { ...run, prd: pin, updatedAt: this.clock.now().toISOString() },
-                run.version,
-              );
+        if (
+          run.prd?.name !== pin.name ||
+          run.prd.revision !== pin.revision ||
+          run.prd.sha256 !== pin.sha256
+        ) {
+          const message = 'Queued run has no valid approved PRD pin; approval replay refused.';
+          await this.failQueuePublication(project, run, message);
+          throw new ValidationError(message);
+        }
         let convergedProject = project;
         await this.transactionRunner.run(async (tx) => {
           if (project.status === 'awaiting_approval') {
@@ -484,12 +492,9 @@ export class ProjectService {
               tx,
             );
           }
-          await this.queue.enqueue(
-            runProjectJob(project, queuedRun, this.clock.now().toISOString()),
-            tx,
-          );
+          await this.queue.enqueue(runProjectJob(project, run, this.clock.now().toISOString()), tx);
         });
-        return { project: convergedProject, run: queuedRun };
+        return { project: convergedProject, run };
       }
       return { project, run };
     }
@@ -542,7 +547,7 @@ export class ProjectService {
           `PRD Revision ${stored.metadata.revision} approved for the run queue.`,
           {
             runId: run.id,
-            dedupeKey: `${run.id}:prd.approved:${identity}`,
+            dedupeKey: `${run.id}:prd.approved:${stored.metadata.revision}:${identity}`,
             data: { identity, revision: stored.metadata.revision },
             tx,
           },
@@ -616,7 +621,8 @@ export class ProjectService {
     }
     const current = await this.artifacts.getLatest(projectId, 'prd');
     if (!current) throw new NotFoundError(`Artifact prd not found in project ${projectId}`);
-    const parentIdentity = prdIdentity(String(current.content));
+    const currentPrd = storedPrdContent(current);
+    const parentIdentity = prdIdentity(currentPrd);
     const identity = prdIdentity(canonicalPrd);
     if (identity === parentIdentity) {
       // Idempotent replay. A crash between the artifact write and the
@@ -662,7 +668,7 @@ export class ProjectService {
       revision: stored.metadata.revision,
       diff: revisionDiff(
         current.metadata.revision,
-        String(current.content),
+        currentPrd,
         stored.metadata.revision,
         canonicalPrd,
       ),
@@ -688,7 +694,7 @@ export class ProjectService {
       throw new ValidationError('The PRD can only be revised while the run awaits PRD approval.');
     }
     const latest = await this.artifacts.getLatest(projectId, 'prd');
-    if (latest && prdIdentity(String(latest.content)) === identity) {
+    if (latest && prdIdentity(storedPrdContent(latest)) === identity) {
       await this.reconcileRevisionReplay(projectId, run.id, latest, questions);
       return { project, identity, revision: latest.metadata.revision, questions };
     }
@@ -706,21 +712,23 @@ export class ProjectService {
     stored: StoredArtifact,
     questions: ApplicationEnvelopeQuestion[],
   ): Promise<void> {
-    await this.workspaces.writePrd(projectId, String(stored.content));
+    const content = storedPrdContent(stored);
+    await this.workspaces.writePrd(projectId, content);
     // The initial document has no parent revision and its Blocking Questions
     // event was already emitted by create() under a run-scoped dedupe key.
     if (stored.metadata.revision <= 1) return;
     const parent = await this.artifacts.getRevision(projectId, 'prd', stored.metadata.revision - 1);
     if (!parent) return;
+    const parentContent = storedPrdContent(parent);
     await this.appendRevisionEvents(projectId, runId, {
-      identity: prdIdentity(String(stored.content)),
-      parentIdentity: prdIdentity(String(parent.content)),
+      identity: prdIdentity(content),
+      parentIdentity: prdIdentity(parentContent),
       revision: stored.metadata.revision,
       diff: revisionDiff(
         parent.metadata.revision,
-        String(parent.content),
+        parentContent,
         stored.metadata.revision,
-        String(stored.content),
+        content,
       ),
       questions,
     });
@@ -743,7 +751,7 @@ export class ProjectService {
       `PRD Revision ${input.revision} supersedes revision ${input.revision - 1}; any prior approval no longer applies.`,
       {
         runId,
-        dedupeKey: `prd.revised:${input.identity}`,
+        dedupeKey: `prd.revised:${input.revision}:${input.identity}`,
         data: {
           identity: input.identity,
           parentIdentity: input.parentIdentity,
@@ -759,7 +767,7 @@ export class ProjectService {
         'PRD has Blocking Questions; approval is blocked until a revision resolves them.',
         {
           runId,
-          dedupeKey: `prd.blocking_questions:${input.identity}`,
+          dedupeKey: `prd.blocking_questions:${input.revision}:${input.identity}`,
           data: { questions: input.questions },
         },
       );
@@ -797,56 +805,17 @@ export class ProjectService {
       const approval = await currentPrdApproval(this.artifacts, project.id);
       const approvedPrd = approval.prd;
       const pinMatchesApproval =
-        !run.prd ||
-        (approvedPrd !== null &&
-          run.prd.revision === approvedPrd.metadata.revision &&
-          run.prd.sha256 === approvedPrd.metadata.sha256);
+        run.prd?.name === 'prd' &&
+        approvedPrd !== null &&
+        run.prd.revision === approvedPrd.metadata.revision &&
+        run.prd.sha256 === approvedPrd.metadata.sha256;
       if (!approval.approved || !approvedPrd || !pinMatchesApproval) {
         const message =
           'Queued run has no approval for the current PRD Revision; queue publication refused.';
-        const failedRun = transitionWorkflowRun(run, 'failed', this.clock.now(), {
-          error: { name: 'PrdApprovalMissingError', message },
-        });
-        await this.transactionRunner.run(async (tx) => {
-          await this.runs.update(failedRun, run.version, tx);
-          await this.projects.update(
-            {
-              ...project,
-              status: 'failed',
-              error: message,
-              updatedAt: this.clock.now().toISOString(),
-            },
-            project.version,
-            tx,
-          );
-          await this.appendEvent(project.id, 'project.queue_publication_refused', message, {
-            runId: run.id,
-            dedupeKey: `${run.id}:project.queue_publication_refused`,
-            tx,
-          });
-        });
+        await this.failQueuePublication(project, run, message);
         continue;
       }
-      // A pre-pin queued run gains its pin here so execution never falls back
-      // to 'latest'.
-      let recoveredRun = run;
-      if (!run.prd) {
-        recoveredRun = await this.runs.update(
-          {
-            ...run,
-            prd: {
-              name: 'prd',
-              revision: approvedPrd.metadata.revision,
-              sha256: approvedPrd.metadata.sha256,
-            },
-            updatedAt: this.clock.now().toISOString(),
-          },
-          run.version,
-        );
-      }
-      await this.queue.enqueue(
-        runProjectJob(project, recoveredRun, this.clock.now().toISOString()),
-      );
+      await this.queue.enqueue(runProjectJob(project, run, this.clock.now().toISOString()));
       await this.appendEvent(
         project.id,
         'project.queued',
@@ -1128,6 +1097,7 @@ export class ProjectService {
     if (run.status !== 'paused') {
       throw new ValidationError(`Run ${runId} is ${run.status}; only paused runs can resume.`);
     }
+    await this.assertRunHasPrdPin(run);
 
     const diagnostics = await this.resumeDiagnostics(run);
     if (diagnostics.length > 0) {
@@ -1261,6 +1231,7 @@ export class ProjectService {
         `Run ${runId} is ${run.status}; only completed or failed runs support step retry.`,
       );
     }
+    await this.assertRunHasPrdPin(run);
     const { target, downstream } = await this.retryTargets(run, stepRunId);
 
     let override: RunRetryDirective['override'];
@@ -1397,6 +1368,7 @@ export class ProjectService {
     const request = await this.approvalRequests.get(runId, requestId);
     if (!request)
       throw new NotFoundError(`Approval request ${requestId} not found in run ${runId}`);
+    await this.assertRunHasPrdPin(run);
 
     let decision = normalizeApprovalDecision(await this.approvalDecisions.get(runId, requestId));
     if (decision) {
@@ -1648,6 +1620,7 @@ export class ProjectService {
       reason: string;
     },
   ): Promise<{ run: WorkflowRun; invalidatedStepRunIds: string[] }> {
+    await this.assertRunHasPrdPin(run);
     const checkpoint = await this.retryCheckpoint(run.id, target.id);
     const now = this.clock.now().toISOString();
 
@@ -1752,6 +1725,7 @@ export class ProjectService {
 
   private async requeueProject(projectId: string, runId: string, jobId?: string): Promise<void> {
     const project = await this.requireProject(projectId);
+    await this.assertRunHasPrdPin(await this.requireRun(runId));
     const now = this.clock.now().toISOString();
     const job: QueueJob = {
       id: jobId ?? `run-project-${runId}`,
@@ -1778,6 +1752,46 @@ export class ProjectService {
         await this.projects.update(updated, project.version, tx);
       }
       await this.queue.enqueue(job, tx);
+    });
+  }
+
+  private async assertRunHasPrdPin(run: WorkflowRun): Promise<void> {
+    const pin = run.prd;
+    const artifact = pin
+      ? await this.artifacts.getRevision(run.projectId, pin.name, pin.revision)
+      : null;
+    if (!pin || pin.name !== 'prd' || !artifact || !prdArtifactMatchesReference(artifact, pin)) {
+      throw new ValidationError(
+        `Run ${run.id} has no valid approved PRD pin; queue publication refused.`,
+      );
+    }
+  }
+
+  private async failQueuePublication(
+    project: Project,
+    run: WorkflowRun,
+    message: string,
+  ): Promise<void> {
+    const failedRun = transitionWorkflowRun(run, 'failed', this.clock.now(), {
+      error: { name: 'PrdApprovalMissingError', message },
+    });
+    await this.transactionRunner.run(async (tx) => {
+      await this.runs.update(failedRun, run.version, tx);
+      await this.projects.update(
+        {
+          ...project,
+          status: 'failed',
+          error: message,
+          updatedAt: this.clock.now().toISOString(),
+        },
+        project.version,
+        tx,
+      );
+      await this.appendEvent(project.id, 'project.queue_publication_refused', message, {
+        runId: run.id,
+        dedupeKey: `${run.id}:project.queue_publication_refused`,
+        tx,
+      });
     });
   }
 
@@ -1914,6 +1928,18 @@ export class ProjectService {
       tx,
     );
   }
+}
+
+function storedPrdContent(artifact: StoredArtifact): string {
+  const reference = {
+    name: artifact.metadata.name,
+    revision: artifact.metadata.revision,
+    sha256: artifact.metadata.sha256,
+  };
+  if (typeof artifact.content !== 'string' || !prdArtifactMatchesReference(artifact, reference)) {
+    throw new ValidationError('Stored PRD artifact must contain text content matching its digest.');
+  }
+  return artifact.content;
 }
 
 /** Artifact names a node reads when it executes — the inputs resume must prove unchanged. */

@@ -111,6 +111,18 @@ describe('pause and resume at step boundaries (#7)', () => {
     expect(harness.events.types()).not.toContain('run.resume_blocked');
   });
 
+  it('refuses to resume a legacy run without its approved PRD pin', async () => {
+    const harness = await pausedAfterPlan();
+    const run = (await harness.runs.get('run-1'))!;
+    await harness.runs.update({ ...run, prd: undefined }, run.version);
+
+    await expect(harness.service.resumeRun('run-1')).rejects.toThrow(/approved PRD pin/i);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('paused');
+    expect((await harness.projects.get('project-1'))?.status).toBe('paused');
+    expect(harness.enqueued).toEqual([]);
+  });
+
   it('still guards declared inputs when the pause snapshot has no resumeNodeId', async () => {
     const harness = await pausedAfterPlan();
 
@@ -161,6 +173,22 @@ describe('pause and resume at step boundaries (#7)', () => {
 });
 
 describe('step retry with controlled invalidation (#8)', () => {
+  it('refuses to retry a legacy run without its approved PRD pin', async () => {
+    const harness = makeHarness();
+    await completeRun(harness);
+    const review = liveStepRun(harness, 'review');
+    const run = (await harness.runs.get('run-1'))!;
+    await harness.runs.update({ ...run, prd: undefined }, run.version);
+
+    await expect(
+      harness.service.retryStep('run-1', review.id, { mode: 'preserve' }),
+    ).rejects.toThrow(/approved PRD pin/i);
+
+    expect((await harness.runs.get('run-1'))?.status).toBe('completed');
+    expect((await harness.stepRuns.get('run-1', review.id))?.invalidatedAt).toBeUndefined();
+    expect(harness.enqueued).toEqual([]);
+  });
+
   it('retries only the reviewer and preserves downstream outputs', async () => {
     const harness = makeHarness();
     await completeRun(harness);
