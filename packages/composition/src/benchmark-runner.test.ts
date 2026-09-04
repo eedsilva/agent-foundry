@@ -152,35 +152,60 @@ describe('freezeBenchmarkReport', () => {
   // taskId/issueRef/humanEdit) at a location scripts/benchmark.ts's
   // loadRecords() actually reads — not runDogfoodTask's own internal
   // dogfood/ subfolder, which holds DogfoodRunRecord-shaped files that
-  // BenchmarkRunRecordSchema.strict() rejects. Round-trip through disk the
-  // same way the CLI does: run every real corpus case, re-read the written
-  // JSON files off disk, re-parse them as BenchmarkRunRecord, and only then
-  // freeze.
-  it('round-trips the real corpus through disk exactly as scripts/benchmark.ts reads it back', async () => {
-    const cases = await loadBenchmarkCases(casesDir);
+  // BenchmarkRunRecordSchema.strict() rejects.
+  //
+  // The disk half runs once, on the shared mini fixture: the seam is common
+  // to every case and does not depend on the kind. Running the six real
+  // corpus cases installed dependencies per case and timed out on loaded
+  // runners without ever reporting a defect — five samples, one of them on a
+  // commit that predates the change under review (#693). The remaining kinds
+  // exist only to satisfy freezeBenchmarkReport's coverage gate, so they are
+  // derived from the record read back off disk and revalidated, never re-run.
+  // The real corpus files keep their own coverage: the two tests above parse
+  // every case and assert all six kinds.
+  it('round-trips a run record through disk exactly as scripts/benchmark.ts reads it back', async () => {
+    const fixture = await sharedMiniFixture();
     const dataDir = await tempDir('benchmark-roundtrip-data-');
+    const benchmarkCase = miniCase({ id: 'mini-roundtrip', baselineRef: fixture.sha });
 
-    await Promise.all(
-      cases.map((benchmarkCase) =>
-        runBenchmarkCase(benchmarkCase, MODEL, {
-          executorMode: 'mock',
-          repoRoot,
-          dataDir,
-        }),
-      ),
-    );
+    await runBenchmarkCase(benchmarkCase, MODEL, {
+      executorMode: 'mock',
+      repoRoot: fixture.path,
+      dataDir,
+    });
 
     // Exactly scripts/benchmark.ts's loadRecords(): readdir, filter .json,
     // JSON.parse + BenchmarkRunRecordSchema.parse each — reading the
-    // in-memory records back would not exercise the disk round-trip that
+    // in-memory record back would not exercise the disk round-trip that
     // broke.
     const entries = (await readdir(dataDir)).filter((name) => name.endsWith('.json'));
-    expect(entries.length).toBeGreaterThanOrEqual(cases.length);
-    const records = await Promise.all(
+    expect(entries).toEqual(['mini-roundtrip--codex-default-attempt01.json']);
+    const persisted = await Promise.all(
       entries.map(async (name) =>
         BenchmarkRunRecordSchema.parse(JSON.parse(await readFile(join(dataDir, name), 'utf8'))),
       ),
     );
+    const template = persisted[0]!;
+    expect(template).toMatchObject({
+      caseId: 'mini-roundtrip',
+      caseKind: 'greenfield',
+      modelId: 'codex-default',
+    });
+
+    // Derived, not executed: these only feed freezeBenchmarkReport's coverage
+    // gate. They still go through the schema, so a derived record that no
+    // longer parses fails here instead of at freeze time.
+    const records = [
+      ...persisted,
+      ...BENCHMARK_CASE_KINDS.filter((kind) => kind !== template.caseKind).map((kind) =>
+        BenchmarkRunRecordSchema.parse({
+          ...template,
+          caseId: `${template.caseId}--${kind}`,
+          caseKind: kind,
+        }),
+      ),
+    ];
+    expect(records).toHaveLength(BENCHMARK_CASE_KINDS.length);
 
     const baselinesDir = await tempDir('benchmark-roundtrip-baselines-');
     await expect(
@@ -192,7 +217,7 @@ describe('freezeBenchmarkReport', () => {
     const parsedReport = BenchmarkReportSchema.parse(JSON.parse(await readFile(jsonPath, 'utf8')));
     expect(parsedReport.runs).toHaveLength(records.length);
     await expect(readFile(mdPath, 'utf8')).resolves.toContain('# v0.9 benchmark baseline');
-  }, 300_000);
+  }, 60_000);
 });
 
 describe('the committed v0.9 baseline', () => {
