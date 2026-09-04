@@ -11,6 +11,7 @@ import {
   probeDocker,
   VALID_STANDARD_PRD,
 } from './testing-helpers.js';
+import { approveCurrentPrd } from './prd-approval.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -170,6 +171,7 @@ suite('foundry pipeline regression (real mode, fake CLIs)', () => {
         prd: VALID_STANDARD_PRD,
         projectDirectory,
       });
+      await approveCurrentPrd(runtime, project.id);
       const runId = project.currentRunId;
       if (!runId) throw new Error('project has no run');
 

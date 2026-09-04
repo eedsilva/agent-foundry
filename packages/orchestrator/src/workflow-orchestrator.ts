@@ -145,13 +145,16 @@ import {
   summarizeValidationUsage,
   validationStepKey,
 } from './validation-budget.js';
+import { currentPrdApproval } from './prd-approval.js';
 import type { PreviewService } from './preview-service.js';
 import type { ProjectVersionService } from './project-version-service.js';
 import { buildTaskProfile } from './task-profiler.js';
 import {
   approvalGateIdempotencyKey,
+  artifactMatchesReference,
   migrationApprovalGateId,
   policyHash,
+  prdArtifactMatchesReference,
   stepIdempotencyKey,
   workflowHash,
 } from './idempotency.js';
@@ -751,6 +754,7 @@ export class WorkflowOrchestrator {
         await this.finalizePause(run.id, projectId, workflow);
         return;
       }
+      run = await this.ensurePrdApprovedForExecution(run);
       // Before provisioning, not after (#617): the run's environment is bound
       // to the ProjectVersion of the scaffold commit, and `ensureGit` is what
       // creates that commit.
@@ -2219,6 +2223,16 @@ export class WorkflowOrchestrator {
     // Pause only takes effect between steps: an in-flight step always
     // finishes (or fails) before the run parks.
     if (run.status === 'pause_requested') throw new RunPausedError(runId, nodeId);
+    // #602: a run approved for a specific PRD Revision always loads that exact
+    // revision (sha256-verified), never 'latest' — a concurrent revision can
+    // no longer leak an unapproved document into execution. The run's pin
+    // overrides any same-named reference pinned upstream: for-each-task pins
+    // its implement inputs from 'latest' before reaching this boundary, so
+    // merely appending when absent would let that stale reference win.
+    if (run.prd) {
+      const pin = run.prd;
+      pinnedArtifacts = [...pinnedArtifacts.filter((artifact) => artifact.name !== pin.name), pin];
+    }
     // Re-resolved every boundary so a mid-run policy edit blocks the next
     // step instead of silently governing it; the hash gate below proves the
     // copy used by this step is the one the run was pinned to.
@@ -3956,6 +3970,7 @@ export class WorkflowOrchestrator {
         profile,
         signal,
         outputSchema,
+        inputArtifacts,
         workspaceRef,
         systemPrompt,
         worktree,
@@ -4408,6 +4423,7 @@ export class WorkflowOrchestrator {
     profile: TaskProfile,
     signal: AbortSignal,
     outputSchema: AgentExecutionRequest['outputSchema'],
+    inputArtifacts: StoredArtifact[],
     workspaceRef: string,
     systemPrompt: string | undefined,
     worktree?: string,
@@ -4441,6 +4457,7 @@ export class WorkflowOrchestrator {
           mutatesWorkspace: step.mutatesWorkspace,
           timeoutMs: this.options.agentTimeoutMs,
           outputSchema,
+          inputArtifacts: inputArtifacts.map(artifactReference),
           ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         },
         workspace: {
@@ -4567,12 +4584,23 @@ export class WorkflowOrchestrator {
       reference.name,
       reference.revision,
     );
-    if (!artifact || artifact.metadata.sha256 !== reference.sha256) {
+    if (!artifact || !artifactMatchesReference(artifact, reference)) {
       throw new NotFoundError(
-        `Artifact ${reference.name} revision ${reference.revision} not found`,
+        `Artifact ${reference.name} revision ${reference.revision} does not match its pinned reference`,
       );
     }
     return artifact;
+  }
+
+  private async ensurePrdApprovedForExecution(run: WorkflowRun): Promise<WorkflowRun> {
+    if (run.prd?.name !== 'prd') {
+      throw new ValidationError(`Run ${run.id} has no approved PRD pin; execution is not allowed.`);
+    }
+    const artifact = await this.loadArtifactReference(run.projectId, run.prd);
+    if (!prdArtifactMatchesReference(artifact, run.prd)) {
+      throw new ValidationError(`Run ${run.id} has no approved PRD pin; execution is not allowed.`);
+    }
+    return run;
   }
 
   private async recordQualityOutcome(artifact: StoredArtifact, approved: boolean): Promise<void> {
@@ -4794,6 +4822,12 @@ export class WorkflowOrchestrator {
     workflowId: string,
     requestedRunId?: string,
   ): Promise<WorkflowRun> {
+    const approval = await currentPrdApproval(this.artifacts, project.id);
+    if (!approval.approved || !approval.prd) {
+      throw new ValidationError(
+        `Project ${project.id} has no approved PRD Revision; execution is not allowed.`,
+      );
+    }
     const timestamp = this.clock.now().toISOString();
     const run: WorkflowRun = {
       id: requestedRunId ?? this.ids.next(),
@@ -4803,6 +4837,11 @@ export class WorkflowOrchestrator {
       version: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
+      prd: {
+        name: 'prd',
+        revision: approval.prd.metadata.revision,
+        sha256: approval.prd.metadata.sha256,
+      },
       ...(this.validationCampaign
         ? {
             execution: {

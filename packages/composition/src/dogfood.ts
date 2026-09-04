@@ -21,6 +21,7 @@ import {
 } from '@agent-foundry/contracts';
 import { atomicWriteJson, atomicWriteText, ensureDir } from '@agent-foundry/persistence';
 import { markdownCell, publishBaselinePair } from './baseline-publish.js';
+import { approveCurrentPrd } from './prd-approval.js';
 import { createRuntime, type Runtime } from './runtime.js';
 
 // The monorepo root that owns the workflows, model catalog, and harness. This is
@@ -92,6 +93,8 @@ export async function runDogfoodTask(
     });
     projectId = project.id;
     runId = project.currentRunId ?? '';
+    // Dogfood drives the operator journey, so it takes the PRD approval step (#602).
+    await approveCurrentPrd(runtime, project.id, `dogfood-${task.id}`);
     const workspacePath = runtime.workspaces.workspacePath(project.id);
 
     const baseline = await seedWorkspace(workspacePath, task, options.repoRoot);

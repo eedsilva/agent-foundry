@@ -16,6 +16,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgresJobQueue, createPostgresClient, migrateUp } from '@agent-foundry/persistence';
 import { approveAllGates, probeDocker, VALID_STANDARD_PRD } from './testing-helpers.js';
+import { approveCurrentPrd } from './prd-approval.js';
 import { createRuntime, type Runtime } from './runtime.js';
 import {
   allocateLocalSupabasePorts,
@@ -190,6 +191,7 @@ suite('Supabase Postgres + Storage data plane', () => {
         prd: VALID_STANDARD_PRD,
         projectDirectory,
       });
+      await approveCurrentPrd(runtime, project.id);
       if (!project.currentRunId) {
         throw new Error('Expected project to reference its workflow run.');
       }

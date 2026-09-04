@@ -179,11 +179,58 @@ export const CreateProjectRequestSchema = z.object({
 });
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
+/** Blocking Question raised by Supported Application Envelope classification (#602). */
+export const PrdBlockingQuestionSchema = z
+  .object({
+    code: z.enum(['ambiguous-capability', 'unclassified-requirement', 'invalid-capability-syntax']),
+    requirementId: z.string(),
+    capability: z.string(),
+    message: z.string(),
+  })
+  .strict();
+export type PrdBlockingQuestion = z.infer<typeof PrdBlockingQuestionSchema>;
+
 export const CreateProjectResponseSchema = z.object({
   project: ProjectSchema,
   identity: Sha256Schema,
+  questions: z.array(PrdBlockingQuestionSchema),
 });
 export type CreateProjectResponse = z.infer<typeof CreateProjectResponseSchema>;
+
+/** Approves the current PRD Revision by its exact identity hash (#602). */
+export const ApprovePrdRequestSchema = z
+  .object({
+    identity: Sha256Schema,
+    actor: ActorRefSchema,
+  })
+  .strict();
+export type ApprovePrdRequest = z.infer<typeof ApprovePrdRequestSchema>;
+
+export const ApprovePrdResponseSchema = z
+  .object({
+    project: ProjectSchema,
+    run: WorkflowRunSchema,
+  })
+  .strict();
+export type ApprovePrdResponse = z.infer<typeof ApprovePrdResponseSchema>;
+
+/** Replaces the PRD with a new immutable revision; any prior approval no longer matches (#602). */
+export const RevisePrdRequestSchema = z
+  .object({
+    prd: z.string().max(50_000),
+  })
+  .strict();
+export type RevisePrdRequest = z.infer<typeof RevisePrdRequestSchema>;
+
+export const RevisePrdResponseSchema = z
+  .object({
+    project: ProjectSchema,
+    identity: Sha256Schema,
+    revision: z.number().int().positive(),
+    questions: z.array(PrdBlockingQuestionSchema),
+  })
+  .strict();
+export type RevisePrdResponse = z.infer<typeof RevisePrdResponseSchema>;
 
 export const CreateQualityObservationRequestSchema = QualityObservationInputSchema;
 export type CreateQualityObservationRequest = z.infer<typeof CreateQualityObservationRequestSchema>;

@@ -17,6 +17,7 @@ import {
   isWorkflowRunStatusTerminal,
 } from '@agent-foundry/contracts';
 import {
+  approvePrd,
   cancelRun,
   compareVersions,
   getArtifact,
@@ -268,6 +269,44 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     selectTab('mudancas');
   }
 
+  // Pre-run PRD approval (#602): the run is born awaiting_approval (never
+  // started) and only an explicit approval of the current revision's identity
+  // queues the build. Blocking Questions disable the action; the server is the
+  // enforcement either way.
+  const prdApproval = useMemo(() => {
+    if (!detail || run?.status !== 'awaiting_approval' || run.startedAt) return null;
+    const lastPrdEvent = [...detail.events]
+      .reverse()
+      .find((event) => event.type === 'prd.blocking_questions' || event.type === 'prd.revised');
+    const questions =
+      lastPrdEvent?.type === 'prd.blocking_questions'
+        ? (lastPrdEvent.data.questions as Array<{ message: string }> | undefined)
+        : undefined;
+    return {
+      blockingQuestions: questions?.length
+        ? questions.map((question) => question.message).join(' ')
+        : null,
+    };
+  }, [detail, run]);
+
+  async function approveCurrentPrd() {
+    const artifact = detail?.artifacts.find((candidate) => candidate.metadata.name === 'prd');
+    if (typeof artifact?.content !== 'string') return;
+    try {
+      const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(artifact.content),
+      );
+      const identity = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+      await approvePrd(id, identity);
+      refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function retry() {
     try {
       await retryProject(id);
@@ -486,6 +525,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             workflowDef={workflowDef}
             resumeBlocked={resumeBlocked}
             pendingApproval={pendingApproval}
+            prdApproval={prdApproval}
+            onApprovePrd={() => void approveCurrentPrd()}
             activeOperationRunId={activeOperation?.runId}
             onDecide={(request, node, action) => void openDecide(request, node, action)}
             onOpenApprovalDetail={openApprovalDetail}

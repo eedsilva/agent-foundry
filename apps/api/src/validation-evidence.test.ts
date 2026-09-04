@@ -755,6 +755,15 @@ describe('validation evidence API', () => {
       expect(projectResponse.statusCode).toBe(202);
       const project = projectResponse.json().project;
       const runId = project.currentRunId!;
+      const approval = await app.inject({
+        method: 'POST',
+        url: `/projects/${project.id}/prd/approval`,
+        payload: {
+          identity: projectResponse.json().identity,
+          actor: { kind: 'user', id: 'operator' },
+        },
+      });
+      expect(approval.statusCode, approval.body).toBe(202);
 
       expect(await runtime.worker.runOnce()).toBe(true);
       // Approving the plan runs the schema step and parks on its own gate (#481).

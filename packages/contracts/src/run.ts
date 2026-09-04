@@ -227,11 +227,16 @@ export const WorkflowRunSchema = z
     pause: RunPauseSnapshotSchema.optional(),
     retry: RunRetryDirectiveSchema.optional(),
     execution: RunExecutionStateSchema.optional(),
+    // #602: the exact PRD Revision this run was approved for. Execution loads
+    // the PRD through this pin (sha256-verified), never through 'latest'.
+    prd: ArtifactReferenceSchema.optional(),
   })
   .strict()
   .superRefine((run, context) => {
     validateLifecycleTimestamps(run.status, run, context, {
-      initial: ['queued'],
+      // A run is born awaiting PRD approval and only enters the queue on an
+      // explicit approval (#602), so both states may precede startedAt.
+      initial: ['queued', 'awaiting_approval'],
       terminal: ['completed', 'failed', 'cancelled', 'rejected'],
     });
     if (run.status === 'failed' && !run.error) {

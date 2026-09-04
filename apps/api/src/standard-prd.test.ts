@@ -113,6 +113,13 @@ describe('PRD Standard 1 intake gate (#643)', () => {
       },
     });
     expect(accepted.statusCode, accepted.body).toBe(202);
+    const acceptedBody = accepted.json() as { project: { id: string }; identity: string };
+    const approval = await app.inject({
+      method: 'POST',
+      url: `/projects/${acceptedBody.project.id}/prd/approval`,
+      payload: { identity: acceptedBody.identity, actor: { kind: 'user', id: 'operator' } },
+    });
+    expect(approval.statusCode, approval.body).toBe(202);
     expect(await runtime.worker.runOnce()).toBe(true);
     expect(executionRequests).toHaveLength(1);
   });

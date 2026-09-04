@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  prdIdentity,
   type ArtifactStore,
   type Clock,
   type EventStore,
@@ -32,6 +34,7 @@ import {
 import { ConversationOperationRunner } from './conversation-operation-runner.js';
 import { ConversationService } from './conversation-service.js';
 import { OperationService } from './operation-service.js';
+import { InProcessProjectMutationLock } from './project-service.js';
 import { ProjectVersionService } from './project-version-service.js';
 
 class FixedClock implements Clock {
@@ -122,6 +125,27 @@ async function runOperation(kind: 'plan' | 'build') {
   const stepRuns = new InMemoryStepRuns({ on: true }) as unknown as StepRunRepository;
   const stepAttempts = new InMemoryStepAttempts({ on: true }) as unknown as StepAttemptRepository;
   const artifacts = new InMemoryArtifacts({ on: true }) as unknown as ArtifactStore;
+  const prdContent = 'approved test PRD';
+  const prd = await artifacts.put({
+    projectId: 'project-1',
+    name: 'prd',
+    content: prdContent,
+    contentType: 'text/markdown',
+    createdBy: 'test',
+  });
+  await artifacts.put({
+    projectId: 'project-1',
+    name: 'prd-approval',
+    content: {
+      schemaVersion: '1',
+      identity: prdIdentity(prdContent),
+      prdRevision: prd.metadata.revision,
+    },
+    createdBy: 'test',
+    idempotencyKey: createHash('sha256')
+      .update(`${prdIdentity(prdContent)}:${prd.metadata.revision}`)
+      .digest('hex'),
+  });
   const events = new InMemoryEvents({ on: true }) as unknown as EventStore;
   const stepEvents = new InMemoryStepEvents();
   const workspaces = new FakeWorkspaces({ on: true });
@@ -182,6 +206,7 @@ async function runOperation(kind: 'plan' | 'build') {
     ids,
     conversationService,
     workspaces,
+    new InProcessProjectMutationLock(),
   );
   const runner = new ConversationOperationRunner(
     runs,

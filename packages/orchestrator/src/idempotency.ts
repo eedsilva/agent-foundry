@@ -3,6 +3,7 @@ import type {
   ArtifactReference,
   ExecutableStep,
   ProjectPolicy,
+  StoredArtifact,
   WorkflowDefinition,
 } from '@agent-foundry/contracts';
 
@@ -88,6 +89,25 @@ export function policyHash(policy: ProjectPolicy): string {
 
 export function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+export function artifactMatchesReference(
+  artifact: StoredArtifact,
+  reference: ArtifactReference,
+): boolean {
+  const metadataMatches =
+    artifact.metadata.name === reference.name &&
+    artifact.metadata.revision === reference.revision &&
+    artifact.metadata.sha256 === reference.sha256;
+  if (!metadataMatches || typeof artifact.content !== 'string') return metadataMatches;
+  return sha256(JSON.stringify(artifact.content)) === reference.sha256;
+}
+
+export function prdArtifactMatchesReference(
+  artifact: StoredArtifact,
+  reference: ArtifactReference,
+): boolean {
+  return typeof artifact.content === 'string' && artifactMatchesReference(artifact, reference);
 }
 
 function stableStringify(value: unknown): string {

@@ -107,6 +107,14 @@ export async function createProject(input: {
   return response.project;
 }
 
+/** Approves the current PRD Revision by its exact identity hash (#602). */
+export async function approvePrd(projectId: string, identity: string): Promise<void> {
+  await api(`/projects/${encodeURIComponent(projectId)}/prd/approval`, {
+    method: 'POST',
+    body: JSON.stringify({ identity, actor: { kind: 'user', id: 'web-operator' } }),
+  });
+}
+
 export async function listProjects(): Promise<Project[]> {
   const response = await api<{ projects: Project[] }>('/projects');
   return response.projects;

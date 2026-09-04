@@ -14,6 +14,7 @@ This standard defines the only PRD shape Agent Foundry accepts for a new Generat
 - Approval is blocked while `Open decisions` contains an item or the document contains `TBD` or `TODO`. Both markers are matched in uppercase only, so the Portuguese word `todo` and the English word `todo` in product text are not markers.
 - Fixed tokens are accepted in both content languages, ignoring case: `None`, `Nenhuma`, and `Nenhum` mean no item; `Not applicable` and `Não aplicável` mean a section does not apply and require a reason.
 - The PRD describes product behavior, not framework choices, SQL tables, columns, migrations, or implementation tasks.
+- Every `FR`/`BR`/`NFR` item must declare at least one [Supported Application Envelope](SUPPORTED_APPLICATION_ENVELOPE.md) capability with a backticked `` `capability:<slug>` `` marker inside that item. Classification is deterministic and never inferred from prose: a known exclusion blocks intake and names the alternative, an unknown slug becomes a Blocking Question tied to the requirement identifier, missing classification becomes a Blocking Question, and markers outside an identified requirement are Blocking Questions as well.
 - Approval creates an immutable PRD Revision. A requirement change creates a new revision and planning lineage; a repair that restores the existing contract does not.
 - The approved document is stored as `PRD.md` at the Standalone Repository root and as a hash-addressed Agent Foundry artifact.
 
@@ -67,7 +68,7 @@ Interface language: <BCP 47 tag, for example pt-BR or en-US>
 
 ## 6. Functional requirements / Requisitos funcionais
 
-- **FR-001**: <Required observable behavior>
+- **FR-001**: <Required observable behavior> `capability:<slug>`
 
 ## 7. Conceptual data and ownership / Dados conceituais e propriedade
 
@@ -81,7 +82,7 @@ Interface language: <BCP 47 tag, for example pt-BR or en-US>
 
 ## 8. Business rules / Regras de negócio
 
-- **BR-001**: <Domain rule or invariant>
+- **BR-001**: <Domain rule or invariant> `capability:<slug>`
 
 ## 9. Authentication and permissions / Autenticação e permissões
 
@@ -93,7 +94,7 @@ Interface language: <BCP 47 tag, for example pt-BR or en-US>
 
 ## 10. Non-functional requirements / Requisitos não funcionais
 
-- **NFR-001**: <Observable accessibility, responsiveness, performance, reliability, or security condition>
+- **NFR-001**: <Observable accessibility, responsiveness, performance, reliability, or security condition> `capability:<slug>`
 
 ## 11. Acceptance criteria / Critérios de aceite
 

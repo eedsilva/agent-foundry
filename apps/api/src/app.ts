@@ -21,11 +21,13 @@ import {
 } from '@agent-foundry/composition';
 import {
   currentTraceIds,
+  extractEnvelopeRequirements,
   redactValidationPreflightReport,
   validateStandardPrd,
 } from '@agent-foundry/domain';
 import {
   BenchmarkReportSchema,
+  ApprovePrdRequestSchema,
   BranchVersionRequestSchema,
   ClassifyMessageResponseSchema,
   CreateExperimentRequestSchema,
@@ -48,6 +50,7 @@ import {
   RegressionGateRequestSchema,
   RetryProjectRequestSchema,
   RetryStepRequestSchema,
+  RevisePrdRequestSchema,
   RouterDashboardQuerySchema,
   RouterDashboardResponseSchema,
   ValidationCampaignResponseSchema,
@@ -59,16 +62,19 @@ import {
   UpdateOperationProposalRequestSchema,
   VisualEditSchema,
   UpdateKnowledgeFileRequestSchema,
+  validateSupportedApplicationEnvelope,
   type CreateKnowledgeFileRequest,
   type KnowledgeFileRevision,
   type PreviewSession,
 } from '@agent-foundry/contracts';
 import {
+  ApplicationEnvelopeRejectedError,
   ApprovalConflictError,
   IdempotencyConflictError,
   InvalidStateTransitionError,
   KnowledgeFileConflictError,
   NotFoundError,
+  PrdApprovalConflictError,
   PreviewAccessDeniedError,
   ResumeBlockedError,
   StandardPrdRejectedError,
@@ -180,6 +186,20 @@ export async function buildApp(
         code: issue?.code,
         path: issue?.path,
         issues: error.issues,
+      });
+    }
+    if (error instanceof ApplicationEnvelopeRejectedError) {
+      return reply.status(422).send({
+        error: error.name,
+        message: error.message,
+        rejections: error.rejections,
+      });
+    }
+    if (error instanceof PrdApprovalConflictError) {
+      return reply.status(409).send({
+        error: error.name,
+        message: error.message,
+        currentIdentity: error.currentIdentity,
       });
     }
     if (error instanceof IdempotencyConflictError) {
@@ -470,7 +490,27 @@ export async function buildApp(
       ...input,
       prd: validation.prd.canonicalMarkdown,
     });
-    return reply.status(202).send({ project, identity: validation.prd.identity });
+    // Same deterministic classification the service persisted (#602); recomputed
+    // here because create() keeps its Project return shape for every caller.
+    const envelope = validateSupportedApplicationEnvelope(
+      extractEnvelopeRequirements(validation.prd.canonicalMarkdown),
+    );
+    return reply
+      .status(202)
+      .send({ project, identity: validation.prd.identity, questions: envelope.questions });
+  });
+
+  app.post('/projects/:projectId/prd/approval', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const input = ApprovePrdRequestSchema.parse(request.body);
+    const result = await runtime.projectService.approvePrd(projectId, input);
+    return reply.status(202).send(result);
+  });
+
+  app.put('/projects/:projectId/prd', async (request, reply) => {
+    const { projectId } = z.object({ projectId: PathSegmentSchema }).parse(request.params);
+    const input = RevisePrdRequestSchema.parse(request.body);
+    return reply.send(await runtime.projectService.revisePrd(projectId, input));
   });
 
   app.get('/projects/:projectId', async (request) => {

@@ -477,6 +477,23 @@ Migração é somente de leitura: policies sem `browserAllowedOrigins` e steps s
 browser por tarefa continua disponível em `for-each-task`; não há wiring standalone para remover na
 cauda atual. Preserve reports e attempts existentes para investigação, sem backfill.
 
+## Gate de PRD e recovery
+
+Um projeto novo fica em `awaiting_approval` depois de `create`; somente `approvePrd` pode publicar o
+primeiro job `run-project`. `revisePrd` cria uma revisão imutável, com `parentIdentity` e diff
+determinístico, e invalida qualquer approval anterior. Approval e revisão são serializados por
+projeto; a decisão também registra a revisão aprovada, não apenas o hash do conteúdo.
+
+Operações `plan`, `build`, `repair` e `visual-edit` exigem approval da revisão PRD atual antes de
+criar o `WorkflowRun` ou o job `run-conversation-operation`. O run carrega o pin
+`{name, revision, sha256}` e o runner recarrega exatamente esse artifact antes de chamar o Task
+Agent. `classify`, mensagens, revisão e approval não passam por esse gate de execução.
+
+Não existe bypass legacy: sem PRD, approval atual ou pin íntegro, retry, recovery e execução falham
+fechado. Recovery só republica um run `queued` cujo pin coincide com a revisão aprovada; estado
+inconsistente é marcado como falho e recebe evento explícito. A continuação de um run já iniciado
+usa o pin original e não cria um segundo subsistema de approval.
+
 ## Recovery manual da fila
 
 Por padrão, um job de projeto tem uma única tentativa de orquestração. Fallbacks de modelo e loops de reparo já acontecem dentro dessa tentativa; repetir o workflow inteiro automaticamente pode duplicar custo e revisões. O endpoint de retry torna uma nova execução uma decisão explícita.
@@ -822,7 +839,7 @@ O job `regression-gate` ainda não é um required status check em branch protect
 
 ### Supabase Postgres (opção hospedada padrão)
 
-Supabase é o backend hospedado padrão para banco e storage do agent-foundry. Para usar o Postgres de um projeto Supabase como `DATABASE_URL`: no dashboard, abra Connect → connection string e copie a URI — prefira a session pooler connection string (porta 5432, `...pooler.supabase.com`) para processos de longa duração como a API e o worker; a conexão direta (porta 5432, host `db.[project-ref].supabase.co`) também funciona, mas é mais sujeita a limite de conexões simultâneas em plano free. Em `...pooler.supabase.com`, a porta 6543 é o transaction pooler e não deve ser usada para `npm run db:migrate`, cujo `pg_advisory_lock` é session-scoped e quebra sob o transaction pooler; os adapters de runtime (API e worker) já são xact-lock/pooler-safe e funcionam com qualquer uma das portas. Essa URL funciona sem alterações com `PERSISTENCE_MODE=postgres` e `npm run db:migrate` — nenhuma dependência de `supabase-js` é necessária (ver ADR 0026). Para desenvolvimento local sem depender da nuvem, `supabase start` (Supabase CLI) sobe um Postgres local equivalente em `postgresql://postgres:postgres@127.0.0.1:54322/postgres`. Para blobs (screenshots, traces, bundles), ver a seção de Supabase Storage adicionada pelo PR do #54.
+Supabase é o backend hospedado padrão para banco e storage do agent-foundry. Para usar o Postgres de um projeto Supabase como `DATABASE_URL`: no dashboard, abra Connect → connection string e copie a URI — prefira a session pooler connection string (porta 5432, `...pooler.supabase.com`) para processos de longa duração como a API e o worker; a conexão direta (porta 5432, host `db.[project-ref].supabase.co`) também funciona, mas é mais sujeita a limite de conexões simultâneas em plano free. Em `...pooler.supabase.com`, a porta 6543 é o transaction pooler e não deve ser usada para `npm run db:migrate`, cujo `pg_advisory_lock` é session-scoped e quebra sob o transaction pooler; os adapters de runtime (API e worker) usam apenas locks transacionais (`pg_advisory_xact_lock`), então não dependem de sessão fixa. Isso sozinho não bastaria para a porta 6543: o Supavisor em transaction mode [não suporta prepared statements](https://supabase.com/docs/guides/troubleshooting/disabling-prepared-statements-qL8lEL) e o padrão do `postgres.js` é `prepare: true`. Por isso `createPostgresClient` desativa prepared statements sozinho quando a URL aponta para a porta `6543`. Para um pooler transacional em outra porta, use a grafia literal `?prepare=false` (`?prepare=disable` também vale; o driver trata as duas). Qualquer outra grafia falha, e em dois lugares diferentes: `?prepare=0`, `?prepare=FALSE` ou `?prepare=false ` com espaço resolvem para uma string truthy e mantêm prepared statements ligados **em silêncio**, com o sintoma só no primeiro Bind em produção; já `?no_prepare=true` e `?pgbouncer=true` (convenção do Prisma, não do `postgres.js`) não são lidos como opção e viajam no pacote de startup, onde o servidor derruba a conexão **antes de qualquer query** com `FATAL: unrecognized configuration parameter` (medido contra PostgreSQL 17.10). A #692 rastreia a prova executada contra o pooler real. A URL de 5432 (session pooler ou conexão direta) funciona sem alterações tanto com `PERSISTENCE_MODE=postgres` quanto com `npm run db:migrate`; a de 6543 serve só ao runtime, nunca ao `db:migrate`. Em nenhum dos casos é preciso `supabase-js` (ver ADR 0026). Para desenvolvimento local sem depender da nuvem, `supabase start` (Supabase CLI) sobe um Postgres local equivalente em `postgresql://postgres:postgres@127.0.0.1:54322/postgres`. Para blobs (screenshots, traces, bundles), ver a seção de Supabase Storage adicionada pelo PR do #54.
 
 ### Habilitar
 
@@ -832,6 +849,8 @@ DATABASE_URL=postgres://foundry:foundry@localhost:5432/foundry
 ```
 
 `DATABASE_URL` é obrigatório quando `PERSISTENCE_MODE=postgres`; sem ele, `loadRuntimeConfig` falha no boot com `PERSISTENCE_MODE=postgres requires DATABASE_URL` em vez de silenciosamente cair para disco. O serviço `postgres` do `docker-compose.yml` sobe um Postgres 17 local (`foundry`/`foundry`/`foundry`) com healthcheck; as linhas `PERSISTENCE_MODE`/`DATABASE_URL` dos serviços `api` e `worker` estão comentadas porque o padrão de deploy continua `file`. Para usar Supabase em vez do Postgres local do Compose, substitua `DATABASE_URL` pela connection string do Supabase descrita acima.
+
+Cada processo em modo postgres abre **dois** pools contra a mesma `DATABASE_URL`: um para os stores e outro dedicado aos locks de mutação de projeto (#602, ADR 0083). O lock segura uma conexão durante toda a seção crítica enquanto a própria seção faz I/O pelos stores; com um pool só, `max` seções concorrentes travam com todas as conexões presas em seções esperando por conexão. Com o `max: 10` atual (`postgres/client.ts`), o teto é de **20 conexões por processo** — dimensione o limite de conexões do banco pelo número de processos de API/worker. O lock de ciclo de vida de preview ainda usa o pool dos stores e carrega o mesmo risco de esgotamento; a issue #691 rastreia essa correção.
 
 ### Migrar
 
@@ -1052,7 +1071,7 @@ RUN_SUPABASE_DATA_PLANE_E2E=true \
 npx vitest run packages/composition/src/supabase-data-plane.e2e.test.ts --pool=threads --maxWorkers=1
 ```
 
-Esse harness executa migrations antes do boot, então **exige conexão direta ou session pooler (`5432`)**. Se você apontar `DATABASE_URL` para o transaction pooler (`6543`), o teste falha cedo com erro claro, porque `npm run db:migrate` / `migrateUp(...)` dependem de lock `pg_advisory_lock` com escopo de sessão. Já os adapters de runtime continuam pooler-safe via `pg_advisory_xact_lock`, então a restrição é do caminho de migration/validação, não do boot normal da API/worker em produção.
+Esse harness executa migrations antes do boot, então **exige conexão direta ou session pooler (`5432`)**. Se você apontar `DATABASE_URL` para o transaction pooler (`6543`), o teste falha cedo com erro claro, porque `npm run db:migrate` / `migrateUp(...)` dependem de lock `pg_advisory_lock` com escopo de sessão. Os adapters de runtime não dependem de lock de sessão (usam `pg_advisory_xact_lock`), e em 6543 o próprio `createPostgresClient` desativa prepared statements, que o transaction pooler não suporta (#692).
 
 Credenciais/endpoint S3 exigidos pelo harness hospedado:
 

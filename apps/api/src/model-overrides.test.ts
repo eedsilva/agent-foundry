@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRuntime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
+import { approveProjectPrd } from './test-support/approve-prd.js';
 import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
 
 const directories: string[] = [];
@@ -94,6 +95,7 @@ describe('model override API', () => {
       workflowId: 'web-app-v1',
       projectDirectory: await createProjectDirectory(),
     });
+    await approveProjectPrd(runtime, project.id);
     const claude = (await runtime.router.catalog()).find((model) => model.provider === 'claude')!;
     await runtime.projectService.createModelOverride(project.currentRunId!, {
       scope: { kind: 'run' },
@@ -241,6 +243,7 @@ describe('model override API', () => {
       workflowId: 'verify-only',
       projectDirectory: await createProjectDirectory(),
     });
+    await approveProjectPrd(runtime, project.id);
     const runId = project.currentRunId!;
     expect(await runtime.worker.runOnce()).toBe(true);
     const verify = (await runtime.stepRuns.list(runId)).find((step) => step.stepId === 'verify')!;

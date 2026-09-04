@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PreviewSession } from '@agent-foundry/contracts';
 import type { FastifyInstance } from 'fastify';
+import { prdIdentity } from '@agent-foundry/domain';
 import { createRuntime, type Runtime } from '@agent-foundry/composition';
 import { buildApp } from './app.js';
 import { VALID_STANDARD_PRD } from './test-support/standard-prd-fixture.js';
@@ -56,6 +57,15 @@ async function createProject(baseUrl: string): Promise<string> {
   expect(response.status).toBe(202);
   const { project } = (await response.json()) as { project: { id: string } };
   return project.id;
+}
+
+async function approveCurrentPrd(runtime: Runtime, projectId: string): Promise<void> {
+  const stored = await runtime.artifacts.getLatest(projectId, 'prd');
+  if (!stored) throw new Error(`Project ${projectId} has no PRD artifact`);
+  await runtime.projectService.approvePrd(projectId, {
+    identity: prdIdentity(String(stored.content)),
+    actor: { kind: 'user', id: 'preview-test' },
+  });
 }
 
 async function createStoredSession(
@@ -482,6 +492,7 @@ describe('POST /projects/:projectId/preview/:sessionId/visual-edits', () => {
   it('promotes an exact patch only from a live project-owned session', async () => {
     const { baseUrl, runtime } = await startApi();
     const projectId = await createProject(baseUrl);
+    await approveCurrentPrd(runtime, projectId);
     const session = await createActiveSession(runtime, projectId);
 
     const response = await fetch(

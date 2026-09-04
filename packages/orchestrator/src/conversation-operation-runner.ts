@@ -54,6 +54,8 @@ import { compileContext } from './context-compiler.js';
 import { artifactReference, persistStreamEvent, runError } from './workflow-orchestrator.js';
 import { ProjectVersionService } from './project-version-service.js';
 import type { BrowserVerificationCoordinator } from './browser-verification-coordinator.js';
+import { PRD_GATED_OPERATION_KINDS } from './prd-approval.js';
+import { artifactMatchesReference, prdArtifactMatchesReference } from './idempotency.js';
 
 export interface ConversationOperationRunnerOptions {
   agentTimeoutMs: number;
@@ -101,6 +103,18 @@ export class ConversationOperationRunner {
     }
     if (operation.runId !== runId) {
       throw new ValidationError(`Operation ${operationId} is not bound to workflow run ${runId}`);
+    }
+    let approvedPrd: StoredArtifact | undefined;
+    if (PRD_GATED_OPERATION_KINDS.has(operation.kind)) {
+      if (!initialRun.prd) {
+        throw new ValidationError(
+          `Run ${runId} has no approved PRD pin; Task-Agent execution is not allowed.`,
+        );
+      }
+      if (initialRun.prd.name !== 'prd') {
+        throw new ValidationError(`Run ${runId} has an invalid approved PRD pin.`);
+      }
+      approvedPrd = await this.loadArtifactReference(projectId, initialRun.prd);
     }
     const kind: 'plan' | 'build' | 'repair' | 'visual-edit' =
       operation.kind === 'build' || operation.kind === 'repair' || operation.kind === 'visual-edit'
@@ -184,8 +198,14 @@ export class ConversationOperationRunner {
           contextSources,
         });
       }
-      const inputArtifacts = knowledgeInputs.map(({ artifact }) => artifact);
-      const inputReferences = knowledgeInputs.map(({ reference }) => reference);
+      const inputArtifacts = [
+        ...(approvedPrd ? [approvedPrd] : []),
+        ...knowledgeInputs.map(({ artifact }) => artifact),
+      ];
+      const inputReferences = [
+        ...(approvedPrd ? [artifactReference(approvedPrd)] : []),
+        ...knowledgeInputs.map(({ reference }) => reference),
+      ];
       const profile = buildTaskProfile({
         step,
         harness,
@@ -586,6 +606,23 @@ export class ConversationOperationRunner {
     return message;
   }
 
+  private async loadArtifactReference(
+    projectId: string,
+    reference: ArtifactReference,
+  ): Promise<StoredArtifact> {
+    const artifact = await this.artifacts.getRevision(
+      projectId,
+      reference.name,
+      reference.revision,
+    );
+    if (!artifact || !prdArtifactMatchesReference(artifact, reference)) {
+      throw new ValidationError(
+        `Artifact ${reference.name} revision ${reference.revision} does not match the approved PRD pin.`,
+      );
+    }
+    return artifact;
+  }
+
   private async loadPlanArtifact(
     projectId: string,
     operation: Operation,
@@ -602,7 +639,12 @@ export class ConversationOperationRunner {
       reference.name,
       reference.revision,
     );
-    return artifact ? { content: artifact.content } : undefined;
+    if (!artifact || !artifactMatchesReference(artifact, reference)) {
+      throw new ValidationError(
+        `Plan artifact ${reference.name} revision ${reference.revision} does not match its pinned reference.`,
+      );
+    }
+    return { content: artifact.content };
   }
 
   private async loadKnowledgeInputs(

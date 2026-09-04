@@ -157,6 +157,8 @@ export function RunAlertStrip({
   resumeBlocked,
   pendingApproval,
   activeOperationRunId,
+  prdApproval,
+  onApprovePrd,
   onDecide,
   onOpenApprovalDetail,
   onRetry,
@@ -171,6 +173,10 @@ export function RunAlertStrip({
   workflowDef: WorkflowDefinition | null;
   resumeBlocked: ResumeBlockedResponse | null;
   pendingApproval: PendingApproval | null;
+  /** Pre-run PRD approval (#602): set while the run has never started and the
+   * queue is blocked on the operator approving the current PRD Revision. */
+  prdApproval?: { blockingQuestions: string | null } | null;
+  onApprovePrd?: () => void;
   /** The run behind the latest conversation operation, when it's still in
    * flight — the same run `conversation-list.tsx`'s "Cancelar" button
    * targets. `undefined` when there's no active operation to cancel. */
@@ -193,6 +199,24 @@ export function RunAlertStrip({
         <ProjectProvisioningError error={projectError} onShowTimeline={onShowTimeline} />
       ) : null}
       {error ? <AlertStrip tone="err" title={error} /> : null}
+
+      {run?.status === 'awaiting_approval' && !run.startedAt && !pendingApproval && prdApproval ? (
+        <AlertStrip
+          tone="warn"
+          title="Aprovação do PRD pendente"
+          detail={
+            prdApproval.blockingQuestions ??
+            'A fila só recebe o build depois que você aprovar exatamente esta revisão do PRD.'
+          }
+          actions={
+            prdApproval.blockingQuestions ? null : (
+              <button type="button" className={BTN} onClick={() => onApprovePrd?.()}>
+                Aprovar PRD e iniciar build
+              </button>
+            )
+          }
+        />
+      ) : null}
 
       {run?.status === 'awaiting_approval' && pendingApproval ? (
         <AlertStrip

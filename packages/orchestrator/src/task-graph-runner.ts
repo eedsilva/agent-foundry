@@ -29,6 +29,7 @@ import type {
   StepRunRepository,
   WorkspaceManager,
 } from '@agent-foundry/domain';
+import { artifactMatchesReference } from './idempotency.js';
 import {
   AgentBlockedError,
   BrowserInfrastructureError,
@@ -1126,8 +1127,10 @@ export class TaskGraphRunner {
           pinned.name,
           pinned.revision,
         );
-        if (!artifact || artifact.metadata.sha256 !== pinned.sha256) {
-          throw new NotFoundError(`Artifact ${pinned.name} revision ${pinned.revision} not found`);
+        if (!artifact || !artifactMatchesReference(artifact, pinned)) {
+          throw new NotFoundError(
+            `Artifact ${pinned.name} revision ${pinned.revision} does not match its pinned reference`,
+          );
         }
         return artifact;
       }),

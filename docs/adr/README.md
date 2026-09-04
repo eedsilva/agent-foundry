@@ -6,7 +6,7 @@ Status values: `Proposed`, `Accepted`, `Superseded`, `Rejected`.
 
 Use [0000-template.md](0000-template.md). Do not rewrite history after acceptance; supersede it with a new ADR.
 
-Latest accepted: [0071 OS-level Bash sandbox closes the Claude executor's workspace-boundary gap](0071-os-level-bash-sandbox-for-claude-executor.md) — issue #565, builds on [0063](0063-scoped-bash-allowlist-for-mutating-agents.md).
+Latest accepted: [0083 the project mutation lock gets a transaction and its own pool, and the client follows the pooler](0083-postgres-lock-pool-and-pooler-alignment.md) — issue #602, extends [0026](0026-postgres-metadata-persistence.md).
 
 Proposed (Harness Alignment, milestone `Harness Alignment`):
 

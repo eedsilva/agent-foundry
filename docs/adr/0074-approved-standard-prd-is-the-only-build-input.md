@@ -17,6 +17,10 @@ Agent Foundry validates and normalizes the document without a model call, presen
 
 Approval creates an immutable PRD Revision. Planning, the Schema Plan, implementation, verification, and evidence all retain that revision's identity. Editing requirements creates and approves a new revision and starts a new planning lineage; it never mutates an active run's input.
 
+Every `FR`, `BR`, and `NFR` item must carry one or more explicit, lowercase `capability:<slug>` markers. A missing or syntactically invalid marker is a Blocking Question tied to that requirement; a known excluded capability rejects intake; an unknown capability remains a Blocking Question. Classification never infers intent from prose.
+
+The PRD approval artifact references the exact revision hash. A project run stores the approved PRD artifact reference, including its revision and SHA-256, and every execution boundary loads that reference rather than the latest artifact. Project retry, queue recovery, and Task-Agent conversation operations fail closed without a current approval; continuations of an already approved run use its stored pin without creating a second approval subsystem.
+
 The first acceptance milestone supports responsive web applications only, always with email/password authentication, protected routes, sessions, and RLS. Reference images and document attachments are deferred until after Issue Radar Lite passes both Local and Cloudflare Targets. Third-party API integrations, mobile, desktop, extensions, and interface-less API products are outside this milestone.
 
 ## Consequences

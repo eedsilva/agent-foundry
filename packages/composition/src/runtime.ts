@@ -33,6 +33,7 @@ import {
   FileModelOverrideRepository,
   FileQualityObservationRepository,
   FileRouterDecisionLogRepository,
+  FileProjectMutationLock,
   FileProjectRepository,
   FilePreviewLifecycleLock,
   FilePreviewLogRepository,
@@ -55,6 +56,7 @@ import {
   PostgresApprovalRequestRepository,
   PostgresArtifactStore,
   PostgresConversationRepository,
+  PostgresProjectMutationLock,
   type PostgresDb,
   PostgresEventStore,
   PostgresJobQueue,
@@ -94,6 +96,7 @@ import type {
   ExecutorRegistry,
   EventStore,
   JobQueue,
+  ProjectMutationLock,
   ProjectRepository,
   PreviewLifecycleLock,
   StepAttemptRepository,
@@ -156,6 +159,7 @@ export interface Runtime {
   verifier: WorkspaceVerifier;
   browserVerifier: PlaywrightBrowserVerifier;
   browserVerification: BrowserVerificationCoordinator;
+  projectMutationLock: ProjectMutationLock;
   projectService: ProjectService;
   validationEvidence: ValidationEvidenceService;
   conversationService: ConversationService;
@@ -232,6 +236,7 @@ export async function createRuntime(
     stepEvents,
     sql,
     transactionRunner,
+    projectMutationLock,
   } = await createMetadataStores(config, blobStore);
   const checkReadiness = async (): Promise<void> => {
     if (sql) await sql`select 1`;
@@ -453,6 +458,7 @@ export async function createRuntime(
     qualityObservationService,
     validationCampaign,
     readCurrentValidationPreflight,
+    projectMutationLock,
   );
   if (config.persistenceMode === 'file') {
     await projectService.recoverQueuedProjects();
@@ -493,6 +499,7 @@ export async function createRuntime(
     ids,
     conversationService,
     workspaces,
+    projectMutationLock,
   );
   const worker = new WorkerLoop(queue, orchestrator, operationRunner, {
     workerId: config.workerId,
@@ -543,6 +550,7 @@ export async function createRuntime(
     ...(runValidationCampaignPreflight
       ? { runValidationPreflight: runValidationCampaignPreflight }
       : {}),
+    projectMutationLock,
     projects,
     runs,
     stepRuns,
@@ -626,6 +634,7 @@ async function createMetadataStores(
   stepEvents: StepEventRepository;
   sql?: PostgresDb;
   transactionRunner: TransactionRunner;
+  projectMutationLock: ProjectMutationLock;
 }> {
   if (config.persistenceMode === 'file') {
     return {
@@ -640,6 +649,7 @@ async function createMetadataStores(
       events: new FileEventStore(config.dataDir),
       stepEvents: new FileStepEventRepository(config.dataDir),
       transactionRunner: new NoopTransactionRunner(),
+      projectMutationLock: new FileProjectMutationLock(config.dataDir),
     };
   }
   // loadRuntimeConfig already enforces DATABASE_URL when PERSISTENCE_MODE=postgres; this guards
@@ -649,6 +659,14 @@ async function createMetadataStores(
   }
   const sql = createPostgresClient(config.databaseUrl);
   await assertSchemaCurrent(sql);
+  // The lock holds its transaction — and so its connection — for the whole
+  // critical section, and the section itself does I/O through `sql`; sharing
+  // one pool deadlocks as soon as concurrent sections reach `max`, with every
+  // connection held by a section waiting for a connection. The locks get their
+  // own pool so the critical sections always have `sql` to make progress with.
+  // `PostgresPreviewLifecycleLock` still runs on `sql` and carries the same
+  // hazard — tracked in #691, out of scope here.
+  const lockSql = createPostgresClient(config.databaseUrl);
   return {
     projects: new PostgresProjectRepository(sql),
     runs: new PostgresWorkflowRunRepository(sql),
@@ -662,6 +680,7 @@ async function createMetadataStores(
     stepEvents: new PostgresStepEventRepository(sql),
     sql,
     transactionRunner: new PostgresTransactionRunner(sql),
+    projectMutationLock: new PostgresProjectMutationLock(lockSql),
   };
 }
 

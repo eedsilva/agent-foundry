@@ -1,4 +1,5 @@
 import type {
+  ApplicationEnvelopeRejection,
   ApprovalDecision,
   EnvironmentLifecycleOperation,
   MigrationPreview,
@@ -24,6 +25,36 @@ export class StandardPrdRejectedError extends Error {
 
   constructor(readonly issues: StandardPrdIssue[]) {
     super(issues[0]?.message ?? 'PRD does not conform to PRD Standard 1.');
+  }
+}
+
+/**
+ * A PRD declared a capability the Supported Application Envelope v1 excludes
+ * (#602). Rejection is deliberate fail-early: no project, revision, or queue
+ * entry is created. Carries every rejection so the caller can name the
+ * unsupported capability and its documented alternative.
+ */
+export class ApplicationEnvelopeRejectedError extends Error {
+  override readonly name = 'ApplicationEnvelopeRejectedError';
+
+  constructor(readonly rejections: ApplicationEnvelopeRejection[]) {
+    super(rejections[0]?.message ?? 'PRD is outside Supported Application Envelope v1.');
+  }
+}
+
+/**
+ * A PRD approval referenced a hash that is not the current PRD Revision's
+ * identity (#602): the operator approved a document that has since changed
+ * (or never existed). Distinct from ValidationError so the API can answer 409.
+ */
+export class PrdApprovalConflictError extends Error {
+  override readonly name = 'PrdApprovalConflictError';
+
+  constructor(
+    readonly expectedIdentity: string,
+    readonly currentIdentity: string,
+  ) {
+    super('PRD approval must reference the current PRD Revision identity.');
   }
 }
 

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { validateStandardPrd } from './standard-prd.js';
+import { extractEnvelopeRequirements, validateStandardPrd } from './standard-prd.js';
 
 const normativeTemplate = readFileSync(
   new URL('../../../docs/PRD_STANDARD.md', import.meta.url),
@@ -301,5 +301,107 @@ describe('validateStandardPrd', () => {
         expect.objectContaining({ code: 'missing-identifier', path: 'sections.6' }),
       ]),
     });
+  });
+});
+
+describe('extractEnvelopeRequirements', () => {
+  it('attaches backticked capability markers to the covering FR/BR/NFR identifier', () => {
+    const source = prd({
+      6: [
+        '- **FR-001**: The owner can create a task. `capability:user-owned-crud`',
+        '- **FR-002**: The owner uploads an attachment.',
+        '  Stored per task. `capability:file-upload`',
+      ].join('\n'),
+      8: '- **BR-001**: A task belongs to exactly one owner. `capability:ownership`',
+    });
+
+    expect(extractEnvelopeRequirements(source)).toEqual([
+      { id: 'FR-001', capability: 'user-owned-crud' },
+      { id: 'FR-002', capability: 'file-upload' },
+      { id: 'BR-001', capability: 'ownership' },
+      { id: 'NFR-001', capability: '' },
+    ]);
+  });
+
+  it('yields an unattributed requirement for a marker outside any identifier definition', () => {
+    const source = prd({
+      3: `${section(3).content}\n- Task tracking \`capability:filtering\``,
+    });
+
+    expect(extractEnvelopeRequirements(source)).toEqual([
+      { id: '', capability: 'filtering' },
+      { id: 'FR-001', capability: '' },
+      { id: 'BR-001', capability: '' },
+      { id: 'NFR-001', capability: '' },
+    ]);
+  });
+
+  it('resets attribution at section boundaries and ignores fenced code', () => {
+    const source = prd({
+      6: '- **FR-001**: Create task.\n```\n`capability:payments`\n```',
+      7: `${section(7).content}\n- Notes \`capability:domain-entity\``,
+    });
+
+    expect(extractEnvelopeRequirements(source)).toEqual([
+      { id: 'FR-001', capability: '' },
+      { id: '', capability: 'domain-entity' },
+      { id: 'BR-001', capability: '' },
+      { id: 'NFR-001', capability: '' },
+    ]);
+  });
+
+  it('emits every unmarked FR/BR/NFR item with an empty capability', () => {
+    expect(extractEnvelopeRequirements(prd())).toEqual([
+      { id: 'FR-001', capability: '' },
+      { id: 'BR-001', capability: '' },
+      { id: 'NFR-001', capability: '' },
+    ]);
+  });
+
+  it('never lets a loose paragraph inherit the previous requirement identifier', () => {
+    const source = prd({
+      6: [
+        '- **FR-001**: Create task. `capability:user-owned-crud`',
+        '',
+        'A loose paragraph. `capability:filtering`',
+      ].join('\n'),
+    });
+
+    expect(extractEnvelopeRequirements(source)).toContainEqual({
+      id: '',
+      capability: 'filtering',
+    });
+    expect(extractEnvelopeRequirements(source)).not.toContainEqual({
+      id: 'FR-001',
+      capability: 'filtering',
+    });
+  });
+
+  it('emits markers with invalid case or syntax verbatim instead of dropping them', () => {
+    const source = prd({
+      6: [
+        '- **FR-001**: Upload. `capability:File-Upload`',
+        '- **FR-002**: Sync. `CAPABILITY:realtime`',
+      ].join('\n'),
+    });
+
+    const extracted = extractEnvelopeRequirements(source);
+    expect(extracted).toContainEqual({ id: 'FR-001', capability: 'File-Upload' });
+    expect(extracted).toContainEqual({ id: 'FR-002', capability: 'CAPABILITY:realtime' });
+  });
+
+  it('does not let an AC marker satisfy the classification of the requirement it verifies', () => {
+    const source = prd({
+      11: [
+        '- **AC-001** — Verifies: FR-001, BR-001, NFR-001 `capability:user-owned-crud`',
+        '  - Given an authenticated owner',
+        '  - When the owner creates a task',
+        '  - Then the task appears in the owner task list.',
+      ].join('\n'),
+    });
+
+    const extracted = extractEnvelopeRequirements(source);
+    expect(extracted).toContainEqual({ id: 'AC-001', capability: 'user-owned-crud' });
+    expect(extracted).toContainEqual({ id: 'FR-001', capability: '' });
   });
 });

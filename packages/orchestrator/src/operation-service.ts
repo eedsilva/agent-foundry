@@ -3,6 +3,7 @@ import type {
   DecideChangeRequestRequest,
   Message,
   Operation,
+  ArtifactReference,
   StartOperationRequest,
   VisualEdit,
   WorkflowRun,
@@ -19,6 +20,7 @@ import {
   type ConversationRepository,
   type IdGenerator,
   type JobQueue,
+  type ProjectMutationLock,
   type WorkspaceManager,
   type WorkflowRunRepository,
 } from '@agent-foundry/domain';
@@ -26,6 +28,7 @@ import { CONVERSATION_WORKFLOW_ID } from './conversation-step-config.js';
 import { classifyMessage } from './message-classifier.js';
 import type { ConversationService } from './conversation-service.js';
 import { sha256 } from './idempotency.js';
+import { currentPrdApproval, PRD_GATED_OPERATION_KINDS } from './prd-approval.js';
 
 export class OperationService {
   constructor(
@@ -37,6 +40,7 @@ export class OperationService {
     private readonly ids: IdGenerator,
     private readonly conversationService: ConversationService,
     private readonly workspaces: Pick<WorkspaceManager, 'workspacePath'>,
+    private readonly projectMutationLock: ProjectMutationLock,
   ) {}
 
   async promoteVisualEdit(
@@ -113,22 +117,31 @@ export class OperationService {
     }
 
     if (input.kind === 'plan' || input.kind === 'build' || input.kind === 'visual-edit') {
-      const queued = await this.createQueuedOperation(projectId, changeRequest.messageId, {
-        kind: input.kind,
-        ...(input.kind === 'build'
+      // Narrowing of `input` does not survive into the closure below.
+      const kind = input.kind;
+      const buildFields =
+        input.kind === 'build'
           ? { planOperationId: input.planOperationId, directExecution: input.directExecution }
-          : {}),
-        changeRequestId: changeRequest.id,
+          : {};
+      // The confirmation write stays inside the section so the job is still
+      // published after it: ConversationOperationRunner reads and rewrites the
+      // change request, and enqueueing before the confirm would race it.
+      return this.projectMutationLock.runExclusive(projectId, async () => {
+        const queued = await this.createQueuedOperationLocked(projectId, changeRequest.messageId, {
+          kind,
+          ...buildFields,
+          changeRequestId: changeRequest.id,
+        });
+        const confirmed = await this.conversations.updateChangeRequest({
+          ...changeRequest,
+          status: 'confirmed',
+          confirmedKind: kind,
+          operationId: queued.operation.id,
+          decidedAt: this.clock.now().toISOString(),
+        });
+        await this.enqueueOperation(queued);
+        return { changeRequest: confirmed, operation: queued.operation };
       });
-      const confirmed = await this.conversations.updateChangeRequest({
-        ...changeRequest,
-        status: 'confirmed',
-        confirmedKind: input.kind,
-        operationId: queued.operation.id,
-        decidedAt: this.clock.now().toISOString(),
-      });
-      await this.enqueueOperation(queued);
-      return { changeRequest: confirmed, operation: queued.operation };
     }
 
     const operation = await this.conversationService.createOperation(
@@ -162,12 +175,22 @@ export class OperationService {
       | StartOperationRequest
       | { kind: 'visual-edit'; visualEdit?: VisualEdit; changeRequestId?: string },
   ): Promise<Operation> {
-    const queued = await this.createQueuedOperation(projectId, messageId, input);
-    await this.enqueueOperation(queued);
-    return queued.operation;
+    return this.projectMutationLock.runExclusive(projectId, async () => {
+      const queued = await this.createQueuedOperationLocked(projectId, messageId, input);
+      await this.enqueueOperation(queued);
+      return queued.operation;
+    });
   }
 
-  private async createQueuedOperation(
+  /**
+   * #602 clarification: the approval check, the queued run/operation
+   * persistence and the job publication are one atomic section under the
+   * project's mutation lock — the same lock approvePrd/revisePrd hold.
+   * Without it, retry({prompt}) can land a new PRD Revision between check and
+   * publish, queueing an operation whose approval is already obsolete.
+   * Callers must already hold the lock (it is not reentrant).
+   */
+  private async createQueuedOperationLocked(
     projectId: string,
     messageId: string,
     input:
@@ -180,6 +203,20 @@ export class OperationService {
     if (!message) throw new NotFoundError(`Message ${messageId} not found`);
     if (input.kind === 'build' && !input.planOperationId && !input.directExecution) {
       throw new ValidationError('Build requires an approved planOperationId or directExecution');
+    }
+    let prdReference: ArtifactReference | undefined;
+    if (PRD_GATED_OPERATION_KINDS.has(input.kind)) {
+      const approval = await currentPrdApproval(this.artifacts, projectId);
+      if (!approval.approved || !approval.prd) {
+        throw new ValidationError(
+          `A ${input.kind} operation invokes Task Agents and requires an approval of the current PRD Revision; approve the PRD first.`,
+        );
+      }
+      prdReference = {
+        name: 'prd',
+        revision: approval.prd.metadata.revision,
+        sha256: approval.prd.metadata.sha256,
+      };
     }
 
     let artifactReferences: Operation['artifactReferences'] = [];
@@ -205,6 +242,7 @@ export class OperationService {
       version: 1,
       createdAt: now,
       updatedAt: now,
+      ...(prdReference ? { prd: prdReference } : {}),
     };
     await this.runs.create(run);
 

@@ -74,6 +74,7 @@ import {
   type ModelOverrideRepository,
   type ModelRouter,
   type PolicyRepository,
+  type ProjectMutationLock,
   type ProjectRepository,
   type RouterDecisionLogRepository,
   type SecretStore,
@@ -88,6 +89,7 @@ import {
   type WorkflowRepository,
   type WorkflowRunRepository,
   type WorkspaceManager,
+  prdIdentity,
 } from '@agent-foundry/domain';
 import { ProjectService } from '../project-service.js';
 import type { BrowserVerificationCoordinator } from '../browser-verification-coordinator.js';
@@ -1355,6 +1357,8 @@ export function makeHarness(
     versions?: ProjectVersionService;
     agentOutput?: (request: AgentExecutionRequest) => AgentExecutionResult['output'] | undefined;
     systemPrompts?: SystemPromptRepository;
+    /** Shared with the test so it can play a lock-abiding PRD writer (#602). */
+    lock?: ProjectMutationLock;
   } = {},
 ) {
   const stores = existing ?? makeStores();
@@ -1607,6 +1611,7 @@ export function makeHarness(
     undefined,
     opts.validationCampaign,
     opts.validationPreflight,
+    opts.lock,
   );
   return {
     ...stores,
@@ -1657,6 +1662,29 @@ export interface HasExecuteStep {
 
 export async function seedRun(harness: Harness): Promise<void> {
   const now = harness.clock.now().toISOString();
+  const prd = await harness.artifacts.put({
+    projectId: 'project-1',
+    name: 'prd',
+    content: 'approved test PRD',
+    contentType: 'text/markdown',
+    createdBy: 'test',
+    idempotencyKey: createHash('sha256').update('seeded-prd').digest('hex'),
+  });
+  await harness.artifacts.put({
+    projectId: 'project-1',
+    name: 'prd-approval',
+    content: {
+      schemaVersion: '1',
+      identity: prdIdentity('approved test PRD'),
+      prdRevision: prd.metadata.revision,
+    },
+    createdBy: 'test',
+    // Mirrors approvePrd's canonical key — currentPrdApproval recomputes it to
+    // prove the persisted decision fields still match their metadata (#602).
+    idempotencyKey: createHash('sha256')
+      .update(`${prdIdentity('approved test PRD')}:${prd.metadata.revision}`)
+      .digest('hex'),
+  });
   await harness.projects.create({
     id: 'project-1',
     name: 'Run controls fixture',
@@ -1676,6 +1704,11 @@ export async function seedRun(harness: Harness): Promise<void> {
     version: 1,
     createdAt: now,
     updatedAt: now,
+    prd: {
+      name: 'prd',
+      revision: prd.metadata.revision,
+      sha256: prd.metadata.sha256,
+    },
   });
 }
 
@@ -1712,4 +1745,14 @@ export function liveStepRun(harness: Harness, stepId: string): StepRun {
   const live = harness.stepRuns.byStepId('run-1', stepId).filter((step) => !step.invalidatedAt);
   assert.strictEqual(live.length, 1);
   return live[0]!;
+}
+
+/** Approves the project's current PRD Revision by its stored identity (#602). */
+export async function approveCurrentPrd(harness: Harness, projectId: string) {
+  const stored = await harness.artifacts.getLatest(projectId, 'prd');
+  if (!stored) throw new Error(`Project ${projectId} has no prd artifact to approve.`);
+  return harness.service.approvePrd(projectId, {
+    identity: prdIdentity(String(stored.content)),
+    actor: { kind: 'user', id: 'operator' },
+  });
 }

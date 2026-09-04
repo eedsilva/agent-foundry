@@ -1,16 +1,32 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   ValidationCampaignPreviewSchema,
+  WorkflowDefinitionSchema,
   type AppEnvironment,
+  type ExecutableStep,
+  type ForEachTaskStep,
   type PreviewSession,
   type PreviewWorkspaceRef,
+  type WorkflowDefinition,
 } from '@agent-foundry/contracts';
 import {
   EnvironmentOperationError,
   StandardPrdRejectedError,
+  prdIdentity,
   type GeneratedProjectRuntime,
 } from '@agent-foundry/domain';
-import { authenticationError, makeHarness, makeStores, seedRun } from './testing/harness.js';
+import { VALID_STANDARD_PRD } from './testing/standard-prd-fixture.js';
+import { InProcessProjectMutationLock } from './project-service.js';
+import {
+  approveCurrentPrd,
+  authenticationError,
+  makeHarness,
+  makeStores,
+  seedRun,
+  type HasExecuteStep,
+} from './testing/harness.js';
+import type { TaskGraphRunner } from './task-graph-runner.js';
 import { WorkerLoop } from './worker-loop.js';
 
 const ENVIRONMENT: AppEnvironment = {
@@ -48,6 +64,7 @@ describe('ProjectService.retry', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/operator/projects/issue-radar',
     });
+    await approveCurrentPrd(harness, created.id);
 
     const retried = await harness.service.retry(created.id);
 
@@ -117,6 +134,7 @@ describe('ProjectService.create', () => {
       projectDirectory: '/operator/projects/issue-radar',
     });
     expect(harness.workspaces.workspacePath(project.id)).toBe('/operator/projects/issue-radar');
+    await approveCurrentPrd(harness, project.id);
     expect(harness.enqueued).toHaveLength(1);
   });
 
@@ -222,25 +240,24 @@ describe('ProjectService.create', () => {
 
   it('does not publish a job when recording queued state fails', async () => {
     const harness = makeHarness();
+    const project = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
     const append = harness.events.append.bind(harness.events);
     vi.spyOn(harness.events, 'append').mockImplementation(async (event) => {
       if (event.type === 'project.queued') throw new Error('event store unavailable');
       return append(event);
     });
 
-    await expect(
-      harness.service.create({
-        name: 'Issue Radar',
-        prd: 'Build it',
-        workflowId: harness.workflow.id,
-        projectDirectory: '/operator/projects/issue-radar',
-      }),
-    ).rejects.toThrow('event store unavailable');
+    await expect(approveCurrentPrd(harness, project.id)).rejects.toThrow('event store unavailable');
 
     expect(harness.enqueued).toHaveLength(0);
     expect(harness.executor.requests).toHaveLength(0);
-    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
-    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'awaiting_approval' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'awaiting_approval' });
   });
 
   it('re-publishes a deterministic job for a queued run after restart', async () => {
@@ -251,6 +268,7 @@ describe('ProjectService.create', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/operator/projects/issue-radar',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     harness.enqueued.splice(0);
 
     await harness.service.recoverQueuedProjects();
@@ -260,29 +278,31 @@ describe('ProjectService.create', () => {
     ]);
   });
 
-  it('keeps initialization failure terminal when job publication fails', async () => {
+  it('recovers queue publication after the approval enqueue fails in file mode', async () => {
     const harness = makeHarness();
+    await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
     harness.failNextEnqueue(new Error('queue unavailable'));
 
-    await expect(
-      harness.service.create({
-        name: 'Issue Radar',
-        prd: 'Build it',
-        workflowId: harness.workflow.id,
-        projectDirectory: '/operator/projects/issue-radar',
-      }),
-    ).rejects.toThrow('queue unavailable');
+    await expect(approveCurrentPrd(harness, 'id-0001')).rejects.toThrow('queue unavailable');
 
+    // File mode persists the approved queued state before the queue write, so
+    // restart recovery re-publishes the deterministic job (#602 keeps the
+    // pre-approval recovery contract intact).
     expect(harness.enqueued).toHaveLength(0);
     expect(harness.executor.requests).toHaveLength(0);
-    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
-    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
+    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'queued' });
+    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'queued' });
 
     await harness.service.recoverQueuedProjects();
 
-    expect(await harness.projects.get('id-0001')).toMatchObject({ status: 'failed' });
-    expect(await harness.runs.get('id-0002')).toMatchObject({ status: 'failed' });
-    expect(harness.enqueued).toHaveLength(0);
+    expect(harness.enqueued).toEqual([
+      expect.objectContaining({ id: 'run-project-id-0002', runId: 'id-0002' }),
+    ]);
   });
 
   it('re-publishes a queued run despite a historical execution failure event', async () => {
@@ -293,6 +313,7 @@ describe('ProjectService.create', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/operator/projects/issue-radar',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     harness.enqueued.splice(0);
     await harness.events.append({
       id: 'normal-failure',
@@ -564,6 +585,7 @@ describe('ProjectService.create', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
   });
 
   it('defers generated-runtime initialization until a worker claims the durable project job', async () => {
@@ -602,6 +624,7 @@ describe('ProjectService.create', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
 
     expect(initialize).not.toHaveBeenCalled();
     expect(harness.enqueued).toEqual([
@@ -669,6 +692,7 @@ describe('ProjectService.create', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     harness.queueForWorker(harness.enqueued[0]!);
 
     const worker = new WorkerLoop(harness.queue, harness.orchestrator, {} as never, {
@@ -784,6 +808,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     expect(start).toHaveBeenCalledWith({
@@ -842,6 +867,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     expect(await stores.projects.get('id-0001')).toMatchObject({
@@ -889,6 +915,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     expect(await stores.runs.get('id-0002')).toMatchObject({
@@ -932,6 +959,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     const event = (await harness.events.list('id-0001')).find(
@@ -961,6 +989,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     const event = (await harness.events.list('id-0001')).find(
@@ -1014,6 +1043,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     // The scaffold's middleware reads the Supabase env that initialize()
@@ -1048,6 +1078,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     expect(start).not.toHaveBeenCalled();
@@ -1078,6 +1109,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     await runWorker(harness);
 
     expect(start).toHaveBeenCalledWith(
@@ -1135,6 +1167,7 @@ describe('ProjectService.create workspace boot', () => {
       workflowId: harness.workflow.id,
       projectDirectory: '/fake/project',
     });
+    await approveCurrentPrd(harness, 'id-0001');
     const worker = new WorkerLoop(harness.queue, harness.orchestrator, {} as never, {
       workerId: 'worker-1',
       pollIntervalMs: 1_000,
@@ -1199,5 +1232,1032 @@ describe('ProjectService.create scaffold application', () => {
 
     expect(harness.workspaces.lastScaffoldFiles).toEqual([]);
     expect(await harness.artifacts.getLatest('id-0001', 'scaffold-manifest')).toBeNull();
+  });
+});
+
+describe('PRD approval gate (#602)', () => {
+  const actor = { kind: 'user' as const, id: 'operator' };
+  const input = (harness: ReturnType<typeof makeHarness>) => ({
+    name: 'Issue Radar',
+    prd: 'Build it',
+    workflowId: harness.workflow.id,
+    projectDirectory: '/operator/projects/issue-radar',
+  });
+
+  function standardPrd(fr: string): string {
+    return VALID_STANDARD_PRD.replace(
+      '- **FR-001**: The owner can create a task. `capability:user-owned-crud`',
+      `- **FR-001**: ${fr}`,
+    );
+  }
+
+  it('creates the project awaiting approval without queueing', async () => {
+    const harness = makeHarness();
+
+    const project = await harness.service.create(input(harness));
+
+    expect(harness.enqueued).toEqual([]);
+    expect(project.status).toBe('awaiting_approval');
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('awaiting_approval');
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))?.metadata.revision).toBe(1);
+  });
+
+  it('queues exactly once when the operator approves the exact revision identity', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    const identity = prdIdentity('Build it');
+
+    const approved = await harness.service.approvePrd(project.id, { identity, actor });
+
+    expect(approved.run.status).toBe('queued');
+    expect(approved.project.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(1);
+    expect((await harness.artifacts.getLatest(project.id, 'prd-approval'))?.content).toMatchObject({
+      identity,
+    });
+    expect(harness.events.types()).toContain('prd.approved');
+
+    const replay = await harness.service.approvePrd(project.id, { identity, actor });
+    expect(replay.run.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(1);
+  });
+
+  it('refuses approval before persistence when stored PRD markdown becomes structured content', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create({
+      ...input(harness),
+      prd: '[object Object]',
+    });
+    harness.artifacts.named('prd')[0]!.content = {};
+
+    await expect(
+      harness.service.approvePrd(project.id, {
+        identity: prdIdentity('[object Object]'),
+        actor,
+      }),
+    ).rejects.toThrow(/text content/i);
+
+    expect(await harness.artifacts.getLatest(project.id, 'prd-approval')).toBeNull();
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('awaiting_approval');
+  });
+
+  it('refuses approval before persistence when stored PRD text no longer matches its digest', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    harness.artifacts.named('prd')[0]!.content = 'Tampered before approval';
+
+    await expect(
+      harness.service.approvePrd(project.id, {
+        identity: prdIdentity('Tampered before approval'),
+        actor,
+      }),
+    ).rejects.toThrow(/digest/i);
+
+    expect(await harness.artifacts.getLatest(project.id, 'prd-approval')).toBeNull();
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('awaiting_approval');
+  });
+
+  it('rejects an approval that references a stale or foreign hash', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    await expect(
+      harness.service.approvePrd(project.id, { identity: prdIdentity('something else'), actor }),
+    ).rejects.toMatchObject({ name: 'PrdApprovalConflictError' });
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('awaiting_approval');
+  });
+
+  it('invalidates the pending approval when the PRD changes and keeps the queue empty', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    const original = prdIdentity('Build it');
+
+    const revised = await harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+
+    expect(revised.revision).toBe(2);
+    expect(revised.identity).toBe(prdIdentity('Build it differently'));
+    const lineage = (await harness.events.list(project.id)).find(
+      (event) => event.type === 'prd.revised',
+    );
+    expect(lineage?.data).toMatchObject({ identity: revised.identity, parentIdentity: original });
+
+    await expect(
+      harness.service.approvePrd(project.id, { identity: original, actor }),
+    ).rejects.toMatchObject({ name: 'PrdApprovalConflictError' });
+    expect(harness.enqueued).toEqual([]);
+
+    await harness.service.approvePrd(project.id, { identity: revised.identity, actor });
+    expect(harness.enqueued).toHaveLength(1);
+  });
+
+  it('treats resubmission of identical content as the same revision', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    const first = await harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+    const second = await harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+
+    expect(second.revision).toBe(first.revision);
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))?.metadata.revision).toBe(2);
+    const revisedEvents = (await harness.events.list(project.id)).filter(
+      (event) => event.type === 'prd.revised',
+    );
+    expect(revisedEvents).toHaveLength(1);
+  });
+
+  it('keeps lineage events distinct when a later revision repeats an older content hash', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    await harness.service.revisePrd(project.id, { prd: 'Build B' });
+    await harness.service.revisePrd(project.id, { prd: 'Build it' });
+    await harness.service.revisePrd(project.id, { prd: 'Build B' });
+
+    const revisedEvents = (await harness.events.list(project.id)).filter(
+      (event) => event.type === 'prd.revised',
+    );
+    expect(revisedEvents.map((event) => event.data.revision)).toEqual([2, 3, 4]);
+  });
+
+  it('blocks revision once the run is queued', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await harness.service.approvePrd(project.id, { identity: prdIdentity('Build it'), actor });
+
+    await expect(harness.service.revisePrd(project.id, { prd: 'Too late' })).rejects.toMatchObject({
+      name: 'ValidationError',
+    });
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))?.metadata.revision).toBe(1);
+  });
+
+  it('fails early when a nextjs PRD declares an unsupported capability', async () => {
+    const base = makeHarness();
+    const harness = makeHarness({}, undefined, { workflow: { ...base.workflow, stack: 'nextjs' } });
+
+    await expect(
+      harness.service.create({
+        ...input(harness),
+        prd: standardPrd('The owner uploads an attachment. `capability:file-upload`'),
+      }),
+    ).rejects.toMatchObject({
+      name: 'ApplicationEnvelopeRejectedError',
+      rejections: [expect.objectContaining({ capability: 'file-upload', requirementId: 'FR-001' })],
+    });
+    expect(await harness.projects.list()).toEqual([]);
+    expect(harness.enqueued).toEqual([]);
+  });
+
+  it('turns an unknown capability into a persisted Blocking Question that blocks approval', async () => {
+    const base = makeHarness();
+    const harness = makeHarness({}, undefined, { workflow: { ...base.workflow, stack: 'nextjs' } });
+
+    const project = await harness.service.create({
+      ...input(harness),
+      prd: standardPrd('The owner syncs via quantum link. `capability:quantum-sync`'),
+    });
+
+    const questions = (await harness.events.list(project.id)).find(
+      (event) => event.type === 'prd.blocking_questions',
+    );
+    expect(questions?.data).toMatchObject({
+      questions: [expect.objectContaining({ capability: 'quantum-sync' })],
+    });
+
+    const stored = await harness.artifacts.getLatest(project.id, 'prd');
+    await expect(
+      harness.service.approvePrd(project.id, {
+        identity: prdIdentity(String(stored?.content)),
+        actor,
+      }),
+    ).rejects.toMatchObject({ name: 'ValidationError' });
+    expect(harness.enqueued).toEqual([]);
+  });
+
+  it('lets a fully supported nextjs PRD through the whole gate', async () => {
+    const base = makeHarness();
+    const harness = makeHarness({}, undefined, { workflow: { ...base.workflow, stack: 'nextjs' } });
+
+    const project = await harness.service.create({
+      ...input(harness),
+      prd: standardPrd('The owner can create a task. `capability:user-owned-crud`'),
+    });
+    const stored = await harness.artifacts.getLatest(project.id, 'prd');
+
+    await harness.service.approvePrd(project.id, {
+      identity: prdIdentity(String(stored?.content)),
+      actor,
+    });
+    expect(harness.enqueued).toHaveLength(1);
+  });
+
+  it('blocks a nextjs PRD whose FR, BR, or NFR item declares no capability', async () => {
+    const base = makeHarness();
+    for (const [line, replacement] of [
+      [
+        '- **FR-001**: The owner can create a task. `capability:user-owned-crud`',
+        '- **FR-001**: The owner can create a task.',
+      ],
+      [
+        '- **BR-001**: A task belongs to exactly one owner. `capability:ownership`',
+        '- **BR-001**: A task belongs to exactly one owner.',
+      ],
+      [
+        '- **NFR-001**: The task list is keyboard accessible. `capability:interface-language`',
+        '- **NFR-001**: The task list is keyboard accessible.',
+      ],
+    ] as const) {
+      const harness = makeHarness({}, undefined, {
+        workflow: { ...base.workflow, stack: 'nextjs' },
+      });
+      const project = await harness.service.create({
+        ...input(harness),
+        prd: VALID_STANDARD_PRD.replace(line, replacement),
+      });
+      const stored = await harness.artifacts.getLatest(project.id, 'prd');
+      await expect(
+        harness.service.approvePrd(project.id, {
+          identity: prdIdentity(String(stored?.content)),
+          actor,
+        }),
+      ).rejects.toMatchObject({ name: 'ValidationError' });
+      expect(harness.enqueued).toEqual([]);
+      const questions = (await harness.events.list(project.id)).find(
+        (event) => event.type === 'prd.blocking_questions',
+      );
+      expect(questions?.data).toMatchObject({
+        questions: [expect.objectContaining({ code: 'unclassified-requirement' })],
+      });
+    }
+  });
+
+  it('turns a capability marker with invalid case into a Blocking Question instead of dropping it', async () => {
+    const base = makeHarness();
+    const harness = makeHarness({}, undefined, { workflow: { ...base.workflow, stack: 'nextjs' } });
+
+    const project = await harness.service.create({
+      ...input(harness),
+      prd: standardPrd('The owner uploads an attachment. `capability:File-Upload`'),
+    });
+
+    const events = await harness.events.list(project.id);
+    const questions = events.find((event) => event.type === 'prd.blocking_questions');
+    expect(questions?.data).toMatchObject({
+      questions: [
+        expect.objectContaining({
+          code: 'invalid-capability-syntax',
+          requirementId: 'FR-001',
+          capability: 'File-Upload',
+        }),
+      ],
+    });
+    const stored = await harness.artifacts.getLatest(project.id, 'prd');
+    await expect(
+      harness.service.approvePrd(project.id, {
+        identity: prdIdentity(String(stored?.content)),
+        actor,
+      }),
+    ).rejects.toMatchObject({ name: 'ValidationError' });
+    expect(harness.enqueued).toEqual([]);
+  });
+
+  it('rejects a requirement mixing a supported and an unsupported capability', async () => {
+    const base = makeHarness();
+    const harness = makeHarness({}, undefined, { workflow: { ...base.workflow, stack: 'nextjs' } });
+
+    await expect(
+      harness.service.create({
+        ...input(harness),
+        prd: standardPrd(
+          'The owner attaches a file to a task. `capability:user-owned-crud` `capability:file-upload`',
+        ),
+      }),
+    ).rejects.toMatchObject({ name: 'ApplicationEnvelopeRejectedError' });
+  });
+
+  it('pins the approved revision on the run and persists a diff on revision', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    const revised = await harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+    const lineage = (await harness.events.list(project.id)).find(
+      (event) => event.type === 'prd.revised',
+    );
+    expect(lineage?.data).toMatchObject({
+      identity: revised.identity,
+      parentIdentity: prdIdentity('Build it'),
+      revision: 2,
+    });
+    expect(String((lineage?.data as { diff?: string }).diff)).toContain('-Build it');
+    expect(String((lineage?.data as { diff?: string }).diff)).toContain('+Build it differently');
+
+    const approved = await harness.service.approvePrd(project.id, {
+      identity: revised.identity,
+      actor,
+    });
+    expect(approved.run.prd).toMatchObject({ name: 'prd', revision: 2 });
+    expect((await harness.runs.get(approved.run.id))?.prd).toMatchObject({
+      name: 'prd',
+      revision: 2,
+    });
+  });
+
+  it('reconciles workspace and lineage when a revision replay follows a partial write', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    // Simulate a crash after the artifact write but before workspace/event
+    // writes: revision 2 exists, no prd.revised event, workspace stale.
+    await harness.artifacts.put({
+      projectId: project.id,
+      name: 'prd',
+      content: 'Build it differently',
+      contentType: 'text/markdown',
+      createdBy: 'user',
+      expectedRevision: 1,
+    });
+    expect(
+      (await harness.events.list(project.id)).filter((event) => event.type === 'prd.revised'),
+    ).toHaveLength(0);
+
+    const replay = await harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+
+    expect(replay.revision).toBe(2);
+    const revisedEvents = (await harness.events.list(project.id)).filter(
+      (event) => event.type === 'prd.revised',
+    );
+    expect(revisedEvents).toHaveLength(1);
+    expect(revisedEvents[0]?.data).toMatchObject({
+      identity: prdIdentity('Build it differently'),
+      parentIdentity: prdIdentity('Build it'),
+      revision: 2,
+    });
+
+    // Replaying again never duplicates the event or diff.
+    await harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+    expect(
+      (await harness.events.list(project.id)).filter((event) => event.type === 'prd.revised'),
+    ).toHaveLength(1);
+  });
+
+  it('converges concurrent identical approvals to one enqueue with both callers fulfilled', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    const identity = prdIdentity('Build it');
+
+    const results = await Promise.allSettled([
+      harness.service.approvePrd(project.id, { identity, actor }),
+      harness.service.approvePrd(project.id, { identity, actor }),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+    expect(harness.enqueued).toHaveLength(1);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('queued');
+  });
+
+  it('converges concurrent identical revisions with both callers fulfilled', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    const results = await Promise.allSettled([
+      harness.service.revisePrd(project.id, { prd: 'Build it differently' }),
+      harness.service.revisePrd(project.id, { prd: 'Build it differently' }),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))?.metadata.revision).toBe(2);
+    expect(
+      (await harness.events.list(project.id)).filter((event) => event.type === 'prd.revised'),
+    ).toHaveLength(1);
+  });
+
+  it('serializes approval behind a revision before reading or publishing a job', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    let releaseRevision!: () => void;
+    let revisionCasReached!: () => void;
+    const revisionPaused = new Promise<void>((resolve) => {
+      revisionCasReached = resolve;
+    });
+    const continueRevision = new Promise<void>((resolve) => {
+      releaseRevision = resolve;
+    });
+    harness.runs.onAfterUpdate = async (run) => {
+      if (run.status === 'awaiting_approval' && run.version === 3) {
+        revisionCasReached();
+        await continueRevision;
+      }
+    };
+
+    const revision = harness.service.revisePrd(project.id, { prd: 'Build it differently' });
+    await revisionPaused;
+    const approval = harness.service.approvePrd(project.id, {
+      identity: prdIdentity('Build it'),
+      actor,
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.enqueued).toEqual([]);
+    releaseRevision();
+    await expect(revision).resolves.toMatchObject({ revision: 2 });
+    await expect(approval).rejects.toMatchObject({ name: 'PrdApprovalConflictError' });
+    expect(harness.enqueued).toEqual([]);
+  });
+});
+
+describe('PRD approval gate (#602) — enqueue surfaces', () => {
+  const input = (harness: ReturnType<typeof makeHarness>) => ({
+    name: 'Issue Radar',
+    prd: 'Build it',
+    workflowId: harness.workflow.id,
+    projectDirectory: '/operator/projects/issue-radar',
+  });
+
+  it('refuses to retry a project that was never approved and enqueues nothing', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    await expect(harness.service.retry(project.id)).rejects.toMatchObject({
+      name: 'ValidationError',
+    });
+    expect(harness.enqueued).toEqual([]);
+    expect(await harness.artifacts.getLatest(project.id, 'prd-approval')).toBeNull();
+  });
+
+  it('routes retry({prompt}) through a real PRD revision while awaiting approval, without enqueueing', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+
+    const retried = await harness.service.retry(project.id, { prompt: 'Build it differently' });
+
+    expect(harness.enqueued).toEqual([]);
+    expect(retried.status).toBe('awaiting_approval');
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))?.metadata.revision).toBe(2);
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))?.content).toBe(
+      'Build it differently',
+    );
+  });
+
+  it('refuses to retry while Blocking Questions are unresolved and enqueues nothing', async () => {
+    const base = makeHarness();
+    const harness = makeHarness({}, undefined, { workflow: { ...base.workflow, stack: 'nextjs' } });
+    const project = await harness.service.create({
+      ...input(harness),
+      prd: VALID_STANDARD_PRD.replace(
+        '- **FR-001**: The owner can create a task. `capability:user-owned-crud`',
+        '- **FR-001**: The owner syncs via quantum link. `capability:quantum-sync`',
+      ),
+    });
+
+    await expect(harness.service.retry(project.id)).rejects.toMatchObject({
+      name: 'ValidationError',
+    });
+    expect(harness.enqueued).toEqual([]);
+  });
+
+  it('retries a failed run with a current approval and pins the approved revision', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    expect(harness.enqueued).toHaveLength(1);
+    const firstRun = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update(
+      { ...firstRun, status: 'failed', error: { name: 'ExecutionError', message: 'boom' } },
+      firstRun.version,
+    );
+    await harness.projects.update(
+      { ...(await harness.projects.get(project.id))!, status: 'failed', error: 'boom' },
+      (await harness.projects.get(project.id))!.version,
+    );
+
+    const retried = await harness.service.retry(project.id);
+
+    expect(retried.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(2);
+    const retriedRun = await harness.runs.get(retried.currentRunId!);
+    expect(retriedRun?.prd).toMatchObject({ name: 'prd', revision: 1 });
+  });
+
+  it('reopens approval instead of enqueueing when a failed run has no current approval', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    const firstRun = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update(
+      { ...firstRun, status: 'failed', error: { name: 'ExecutionError', message: 'boom' } },
+      firstRun.version,
+    );
+    await harness.projects.update(
+      { ...(await harness.projects.get(project.id))!, status: 'failed', error: 'boom' },
+      (await harness.projects.get(project.id))!.version,
+    );
+
+    const retried = await harness.service.retry(project.id, { prompt: 'Build it differently' });
+
+    expect(retried.status).toBe('awaiting_approval');
+    expect(harness.enqueued).toHaveLength(1); // only the original approval's job
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))?.metadata.revision).toBe(2);
+    const events = await harness.events.list(project.id);
+    expect(events.some((event) => event.type === 'prd.approval_reopened')).toBe(true);
+  });
+
+  it('holds the project lock across retry approval check and queued-run persistence', async () => {
+    const lock = new InProcessProjectMutationLock();
+    const harness = makeHarness({}, undefined, { lock });
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    const firstRun = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update(
+      { ...firstRun, status: 'failed', error: { name: 'ExecutionError', message: 'boom' } },
+      firstRun.version,
+    );
+    await harness.projects.update(
+      { ...(await harness.projects.get(project.id))!, status: 'failed', error: 'boom' },
+      (await harness.projects.get(project.id))!.version,
+    );
+
+    const order: string[] = [];
+    let lockedRevision: Promise<void> | undefined;
+    const originalGetLatest = harness.artifacts.getLatest.bind(harness.artifacts);
+    const originalPut = harness.artifacts.put.bind(harness.artifacts);
+    harness.artifacts.getLatest = async (artifactProjectId, name) => {
+      const artifact = await originalGetLatest(artifactProjectId, name);
+      if (name === 'prd-approval' && lockedRevision === undefined) {
+        // A lock-abiding PRD writer (what revisePrd is) arrives mid-check…
+        lockedRevision = lock.runExclusive(project.id, async () => {
+          await originalPut({
+            projectId: project.id,
+            name: 'prd',
+            content: 'revised prd',
+            contentType: 'text/markdown',
+            createdBy: 'user',
+          });
+          order.push('prd-revised');
+        });
+        // …and this yield would let it land between check and persistence
+        // if retry's queued-run section did not hold the same lock.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      return artifact;
+    };
+    const originalCreate = harness.runs.create.bind(harness.runs);
+    harness.runs.create = (run) => {
+      order.push('run-persisted');
+      return originalCreate(run);
+    };
+
+    const retried = await harness.service.retry(project.id);
+    await lockedRevision;
+
+    // #602 clarification: nothing may be persisted as queued once its approval
+    // is obsolete — the run must land before the revision writer gets in.
+    expect(order).toEqual(['run-persisted', 'prd-revised']);
+    expect(retried.status).toBe('queued');
+    expect((await harness.runs.get(retried.currentRunId!))!.prd).toMatchObject({
+      name: 'prd',
+      revision: 1,
+    });
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))!.metadata.revision).toBe(2);
+  });
+
+  it('keeps retry({prompt}) atomic against a concurrent approval of the PRD it replaces', async () => {
+    const lock = new InProcessProjectMutationLock();
+    const harness = makeHarness({}, undefined, { lock });
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    const staleIdentity = prdIdentity(
+      String((await harness.artifacts.getLatest(project.id, 'prd'))!.content),
+    );
+    const enqueuedBefore = harness.enqueued.length;
+    const firstRun = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update(
+      { ...firstRun, status: 'failed', error: { name: 'ExecutionError', message: 'boom' } },
+      firstRun.version,
+    );
+    await harness.projects.update(
+      { ...(await harness.projects.get(project.id))!, status: 'failed', error: 'boom' },
+      (await harness.projects.get(project.id))!.version,
+    );
+
+    const order: string[] = [];
+    let approval: Promise<unknown> | undefined;
+    const originalPut = harness.artifacts.put.bind(harness.artifacts);
+    harness.artifacts.put = async (artifactInput) => {
+      const stored = await originalPut(artifactInput);
+      if (artifactInput.name === 'prd') order.push('prd-revised');
+      return stored;
+    };
+    const originalGetLatest = harness.artifacts.getLatest.bind(harness.artifacts);
+    harness.artifacts.getLatest = async (artifactProjectId, name) => {
+      const artifact = await originalGetLatest(artifactProjectId, name);
+      if (name === 'prd-approval' && approval === undefined) {
+        // An approval of the revision the caller is replacing arrives mid-retry.
+        // It obeys the lock, so it may only land after the whole retry section.
+        approval = harness.service
+          .approvePrd(project.id, {
+            identity: staleIdentity,
+            actor: { kind: 'user', id: 'operator' },
+          })
+          .then(
+            () => order.push('approved'),
+            (error: Error) => order.push(`approve-rejected:${error.name}`),
+          );
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      return artifact;
+    };
+
+    const retried = await harness.service.retry(project.id, { prompt: 'Build it differently' });
+    await approval;
+
+    // #602: the revision has to land before the stale approval is even
+    // evaluated, and the replaced PRD must never reach the queue.
+    expect(order).toEqual(['prd-revised', 'approve-rejected:PrdApprovalConflictError']);
+    expect(retried.status).toBe('awaiting_approval');
+    expect((await harness.artifacts.getLatest(project.id, 'prd'))!.metadata.revision).toBe(2);
+    expect(harness.enqueued).toHaveLength(enqueuedBefore);
+  });
+
+  it('executes steps against the pinned approved revision even after a newer revision lands', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    const run = (await harness.runs.get(project.currentRunId!))!;
+    expect(run.prd).toMatchObject({ name: 'prd', revision: 1 });
+    // A newer revision lands after approval (the race the pin closes): the
+    // step below must still read revision 1, never 'latest'.
+    await harness.artifacts.put({
+      projectId: project.id,
+      name: 'prd',
+      content: 'Unapproved newer revision',
+      contentType: 'text/markdown',
+      createdBy: 'user',
+      expectedRevision: 1,
+    });
+    await harness.runs.update({ ...run, status: 'running' }, run.version);
+
+    await (harness.orchestrator as unknown as HasExecuteStep).executeStep(
+      (await harness.projects.get(project.id))!,
+      harness.workflow,
+      {
+        ...(harness.workflow.nodes[0] as unknown as ExecutableStep),
+        id: 'plan-from-prd',
+        inputArtifacts: ['prd'],
+      } as ExecutableStep,
+      run.id,
+      'plan',
+      new AbortController().signal,
+    );
+
+    const request = harness.executor.requests.find((entry) => entry.stepId === 'plan-from-prd');
+    expect(request?.inputArtifacts).toEqual([
+      expect.objectContaining({ name: 'prd', revision: 1 }),
+    ]);
+  });
+
+  it('pins for-each-task implement inputs to the approved revision, never latest', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    const run = (await harness.runs.get(project.currentRunId!))!;
+    expect(run.prd).toMatchObject({ name: 'prd', revision: 1 });
+    // The same race as above, through the other enqueue-to-execution path:
+    // for-each-task resolves its implement inputs before the step boundary,
+    // so an unapproved newer revision must not survive to the executor.
+    await harness.artifacts.put({
+      projectId: project.id,
+      name: 'prd',
+      content: 'Unapproved newer revision',
+      contentType: 'text/markdown',
+      createdBy: 'user',
+      expectedRevision: 1,
+    });
+    await harness.runs.update({ ...run, status: 'running' }, run.version);
+    await harness.artifacts.put({
+      projectId: project.id,
+      name: 'plan.current',
+      content: {
+        schemaVersion: '1',
+        status: 'completed',
+        summary: 'Planned.',
+        data: {
+          schemaVersion: '1',
+          goal: 'Ship it',
+          tasks: [
+            {
+              id: 'T1',
+              title: 'Do the thing',
+              dependsOn: [],
+              deliverables: ['src/index.ts'],
+              acceptanceCheck: 'The thing works',
+            },
+          ],
+        },
+      },
+      createdBy: 'agent',
+    });
+    const workflow: WorkflowDefinition = WorkflowDefinitionSchema.parse({
+      schemaVersion: '1',
+      id: 'task-graph-pin-v1',
+      name: 'Task graph pin fixture',
+      description: 'for-each-task implement inputs must load the pinned PRD revision.',
+      stack: 'node',
+      nodes: [
+        {
+          id: 'plan',
+          type: 'agent',
+          role: 'planner',
+          taskKind: 'planning',
+          title: 'Plan',
+          instructions: 'Plan tasks.',
+          outputArtifact: 'plan.current',
+        },
+        {
+          id: 'task-execution',
+          type: 'for-each-task',
+          title: 'Implement tasks',
+          taskGraphArtifact: 'plan.current',
+          implement: {
+            id: 'implement-task',
+            type: 'agent',
+            role: 'developer',
+            taskKind: 'implementation',
+            title: 'Implement task',
+            instructions: 'Implement the task.',
+            inputArtifacts: ['prd', 'plan.current'],
+            outputArtifact: 'implementation.report',
+            mutatesWorkspace: true,
+            maxAttempts: 1,
+          },
+        },
+      ],
+    });
+
+    await (
+      harness.orchestrator as unknown as { taskGraphRunner: TaskGraphRunner }
+    ).taskGraphRunner.run({
+      project: (await harness.projects.get(project.id))!,
+      workflow,
+      node: workflow.nodes[1] as ForEachTaskStep,
+      runId: run.id,
+      signal: new AbortController().signal,
+    });
+
+    const prdInputs = harness.executor.requests
+      .flatMap((request) => request.inputArtifacts ?? [])
+      .filter((reference) => reference.name === 'prd');
+    expect(prdInputs.length).toBeGreaterThan(0);
+    for (const reference of prdInputs) expect(reference).toMatchObject({ revision: 1 });
+  });
+
+  it('refuses an unapproved queued PRD run before provisioning or agent execution', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    const run = (await harness.runs.get(project.currentRunId!))!;
+    const queuedRun = await harness.runs.update({ ...run, status: 'queued' }, run.version);
+    const currentProject = (await harness.projects.get(project.id))!;
+    await harness.projects.update({ ...currentProject, status: 'queued' }, currentProject.version);
+
+    await expect(
+      harness.orchestrator.runProject(project.id, harness.workflow.id, queuedRun.id),
+    ).rejects.toThrow(/approved PRD pin|approval/i);
+
+    expect(harness.executor.requests).toEqual([]);
+  });
+
+  it('refuses a queued PRD run when stored content no longer matches the approved pin hash', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    const prd = harness.artifacts.named('prd')[0]!;
+    prd.content = 'tampered after approval';
+
+    await expect(
+      harness.orchestrator.runProject(project.id, harness.workflow.id, project.currentRunId!),
+    ).rejects.toThrow(/pinned reference/i);
+
+    expect(harness.executor.requests).toEqual([]);
+  });
+
+  it('refuses a queued PRD run when its approved markdown becomes structured content', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    harness.artifacts.named('prd')[0]!.content = { tampered: true };
+
+    await expect(
+      harness.orchestrator.runProject(project.id, harness.workflow.id, project.currentRunId!),
+    ).rejects.toThrow(/approved PRD pin/i);
+
+    expect(harness.executor.requests).toEqual([]);
+  });
+
+  it('refuses a queued run whose approved PRD pin names another artifact', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    const other = await harness.artifacts.put({
+      projectId: project.id,
+      name: 'other',
+      content: 'Build it',
+      contentType: 'text/markdown',
+      createdBy: 'user',
+    });
+    const run = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update(
+      {
+        ...run,
+        prd: {
+          name: other.metadata.name,
+          revision: other.metadata.revision,
+          sha256: other.metadata.sha256,
+        },
+      },
+      run.version,
+    );
+
+    await expect(
+      harness.orchestrator.runProject(project.id, harness.workflow.id, project.currentRunId!),
+    ).rejects.toThrow(/approved PRD pin/i);
+
+    expect(harness.executor.requests).toEqual([]);
+  });
+
+  it('refuses queue republication on recovery when the queued state has no current approval', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    harness.enqueued.length = 0;
+    // Corrupt the state the way a legacy/pre-#602 disk would look: queued
+    // rows but an approval that no longer matches the latest PRD.
+    const approval = (await harness.artifacts.getLatest(project.id, 'prd-approval'))!;
+    // Canonical key for the mismatched identity, so the refusal below comes
+    // from the identity check itself, not from a missing integrity binding.
+    await harness.artifacts.put({
+      projectId: project.id,
+      name: 'prd-approval',
+      content: { ...(approval.content as Record<string, unknown>), identity: 'f'.repeat(64) },
+      createdBy: 'user',
+      idempotencyKey: createHash('sha256')
+        .update(`${'f'.repeat(64)}:1`)
+        .digest('hex'),
+    });
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('failed');
+    expect((await harness.projects.get(project.id))?.status).toBe('failed');
+    const events = await harness.events.list(project.id);
+    expect(events.some((event) => event.type === 'project.queue_publication_refused')).toBe(true);
+  });
+
+  it('refuses queue republication on recovery when the queued run has no PRD pin', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    harness.enqueued.length = 0;
+    const run = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update({ ...run, prd: undefined }, run.version);
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('failed');
+    expect((await harness.projects.get(project.id))?.status).toBe('failed');
+    const events = await harness.events.list(project.id);
+    expect(events.some((event) => event.type === 'project.queue_publication_refused')).toBe(true);
+  });
+
+  it('refuses queue republication when the queued pin names another artifact', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    harness.enqueued.length = 0;
+    const other = await harness.artifacts.put({
+      projectId: project.id,
+      name: 'other',
+      content: 'Build it',
+      contentType: 'text/markdown',
+      createdBy: 'user',
+    });
+    const run = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update(
+      {
+        ...run,
+        prd: {
+          name: other.metadata.name,
+          revision: other.metadata.revision,
+          sha256: other.metadata.sha256,
+        },
+      },
+      run.version,
+    );
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('failed');
+    expect((await harness.projects.get(project.id))?.status).toBe('failed');
+  });
+
+  it('refuses recovery when approved markdown becomes an object with the same string coercion', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create({
+      ...input(harness),
+      prd: '[object Object]',
+    });
+    await approveCurrentPrd(harness, project.id);
+    harness.enqueued.length = 0;
+    harness.artifacts.named('prd')[0]!.content = {};
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('failed');
+    expect((await harness.projects.get(project.id))?.status).toBe('failed');
+  });
+
+  it('refuses recovery when a forged approval matches tampered PRD text but not its digest', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create(input(harness));
+    await approveCurrentPrd(harness, project.id);
+    harness.enqueued.length = 0;
+    harness.artifacts.named('prd')[0]!.content = 'Tampered after approval';
+    // Well-formed forgery with its canonical key: the refusal below must come
+    // from the PRD digest check, not from approval shape/integrity validation.
+    await harness.artifacts.put({
+      projectId: project.id,
+      name: 'prd-approval',
+      content: {
+        schemaVersion: '1',
+        identity: prdIdentity('Tampered after approval'),
+        prdRevision: 1,
+      },
+      createdBy: 'attacker',
+      idempotencyKey: createHash('sha256')
+        .update(`${prdIdentity('Tampered after approval')}:1`)
+        .digest('hex'),
+    });
+
+    await harness.service.recoverQueuedProjects();
+
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('failed');
+    expect((await harness.projects.get(project.id))?.status).toBe('failed');
+  });
+});
+
+describe('PRD approval crash convergence (#602)', () => {
+  it('refuses to replay approval for a queued run whose PRD pin is missing', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    await approveCurrentPrd(harness, project.id);
+    harness.enqueued.length = 0;
+    const run = (await harness.runs.get(project.currentRunId!))!;
+    await harness.runs.update({ ...run, prd: undefined }, run.version);
+
+    await expect(approveCurrentPrd(harness, project.id)).rejects.toThrow(/PRD pin/i);
+
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('failed');
+    expect((await harness.projects.get(project.id))?.status).toBe('failed');
+    expect((await harness.events.list(project.id)).map((event) => event.type)).toContain(
+      'project.queue_publication_refused',
+    );
+  });
+
+  it('re-approval converges project state and queue after a partial file-mode commit', async () => {
+    const harness = makeHarness();
+    const project = await harness.service.create({
+      name: 'Issue Radar',
+      prd: 'Build it',
+      workflowId: harness.workflow.id,
+      projectDirectory: '/operator/projects/issue-radar',
+    });
+    vi.spyOn(harness.projects, 'update').mockRejectedValueOnce(new Error('project row lost'));
+
+    await expect(approveCurrentPrd(harness, project.id)).rejects.toThrow('project row lost');
+    expect(harness.enqueued).toEqual([]);
+    expect((await harness.runs.get(project.currentRunId!))?.status).toBe('queued');
+    expect((await harness.projects.get(project.id))?.status).toBe('awaiting_approval');
+
+    const replay = await approveCurrentPrd(harness, project.id);
+
+    expect(replay.project.status).toBe('queued');
+    expect((await harness.projects.get(project.id))?.status).toBe('queued');
+    expect(harness.enqueued).toHaveLength(1);
   });
 });

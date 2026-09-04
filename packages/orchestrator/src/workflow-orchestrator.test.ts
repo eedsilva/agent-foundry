@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -19,6 +20,7 @@ import {
 import {
   EmergencyCeilingError,
   MigrationApprovalRequiredError,
+  prdIdentity,
   SystemClock,
   type Clock,
   type ExecutorRegistry,
@@ -289,6 +291,27 @@ async function seedRun(
   workflowId = WORKFLOW.id,
 ): Promise<void> {
   const now = stores.clock.now().toISOString();
+  const prd = await stores.artifacts.put({
+    projectId: 'project-1',
+    name: 'prd',
+    content: 'approved test PRD',
+    contentType: 'text/markdown',
+    createdBy: 'test',
+    idempotencyKey: 'seeded-prd',
+  });
+  await stores.artifacts.put({
+    projectId: 'project-1',
+    name: 'prd-approval',
+    content: {
+      schemaVersion: '1',
+      identity: prdIdentity('approved test PRD'),
+      prdRevision: prd.metadata.revision,
+    },
+    createdBy: 'test',
+    idempotencyKey: createHash('sha256')
+      .update(`${prdIdentity('approved test PRD')}:${prd.metadata.revision}`)
+      .digest('hex'),
+  });
   await stores.projects.create({
     id: 'project-1',
     name: 'Version hook fixture',
@@ -308,6 +331,11 @@ async function seedRun(
     version: 1,
     createdAt: now,
     updatedAt: now,
+    prd: {
+      name: 'prd',
+      revision: prd.metadata.revision,
+      sha256: prd.metadata.sha256,
+    },
   });
 }
 

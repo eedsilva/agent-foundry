@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { scanForSecrets } from '@agent-foundry/domain';
 import { createRuntime } from './runtime.js';
 import { approveAllGates, VALID_STANDARD_PRD } from './testing-helpers.js';
+import { approveCurrentPrd } from './prd-approval.js';
 
 const run = promisify(execFile);
 const FAKE_SECRET = 'leak-canary-9f2b7c1a';
@@ -38,6 +39,7 @@ describe('secret leak scan', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory,
     });
+    await approveCurrentPrd(runtime, project.id);
     await writeFile(join(dataDir, 'projects', project.id, '.env'), `FAKE_SECRET=${FAKE_SECRET}\n`);
 
     // 1. Capability surfaced by name only — the value is never touched here.

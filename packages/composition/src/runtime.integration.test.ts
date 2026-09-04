@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -18,7 +19,7 @@ import {
   UI_QUALITY_JUDGE_JSON_SCHEMA,
   UI_QUALITY_RUBRIC_V1,
 } from '@agent-foundry/contracts';
-import { SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
+import { prdIdentity, SystemClock, UlidGenerator, type AgentExecutor } from '@agent-foundry/domain';
 import {
   MockAgentExecutor,
   MockExecutorRegistry,
@@ -32,6 +33,7 @@ import {
 } from '@agent-foundry/persistence';
 import { createRuntime, type Runtime } from './runtime.js';
 import { approveAllGates, describeRunFailure, VALID_STANDARD_PRD } from './testing-helpers.js';
+import { approveCurrentPrd } from './prd-approval.js';
 
 const RESTART_APPROVAL_WORKFLOW = `
 schemaVersion: '1'
@@ -382,6 +384,7 @@ async function completeDefaultMockWorkflow(
     prd: VALID_STANDARD_PRD,
     projectDirectory: await createProjectDirectory(),
   });
+  await approveCurrentPrd(runtime, project.id);
 
   if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
   const runId = project.currentRunId;
@@ -444,6 +447,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const jobId = `run-project-${project.currentRunId}`;
     await rm(join(dataDir, 'queue', 'pending', `${jobId}.json`));
@@ -527,6 +531,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const workspacePath = runtime.workspaces.workspacePath(project.id);
     await mkdir(workspacePath, { recursive: true });
@@ -685,6 +690,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
     const root = join(dataDir, 'projects', project.id, 'conversation');
     await mkdir(root);
     await writeFile(
@@ -716,6 +722,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
     await writeFile(join(conversationDataDir, 'projects'), 'corrupt path shape');
     const service = new ConversationService(
       runtime.projects,
@@ -754,6 +761,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtimeA, project.id);
     if (!project.currentRunId) throw new Error('Expected a persisted workflow run');
     const runId = project.currentRunId;
     expect(await runtimeA.worker.runOnce()).toBe(true);
@@ -1049,6 +1057,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
 
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     expect(await runtime.worker.runOnce()).toBe(true);
@@ -1092,6 +1101,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
 
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
     const runId = project.currentRunId;
@@ -1140,6 +1150,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
     const runId = project.currentRunId;
     if (!runId) throw new Error('Expected project to reference its workflow run');
 
@@ -1184,6 +1195,7 @@ describe('runtime composition', () => {
       prd: VALID_STANDARD_PRD,
       projectDirectory: await createProjectDirectory(),
     });
+    await approveCurrentPrd(runtime, project.id);
 
     expect(await runtime.worker.runOnce()).toBe(true);
     if (!project.currentRunId) throw new Error('Expected project to reference its workflow run');
@@ -1242,6 +1254,27 @@ describe('runtime composition', () => {
         'Build a small persistent issue tracker with deterministic tests and production build checks.',
       contentType: 'text/markdown',
       createdBy: 'user',
+    });
+    await runtime.artifacts.put({
+      projectId: 'legacy-project',
+      name: 'prd-approval',
+      content: {
+        schemaVersion: '1',
+        identity: prdIdentity(
+          'Build a small persistent issue tracker with deterministic tests and production build checks.',
+        ),
+        prdRevision: 1,
+        actor: { kind: 'user', id: 'legacy-test' },
+        decidedAt: createdAt,
+      },
+      createdBy: 'user',
+      idempotencyKey: createHash('sha256')
+        .update(
+          `${prdIdentity(
+            'Build a small persistent issue tracker with deterministic tests and production build checks.',
+          )}:1`,
+        )
+        .digest('hex'),
     });
     const legacyJob = JSON.parse(
       await readFile(

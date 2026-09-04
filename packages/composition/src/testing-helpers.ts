@@ -31,7 +31,7 @@ Task list with loading, empty, error, and success states.
 
 ## 6. Functional requirements / Requisitos funcionais
 
-- **FR-001**: The owner can create a task.
+- **FR-001**: The owner can create a task. \`capability:user-owned-crud\`
 
 ## 7. Conceptual data and ownership / Dados conceituais e propriedade
 
@@ -39,7 +39,7 @@ A task belongs to one owner.
 
 ## 8. Business rules / Regras de negócio
 
-- **BR-001**: Owners access only their tasks.
+- **BR-001**: Owners access only their tasks. \`capability:ownership\`
 
 ## 9. Authentication and permissions / Autenticação e permissões
 
@@ -47,7 +47,7 @@ Authentication is required; cross-user access is denied.
 
 ## 10. Non-functional requirements / Requisitos não funcionais
 
-- **NFR-001**: The task list is keyboard accessible.
+- **NFR-001**: The task list is keyboard accessible. \`capability:interface-language\`
 
 ## 11. Acceptance criteria / Critérios de aceite
 

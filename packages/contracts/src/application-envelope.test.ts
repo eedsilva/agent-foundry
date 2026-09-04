@@ -137,7 +137,7 @@ describe('validateSupportedApplicationEnvelope (#601)', () => {
     });
   });
 
-  it('normalizes capability markers without inferring aliases and accepts supported behavior', () => {
+  it('turns markers with invalid case or syntax into blocking questions instead of normalizing or dropping them', () => {
     const result = validateSupportedApplicationEnvelope([
       requirement('FR-001', ' Realtime '),
       requirement('FR-002', 'REALTIME'),
@@ -152,16 +152,55 @@ describe('validateSupportedApplicationEnvelope (#601)', () => {
       requirement('FR-011', ' real-time '),
     ]);
 
-    expect(result.rejections.map((entry) => entry.capability)).toEqual(['realtime', 'realtime']);
-    expect(result.questions.map((entry) => entry.capability)).toEqual([
-      'constructor',
-      'tostring',
-      'valueof',
-      'hasownproperty',
-      '__proto__',
-      'real-time',
+    // No silent normalization: a marker that is not the exact lowercase slug
+    // never reaches the envelope, so nothing rejects — it blocks as a question.
+    expect(result.rejections).toEqual([]);
+    expect(
+      result.questions.map((entry) => [entry.code, entry.capability, entry.requirementId]),
+    ).toEqual([
+      ['invalid-capability-syntax', ' Realtime ', 'FR-001'],
+      ['invalid-capability-syntax', 'REALTIME', 'FR-002'],
+      ['ambiguous-capability', 'constructor', 'FR-003'],
+      ['invalid-capability-syntax', 'toString', 'FR-004'],
+      ['invalid-capability-syntax', 'valueOf', 'FR-005'],
+      ['invalid-capability-syntax', 'hasOwnProperty', 'FR-006'],
+      ['invalid-capability-syntax', '__proto__', 'FR-007'],
+      ['invalid-capability-syntax', ' real-time ', 'FR-011'],
     ]);
-    expect(result.questions).toHaveLength(6);
     expect(result.approved).toBe(false);
+  });
+
+  it('blocks an FR, BR, or NFR item that declares no capability at all', () => {
+    for (const id of ['FR-001', 'BR-001', 'NFR-001']) {
+      const result = validateSupportedApplicationEnvelope([requirement(id, '')]);
+      expect(result.approved).toBe(false);
+      expect(result.rejections).toEqual([]);
+      expect(result.questions).toEqual([
+        {
+          code: 'unclassified-requirement',
+          requirementId: id,
+          capability: '',
+          message: expect.stringContaining(id),
+        },
+      ]);
+    }
+  });
+
+  it('rejects a requirement mixing supported and unsupported capabilities', () => {
+    const result = validateSupportedApplicationEnvelope([
+      requirement('FR-001', 'user-owned-crud'),
+      requirement('FR-001', 'file-upload'),
+    ]);
+    expect(result.approved).toBe(false);
+    expect(result.rejections.map((entry) => entry.capability)).toEqual(['file-upload']);
+  });
+
+  it('approves a fully classified and supported requirement set', () => {
+    const result = validateSupportedApplicationEnvelope([
+      requirement('FR-001', 'user-owned-crud'),
+      requirement('BR-001', 'ownership'),
+      requirement('NFR-001', 'interface-language'),
+    ]);
+    expect(result).toEqual({ approved: true, rejections: [], questions: [] });
   });
 });
