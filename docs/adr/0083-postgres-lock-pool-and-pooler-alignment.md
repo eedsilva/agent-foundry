@@ -30,7 +30,7 @@ Raising `max` instead of splitting the pool only moves the deadlock threshold; t
 
 Turning prepared statements off unconditionally is smaller than the port predicate, and was rejected: it changes the production profile of direct Postgres, today's default target, to serve a target this repo has not yet exercised.
 
-Leaving the pooler requirement to documentation was rejected once measured: only the literal `?prepare=false` (or `?prepare=disable`) works, while `?prepare=0` resolves to a truthy string and keeps prepared statements on silently, and `?no_prepare=true` is not read as an option at all. Both mistakes fail open, so the operator would carry a trap.
+Leaving the pooler requirement to documentation was rejected once measured: only the literal `?prepare=false` (or `?prepare=disable`) works, while `?prepare=0` resolves to a truthy string and keeps prepared statements on silently, and `?no_prepare=true` is not read as an option at all. The first fails open, silently, and only surfaces at the first Bind; the second fails fast during connection startup, because the driver forwards it as a server parameter. Either way the operator carries a trap.
 
 ## Consequences
 
