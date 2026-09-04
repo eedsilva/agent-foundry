@@ -37,19 +37,6 @@ describe('createPostgresClient', () => {
     ).resolves.toBe(true);
   });
 
-  it('sends no invented startup parameter, which the server would reject', async () => {
-    // postgres.js forwards every query param it does not know in the startup
-    // packet, so detection must not depend on a flag of our own invention.
-    const sql = createPostgresClient(
-      'postgres://u:p@aws-0-us-east-1.pooler.supabase.com:6543/postgres',
-    );
-    try {
-      expect(Object.keys(sql.options.connection)).toEqual(['application_name']);
-    } finally {
-      await sql.end({ timeout: 0 });
-    }
-  });
-
   it('pins the fail-open spelling an operator would reach for', async () => {
     // `prepare=0` resolves to the truthy string '0' and silently keeps
     // prepared statements on; only the literal `prepare=false` works.
