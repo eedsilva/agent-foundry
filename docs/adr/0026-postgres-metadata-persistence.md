@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-20
 - Owners: Persistence
+- Superseded in part by: [ADR 0083](0083-postgres-lock-pool-and-pooler-alignment.md) — single shared client and implicit prepared-statement clauses only
 
 ## Context
 
