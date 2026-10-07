@@ -1,13 +1,10 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type {
-  AppShapeModule,
-  ConversationPageResponse,
-  Message,
-  Operation,
-} from '@agent-foundry/contracts';
+import type { AppShapeModule, ConversationPageResponse, Message } from '@agent-foundry/contracts';
 import { ConversationList } from './conversation-list';
+
+type ConversationOperation = ConversationPageResponse['operations'][number];
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
   return {
@@ -22,7 +19,7 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
   };
 }
 
-function makeOperation(overrides: Partial<Operation> = {}): Operation {
+function makeOperation(overrides: Partial<ConversationOperation> = {}): ConversationOperation {
   return {
     id: 'operation-1',
     projectId: 'project-1',
@@ -38,7 +35,10 @@ function makeOperation(overrides: Partial<Operation> = {}): Operation {
   };
 }
 
-function makeConversation(operations: Operation[], messages: Message[]): ConversationPageResponse {
+function makeConversation(
+  operations: ConversationOperation[],
+  messages: Message[],
+): ConversationPageResponse {
   return {
     conversation: {
       id: 'project-1',

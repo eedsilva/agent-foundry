@@ -13,7 +13,12 @@ const [trackedFindings, bundleFindings] = await Promise.all([
   scanTrackedFiles(root),
   scanDirectoryFiles(join(root, 'apps/web/.next')),
 ]);
-const findings = [...trackedFindings, ...bundleFindings];
+// .next/cache is Turbopack's local build cache (binary .sst blobs since Next
+// 16.3): never shipped, and random bytes trip the pattern matchers.
+const findings = [
+  ...trackedFindings,
+  ...bundleFindings.filter((finding) => !finding.file.includes('/.next/cache/')),
+];
 if (findings.length > 0) {
   console.error('Possible secret(s) found:');
   for (const finding of findings) {

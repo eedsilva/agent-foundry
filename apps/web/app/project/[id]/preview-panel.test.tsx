@@ -53,11 +53,11 @@ describe('startPreviewLogPolling', () => {
 function runningSession(overrides: Partial<PreviewSession> = {}): PreviewSession {
   return {
     id: 'preview-1',
-    workspaceRef: { projectId: 'p1', ref: 'main' },
+    workspaceRef: { projectId: 'p1', workspacePath: '/data/workspaces/p1' },
     status: 'running',
     version: 1,
     url: 'http://127.0.0.1:4000/preview/preview-1/?token=abc',
-    process: { pid: 1, port: 65000 },
+    process: { command: 'npm', args: ['run', 'dev'], pid: 1, port: 65000 },
     health: { state: 'healthy', consecutiveFailures: 0 },
     ttl: { seconds: 1800, expiresAt: '2026-07-23T00:30:00.000Z' },
     restartCount: 0,
@@ -244,8 +244,16 @@ describe('previewRepairContext', () => {
           durationMs: 1,
           error: 'Passive browser failure observed.',
           observations: [
-            { kind: 'console-error', message: 'ReferenceError: broken' },
-            { kind: 'request-failed', message: 'net::ERR_FAILED' },
+            {
+              kind: 'console-error',
+              message: 'ReferenceError: broken',
+              timestamp: '2026-07-23T00:00:00.000Z',
+            },
+            {
+              kind: 'request-failed',
+              message: 'net::ERR_FAILED',
+              timestamp: '2026-07-23T00:00:00.000Z',
+            },
           ],
         },
       ],

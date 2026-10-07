@@ -2,7 +2,7 @@ services:
   # S3-compatible object storage for BLOB_STORE_MODE=s3. Uncomment this
   # block and configure the S3_* environment variables for your app.
   # minio:
-  #   image: minio/minio
+  #   image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
   #   command: server /data --console-address :9001
   #   environment:
   #     MINIO_ROOT_USER: minioadmin

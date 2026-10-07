@@ -53,7 +53,9 @@ export function describeMinio(name: string, fn: (ctx: MinioContext) => void): vo
     let endpoint: string;
 
     beforeAll(async () => {
-      container = await new GenericContainer('minio/minio:latest')
+      // minio/minio was pulled from Docker Hub and Quay; pgsty/minio is a
+      // maintained drop-in fork (same `server` CLI and MINIO_ROOT_* env).
+      container = await new GenericContainer('pgsty/minio:RELEASE.2026-08-04T00-00-00Z')
         .withCommand(['server', '/data'])
         .withEnvironment({
           MINIO_ROOT_USER: MINIO_CREDENTIALS.accessKeyId,

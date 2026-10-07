@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import type { PreviewSelectionRequest } from '@agent-foundry/contracts';
 import { PreviewSelectionService } from './preview-selection-service.js';
 
@@ -17,7 +17,9 @@ function baseRequest(overrides: Partial<PreviewSelectionRequest> = {}): PreviewS
 function makeService(
   overrides: {
     workspacePath?: string;
-    captureSelectionScreenshot?: ReturnType<typeof vi.fn>;
+    captureSelectionScreenshot?: Mock<
+      ConstructorParameters<typeof PreviewSelectionService>[1]['captureSelectionScreenshot']
+    >;
   } = {},
 ) {
   const workspaces = { workspacePath: () => overrides.workspacePath ?? '/data/ws' };

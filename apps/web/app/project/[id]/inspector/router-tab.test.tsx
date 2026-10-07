@@ -54,7 +54,7 @@ function route(overrides: Partial<RouteDecision> = {}): RouteEntry {
       routingTable: {
         source: 'web-app-v1',
         taskKind: 'implementation',
-        executors: ['claude', 'codex', 'agy'],
+        executors: ['claude', 'codex'],
         selectedIndex: 0,
       },
       ...overrides,
@@ -67,10 +67,10 @@ describe('RouterTab', () => {
     const markup = renderToStaticMarkup(<RouterTab routes={[route()]} />);
 
     expect(markup).toContain('web-app-v1');
-    for (const executor of ['claude', 'codex', 'agy']) expect(markup).toContain(executor);
+    for (const executor of ['claude', 'codex']) expect(markup).toContain(executor);
     expect(markup).toContain('claude-opus');
     // The ordering is the decision, so its position has to be legible.
-    expect(markup).toContain('1/3');
+    expect(markup).toContain('1/2');
     expect(markup).toContain('<span class="text-ink">1.</span>');
   });
 
@@ -88,7 +88,7 @@ describe('RouterTab', () => {
       routingTable: {
         source: 'web-app-v1',
         taskKind: 'implementation',
-        executors: ['claude', 'codex', 'agy'],
+        executors: ['claude', 'codex'],
         selectedIndex: 0,
       },
     });
@@ -98,8 +98,8 @@ describe('RouterTab', () => {
     expect(markup).toContain('claude-opus');
     // The position beside the ladder describes the executor that ran, not the
     // one selection first landed on and that then failed.
-    expect(markup).toContain('2/3');
-    expect(markup).not.toContain('1/3');
+    expect(markup).toContain('2/2');
+    expect(markup).not.toContain('1/2');
   });
 
   it('still renders a decision persisted before the table existed', () => {
