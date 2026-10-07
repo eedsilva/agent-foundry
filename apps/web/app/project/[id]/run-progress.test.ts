@@ -63,6 +63,7 @@ function makeRunDetail(steps: StepRun[]): RunDetailResponse {
       updatedAt: '2026-08-10T00:00:00.000Z',
     } as RunDetailResponse['run'],
     steps: steps.map((step) => ({ step, attempts: [] })),
+    budget: [],
   };
 }
 

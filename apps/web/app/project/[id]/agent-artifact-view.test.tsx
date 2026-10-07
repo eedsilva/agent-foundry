@@ -43,7 +43,15 @@ describe('AgentArtifactView', () => {
         artifact={makeArtifact({
           summary: 'Resumo com token longo.',
           risks: ['Risco um.'],
-          decisions: [{ title: 'Escolha', choice: 'A', rationale: 'Porque sim.' }],
+          decisions: [
+            {
+              title: 'Escolha',
+              choice: 'A',
+              rationale: 'Porque sim.',
+              alternatives: [],
+              consequences: [],
+            },
+          ],
           nextActions: ['Próxima ação.'],
         })}
       />,

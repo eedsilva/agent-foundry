@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
+  // apps/web's tsconfig says `jsx: preserve` (Next compiles it); Vite 8's oxc
+  // honours that and would hand raw JSX to the test runner.
+  oxc: { jsx: { runtime: 'automatic' } },
   test: {
     include: ['packages/**/*.test.ts', 'apps/**/*.test.{ts,tsx}'],
     environment: 'node',

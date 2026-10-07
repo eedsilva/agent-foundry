@@ -247,6 +247,7 @@ describe('RunAlertStrip running banner', () => {
     const markup = renderStrip({
       run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
       runDetail: {
+        budget: [],
         run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
         steps: [
           { step: makeStepRun({ id: 's1', nodeId: 'plan', status: 'completed' }), attempts: [] },
@@ -269,6 +270,7 @@ describe('RunAlertStrip running banner', () => {
     const markup = renderStrip({
       run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
       runDetail: {
+        budget: [],
         run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
         steps: [
           { step: makeStepRun({ id: 's1', nodeId: 'implement', status: 'running' }), attempts: [] },
@@ -288,6 +290,7 @@ describe('RunAlertStrip running banner', () => {
     const markup = renderStrip({
       run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
       runDetail: {
+        budget: [],
         run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
         steps: [],
       } as RunDetailResponse,
@@ -304,6 +307,7 @@ describe('RunAlertStrip running banner', () => {
     const markup = renderStrip({
       run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
       runDetail: {
+        budget: [],
         run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
         steps: [
           { step: makeStepRun({ id: 's1', nodeId: 'plan', status: 'completed' }), attempts: [] },
@@ -348,6 +352,7 @@ describe('RunAlertStrip running banner', () => {
     const markup = renderStrip({
       run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
       runDetail: {
+        budget: [],
         run: makeRun({ status: 'running', startedAt: '2026-08-10T00:00:00.000Z' }),
         steps: [],
       } as RunDetailResponse,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import {
   isWorkflowRunStatusTerminal,
   type AppEnvironment,
@@ -62,7 +62,7 @@ function makeDeps(overrides: {
   environments?: AppEnvironment[];
   activeSessions?: PreviewSessionRecord[];
   runsByProject?: Record<string, WorkflowRun[]>;
-  stop?: ReturnType<typeof vi.fn>;
+  stop?: Mock<EnvironmentReaperDeps['environments']['stop']>;
 }): EnvironmentReaperDeps & {
   listEnvironments: ReturnType<typeof vi.fn>;
   listActive: ReturnType<typeof vi.fn>;
