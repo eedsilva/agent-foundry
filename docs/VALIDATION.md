@@ -474,8 +474,7 @@ when one enabled catalog entry matches; ambiguous tuples fail closed.
 - **Safety and operations:** ADR 0016 and `OPERATIONS.md` document redaction, hard constraints,
   fail-closed draft ownership, recovery, compatibility, migration, containment, and rollback.
 - **Delivery evidence:** this section supplies the trace and command results; the rendered UI
-  captures are `output/playwright/issue-16/issue-16-model-pins-ceiling.png` and
-  `output/playwright/issue-16/issue-16-retry-pin.png`; the PR must link issue #16 and include the
+  captures were attached to the PR (removed from the tree in the 2026-10 cleanup); the PR must link issue #16 and include the
   clean review results.
 
 ### Full verification
