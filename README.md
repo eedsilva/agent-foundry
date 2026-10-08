@@ -17,7 +17,7 @@ O baseline atual recebe um PRD pela interface web, persiste um projeto, enfileir
 - Workflows YAML com quality gates, reparos e limite de iterações.
 - Harness versionado com regras globais, papéis, stack e padrões de qualidade.
 - Model router com score por tarefa, risco, contexto, velocidade, custo/quota, confiabilidade e histórico observado.
-- Adaptadores para `codex`, `claude` e `agy`.
+- Adaptadores para `codex` e `claude`.
 - Fallback de modelos entre providers, com checkpoint e rollback Git antes de nova tentativa.
 - Verificação determinística via scripts do projeto gerado e `git diff --check`.
 - Persistência local em arquivos atômicos, JSONL e fila durável em diretórios.
@@ -43,7 +43,6 @@ flowchart LR
     O --> E[Executor Registry]
     E --> C[Codex CLI]
     E --> L[Claude Code CLI]
-    E --> G[AGY / Antigravity CLI]
 
     O --> S[Artifact Store]
     O --> D[Decision Log]
@@ -59,7 +58,6 @@ O orquestrador não chama um fornecedor diretamente. Ele pede uma decisão ao ro
 
 - Node.js 22 ou superior.
 - Git.
-- Para modo real com AGY: Antigravity CLI 1.1.1 ou superior.
 
 ```bash
 cp .env.example .env
@@ -121,9 +119,6 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 # Anthropic Claude Code
 curl -fsSL https://claude.ai/install.sh | bash
-
-# Google Antigravity CLI
-curl -fsSL https://antigravity.google/cli/install.sh | bash
 ```
 
 Depois, execute cada comando interativamente uma vez e autentique sua assinatura:
@@ -131,7 +126,6 @@ Depois, execute cada comando interativamente uma vez e autentique sua assinatura
 ```bash
 codex
 claude
-agy
 ```
 
 Confira o ambiente:
@@ -146,14 +140,7 @@ npm run dev
 O fluxo `web-app-v1` usa o Economy Profile fixo: Claude Haiku
 `claude-haiku-4-5-20251001` para planejamento/verificação e GPT Luna
 `gpt-5.6-luna` com reasoning effort `high` para implementação/reparo. Variáveis
-de ambiente não alteram esses pins. Para cadastrar tiers adicionais do AGY, consulte
-os nomes disponíveis com:
-
-```bash
-agy models
-```
-
-O adapter do AGY exige a versão 1.1.1 ou superior, pois depende de `--model`, `--mode` e do sandbox corrigido no modo headless.
+de ambiente não alteram esses pins.
 
 A sintaxe e os aliases das CLIs podem mudar. Os adaptadores estão isolados em `packages/executors`, para que uma alteração de fornecedor não contamine o domínio ou o orquestrador.
 
@@ -207,7 +194,7 @@ packages/
   composition/         composição e configuração do runtime
   contracts/           schemas Zod e tipos compartilhados
   domain/              portas, erros e utilitários sem infraestrutura
-  executors/           Codex, Claude, AGY, mock e verifier
+  executors/           Codex, Claude, mock e verifier
   harness/             seleção do conhecimento versionado
   model-router/        catálogo, score e decisão de modelo
   orchestrator/        workflow engine, prompts e project service
@@ -329,7 +316,6 @@ npm test                # Vitest
 npm run build           # todos os pacotes e aplicações
 npm run check           # typecheck + testes + build
 npm run clean           # remove artefatos de build
-npm run models:list:agy # modelos disponíveis no AGY
 ```
 
 ## Docker
@@ -342,7 +328,6 @@ worker e web são iniciados pelos comandos `npm run dev` e `npm run dev:inline`.
 Este MVP ainda não é uma plataforma multi-tenant segura nem um scheduler distribuído.
 
 - A fila em arquivos é adequada para um único host e poucos workers, não para alta disponibilidade.
-- Não há recuperação automática de leases órfãos na pasta `processing` após crash abrupto.
 - O verifier executa scripts do código gerado. Isso exige isolamento forte antes de aceitar usuários não confiáveis.
 - As permissões das CLIs continuam fazendo parte da fronteira de segurança. Prompt e sandbox de fornecedor não são uma prisão perfeita.
 - Não há autorização multiusuário, quota por usuário nem isolamento multi-tenant. A Control Session
@@ -375,7 +360,6 @@ Não comece por vinte agentes. Comece medindo se planner, developer, reviewer e 
 - [Segurança](docs/SECURITY.md)
 - [Operação e evolução](docs/OPERATIONS.md)
 - [Registro de validação](docs/VALIDATION.md)
-- [Adicionar um executor](docs/ADDING_PROVIDER.md)
 - [PRD de exemplo](examples/issue-radar.prd.md)
 
 ## Referências oficiais das CLIs
@@ -384,7 +368,6 @@ Não comece por vinte agentes. Comece medindo se planner, developer, reviewer e 
 - Codex scripted mode: https://developers.openai.com/codex/noninteractive/
 - Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview
 - Claude Code CLI reference: https://docs.anthropic.com/en/docs/claude-code/cli-reference
-- Google Antigravity CLI: https://antigravity.google/docs/cli
 
 ## Licença
 
