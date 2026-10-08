@@ -17,7 +17,6 @@
     "test:watch": "vitest",
     "format": "prettier --write --cache .",
     "clean": "find apps packages -type d \\( -name dist -o -name .next \\) -prune -exec rm -rf {} + && find apps packages -name '*.tsbuildinfo' -delete",
-    "models:list:agy": "agy models",
     "smoke:mock": "EXECUTOR_MODE=mock RUN_WORKER_INLINE=true npm run dev --workspace @agent-foundry/api",
     "build:packages": "npm run build --workspace @agent-foundry/contracts && npm run build --workspace @agent-foundry/domain && npm run build --workspace @agent-foundry/persistence && npm run build --workspace @agent-foundry/harness && npm run build --workspace @agent-foundry/model-router && npm run build --workspace @agent-foundry/executors && npm run build --workspace @agent-foundry/platform && npm run build --workspace @agent-foundry/orchestrator && npm run build --workspace @agent-foundry/composition",
     "build:apps": "npm run build --workspace @agent-foundry/api && npm run build --workspace @agent-foundry/worker && npm run build --workspace @agent-foundry/web",
@@ -53,21 +52,14 @@
     "github:roadmap:apply": "node scripts/bootstrap-github-roadmap.mjs --apply --reconcile",
     "github:governance:dry-run": "node scripts/bootstrap-github-governance.mjs",
     "github:governance:apply": "node scripts/bootstrap-github-governance.mjs --apply --reconcile --skip-release",
-    "github:governance:activate-ruleset": "node scripts/bootstrap-github-governance.mjs --apply --activate-ruleset --skip-project --skip-views --skip-repository-settings --skip-security --skip-release",
-    "github:release:publish-baseline": "node scripts/bootstrap-github-governance.mjs --apply --publish-release --release-target 92b071ceb3365cb74d954cc67c496e3e5ecc9e6a --skip-project --skip-views --skip-ruleset --skip-repository-settings --skip-security"
+    "github:governance:activate-ruleset": "node scripts/bootstrap-github-governance.mjs --apply --activate-ruleset --skip-project --skip-views --skip-repository-settings --skip-security --skip-release"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "@fastify/cors": "^11.1.0",
     "dotenv": "^17.2.2",
-    "execa": "^10.0.1",
-    "fastify": "^5.12.5",
-    "pino": "^10.3.1",
-    "ulid": "^3.0.1",
-    "yaml": "^2.8.1",
-    "zod": "^4.1.12"
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
