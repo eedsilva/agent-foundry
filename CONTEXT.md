@@ -4,6 +4,22 @@ Agent Foundry turns an approved plan into durable, verifiable software delivery 
 
 ## Language
 
+### Intake
+
+**Idea**:
+Free-text description of an app the owner wants, which Agent Foundry drafts into a Standard PRD.
+_Avoid_: Prompt, brief
+
+**Standard PRD**:
+A PRD in the validated section format that Agent Foundry accepts, whether drafted from an Idea or pasted by the owner.
+_Avoid_: Spec, requirements doc
+
+**Approved PRD**:
+The exact Standard PRD revision the owner approved; the only input that can start a build.
+_Avoid_: Final PRD, accepted PRD
+
+### Execution
+
 **Task Graph**:
 A validated dependency graph whose tasks define deliverables, blockers, and an acceptance channel.
 _Avoid_: Task list, implementation plan
