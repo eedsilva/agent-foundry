@@ -22,6 +22,6 @@
     "@agent-foundry/contracts": "0.1.0",
     "@agent-foundry/domain": "0.1.0",
     "ulid": "^3.0.1",
-    "yaml": "^2.8.1"
+    "yaml": "^2.9.1"
   }
 }
