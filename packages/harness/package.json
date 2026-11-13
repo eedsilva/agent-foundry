@@ -21,6 +21,6 @@
   "dependencies": {
     "@agent-foundry/contracts": "0.1.0",
     "@agent-foundry/domain": "0.1.0",
-    "zod": "^4.1.12"
+    "zod": "^4.6.7"
   }
 }
